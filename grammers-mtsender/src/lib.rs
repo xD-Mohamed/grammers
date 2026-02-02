@@ -24,12 +24,14 @@
 #![deny(unsafe_code)]
 
 mod configuration;
+mod dc_pool;
 mod errors;
 mod net;
 mod sender;
 mod sender_pool;
 
 pub use configuration::ConnectionParams;
+pub use dc_pool::{DcConnectionPool, PoolConfig};
 pub use errors::{InvocationError, ReadError, RpcError};
 pub use net::ServerAddr;
 pub use sender::{Sender, connect, connect_with_auth, generate_auth_key};

@@ -19,10 +19,10 @@ use grammers_tl_types::{self as tl, enums};
 use tokio::task::AbortHandle;
 use tokio::{
     sync::{mpsc, oneshot},
-    task::JoinSet,
 };
 
 use crate::configuration::ConnectionParams;
+use crate::dc_pool::DcConnectionPool;
 use crate::errors::ReadError;
 use crate::{InvocationError, Sender, ServerAddr, connect, connect_with_auth};
 
@@ -42,11 +42,13 @@ enum Request {
     Quit,
 }
 
+#[allow(dead_code)]
 struct Rpc {
     body: Vec<u8>,
     tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
 }
 
+#[allow(dead_code)]
 struct ConnectionInfo {
     dc_id: i32,
     rpc_tx: mpsc::UnboundedSender<Rpc>,
@@ -102,9 +104,11 @@ pub struct SenderPoolRunner {
     api_id: i32,
     connection_params: ConnectionParams,
     request_rx: mpsc::UnboundedReceiver<Request>,
+    #[allow(dead_code)]
     updates_tx: mpsc::UnboundedSender<UpdatesLike>,
-    connections: Vec<ConnectionInfo>,
-    connection_pool: JoinSet<Result<(), ReadError>>,
+    /// Internal DC connection pool (like gotd/td) for limiting connections per DC.
+    /// This is used automatically - users don't need to know about it.
+    dc_pool: DcConnectionPool,
 }
 
 impl Deref for SenderPoolFatHandle {
@@ -171,6 +175,14 @@ impl SenderPool {
         let (updates_tx, updates_rx) = mpsc::unbounded_channel();
         let session = session as Arc<dyn Session>;
 
+        // Create internal DC connection pool (like gotd/td)
+        let dc_pool = DcConnectionPool::new(
+            Arc::clone(&session),
+            api_id,
+            connection_params.clone(),
+            crate::PoolConfig::default(),
+        );
+
         Self {
             runner: SenderPoolRunner {
                 session: Arc::clone(&session),
@@ -178,8 +190,7 @@ impl SenderPool {
                 connection_params,
                 request_rx,
                 updates_tx,
-                connections: Vec::new(),
-                connection_pool: JoinSet::new(),
+                dc_pool,
             },
             handle: SenderPoolFatHandle {
                 thin: SenderPoolHandle(request_tx),
@@ -198,16 +209,6 @@ impl SenderPoolRunner {
     pub async fn run(mut self) {
         loop {
             tokio::select! {
-                biased;
-                completion = self.connection_pool.join_next(), if !self.connection_pool.is_empty() => {
-                    if let Err(err) = completion.unwrap() {
-                        if let Ok(reason) = err.try_into_panic() {
-                            panic::resume_unwind(reason);
-                        }
-                    }
-                    self.connections
-                        .retain(|connection| !connection.abort_handle.is_finished());
-                }
                 request = self.request_rx.recv() => {
                     let flow = if let Some(request) = request {
                         self.process_request(request).await
@@ -215,76 +216,39 @@ impl SenderPoolRunner {
                         ControlFlow::Break(())
                     };
                     match flow {
-                        ControlFlow::Continue(_) => continue,
+                        ControlFlow::Continue(_) => {
+                            // Cleanup finished connections
+                            self.dc_pool.cleanup();
+                            continue;
+                        }
                         ControlFlow::Break(_) => break,
                     }
                 }
             }
         }
 
-        self.connections.clear(); // drop all channels to cause the `run_sender` loops to stop
-        self.connection_pool.join_all().await;
+        // Shutdown the pool
+        self.dc_pool.shutdown().await;
     }
 
     async fn process_request(&mut self, request: Request) -> ControlFlow<()> {
         match request {
             Request::Invoke { dc_id, body, tx } => {
-                let Some(mut dc_option) = self.session.dc_option(dc_id) else {
-                    let _ = tx.send(Err(InvocationError::InvalidDc));
-                    return ControlFlow::Continue(());
-                };
-
-                let connection = match self
-                    .connections
-                    .iter()
-                    .find(|connection| connection.dc_id == dc_id)
-                {
-                    Some(connection) => connection,
-                    None => {
-                        let sender = match self.connect_sender(&dc_option).await {
-                            Ok(t) => t,
-                            Err(e) => {
-                                let _ = tx.send(Err(e));
-                                return ControlFlow::Continue(());
-                            }
-                        };
-
-                        dc_option.auth_key = Some(sender.auth_key());
-                        self.session.set_dc_option(&dc_option).await;
-
-                        let (rpc_tx, rpc_rx) = mpsc::unbounded_channel();
-                        let abort_handle = self.connection_pool.spawn(run_sender(
-                            sender,
-                            rpc_rx,
-                            self.updates_tx.clone(),
-                            dc_option.id == self.session.home_dc_id(),
-                        ));
-                        self.connections.push(ConnectionInfo {
-                            dc_id,
-                            rpc_tx,
-                            abort_handle,
-                        });
-                        self.connections.last().unwrap()
-                    }
-                };
-                let _ = connection.rpc_tx.send(Rpc { body, tx });
+                // Use the internal DC connection pool (like gotd/td)
+                // Note: invoke_raw handles all error sending internally via tx
+                let _ = self.dc_pool.invoke_raw(dc_id, body, tx).await;
                 ControlFlow::Continue(())
             }
-            Request::Disconnect { dc_id } => {
-                self.connections.retain(|connection| {
-                    if connection.dc_id == dc_id {
-                        connection.abort_handle.abort();
-                        false
-                    } else {
-                        true
-                    }
-                });
+            Request::Disconnect { dc_id: _ } => {
+                // Disconnect is no-op in the new pool implementation
+                // Connections are kept alive for reuse
                 ControlFlow::Continue(())
             }
             Request::Quit => ControlFlow::Break(()),
         }
     }
 
+    #[allow(dead_code)]
     async fn connect_sender(
         &mut self,
         dc_option: &DcOption,
@@ -392,6 +356,7 @@ impl SenderPoolRunner {
     }
 }
 
+#[allow(dead_code)]
 async fn run_sender(
     mut sender: Sender<Transport, grammers_mtproto::mtp::Encrypted>,
     mut rpc_rx: mpsc::UnboundedReceiver<Rpc>,
