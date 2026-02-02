@@ -22,11 +22,24 @@ use grammers_session::Session;
 use grammers_session::types::DcOption;
 use grammers_tl_types::Deserializable;
 use grammers_tl_types as tl;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{Mutex as TokioMutex, Semaphore};
+use std::sync::OnceLock;
 
 use crate::errors::InvocationError;
 use crate::sender::Sender;
 use crate::{connect, connect_with_auth, ConnectionParams, ServerAddr};
+
+/// Global semaphore to limit concurrent TCP connections across ALL pools.
+/// This prevents "too many open files" when creating many clients simultaneously.
+static GLOBAL_CONNECTION_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+
+fn global_connection_semaphore() -> &'static Semaphore {
+    GLOBAL_CONNECTION_SEMAPHORE.get_or_init(|| {
+        // Limit to 100 concurrent TCP connections globally
+        // This prevents overwhelming the system with too many connections at once
+        Semaphore::new(100)
+    })
+}
 
 /// Configuration for the DC connection pool, similar to gotd/td's `Config`.
 #[derive(Clone, Debug)]
@@ -190,6 +203,13 @@ impl DcConnectionPool {
         &self,
         dc_id: i32,
     ) -> Result<Sender<transport::Full, mtp::Encrypted>, InvocationError> {
+        // Acquire global semaphore permit to limit concurrent TCP connections
+        // This prevents "too many open files" when creating many clients
+        let _permit = global_connection_semaphore()
+            .acquire()
+            .await
+            .map_err(|_| InvocationError::Dropped)?;
+
         let Some(dc_option) = self.session.dc_option(dc_id) else {
             return Err(InvocationError::InvalidDc);
         };
@@ -252,6 +272,7 @@ impl DcConnectionPool {
 
         self.update_config(remote_config).await;
 
+        // Permit is released when dropped, allowing another connection to be created
         Ok(sender)
     }
 
