@@ -17,6 +17,6 @@ mod memory;
 mod sqlite;
 
 pub use erased::{ErasedSession, erase};
-pub use memory::MemorySession;
+pub use memory::{MemorySession, MemorySessionError};
 #[cfg(feature = "sqlite-storage")]
-pub use sqlite::SqliteSession;
+pub use sqlite::{SqliteSession, SqliteSessionError};

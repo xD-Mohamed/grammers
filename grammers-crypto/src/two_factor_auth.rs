@@ -101,7 +101,8 @@ pub fn check_p_and_g(p: &[u8], g: &i32) -> bool {
 fn check_p_prime_and_subgroup(p: &[u8], g: &i32) -> bool {
     let p = &BigUint::from_bytes_be(p);
 
-    if !safe_prime::check(p) {
+    // `safe_prime::check` returns an error when operating-system randomness is unavailable.
+    if !safe_prime::check(p).unwrap() {
         return false;
     }
 
