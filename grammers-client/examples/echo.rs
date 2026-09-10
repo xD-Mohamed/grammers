@@ -82,9 +82,6 @@ async fn async_main() -> Result {
         .stream_updates(updates, UpdatesConfiguration { catch_up: true })
         .await?;
     loop {
-        // Empty finished handlers (you could look at their return value here too.)
-        while let Some(_) = handler_tasks.try_join_next() {}
-
         // This code uses `select` on Ctrl+C to gracefully stop the client and have a chance to
         // save the session. You could have fancier logic to save the session if you wanted to
         // (or even save it on every update). Or you could also ignore Ctrl+C and just use
@@ -95,6 +92,11 @@ async fn async_main() -> Result {
                 let update = update?;
                 let handle = client.clone();
                 handler_tasks.spawn(handle_update(handle, update));
+            }
+            Some(res) = handler_tasks.join_next(), if !handler_tasks.is_empty() => {
+                if let Err(e) = res {
+                    log::error!("handler task panicked: {e}");
+                }
             }
         }
     }
