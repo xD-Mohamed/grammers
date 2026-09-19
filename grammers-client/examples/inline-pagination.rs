@@ -129,7 +129,7 @@ async fn async_main() -> Result {
         updates,
     } = SenderPool::new(Arc::clone(&session), api_id);
     let client = Client::new(handle);
-    let _ = tokio::spawn(runner.run());
+    drop(tokio::spawn(runner.run()));
 
     if !client.is_authorized().await? {
         println!("Signing in...");

@@ -58,8 +58,8 @@ pub fn parse_markdown_message(message: &str) -> (String, Vec<tl::enums::MessageE
 
         // [text link](https://example.com) or [user mention](tg://user?id=12345678)
         Event::Start(Tag::Link { dest_url, .. }) => {
-            if dest_url.starts_with(MENTION_URL_PREFIX) {
-                let user_id = dest_url[MENTION_URL_PREFIX.len()..].parse::<i64>().unwrap();
+            if let Some(user_id) = dest_url.strip_prefix(MENTION_URL_PREFIX) {
+                let user_id = user_id.parse::<i64>().unwrap();
                 entities.push(
                     tl::types::MessageEntityMentionName {
                         offset,

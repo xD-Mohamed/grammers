@@ -62,9 +62,7 @@ async fn map_random_ids_to_messages(
                     ) => Some(message),
                     _ => None,
                 })
-                .map(|message| {
-                    Message::from_raw(client, message, Some(fetched_in.clone()), peers.handle())
-                })
+                .map(|message| Message::from_raw(client, message, Some(fetched_in), peers.handle()))
                 .map(|message| (message.id(), message))
                 .collect::<HashMap<_, _>>();
 
@@ -948,7 +946,7 @@ impl Client {
             from_ephemeral: false,
         };
         let result = self.invoke(&request).await?;
-        Ok(map_random_ids_to_messages(self, peer.into(), &request.random_id, result).await?)
+        Ok(map_random_ids_to_messages(self, peer, &request.random_id, result).await?)
     }
 
     /// Gets the [`Message`] to which the input message is replying to.
@@ -1023,7 +1021,7 @@ impl Client {
         let peers = self.build_peer_map(users, chats).await;
         Ok(messages
             .into_iter()
-            .map(|m| Message::from_raw(self, m, Some(peer.into()), peers.handle()))
+            .map(|m| Message::from_raw(self, m, Some(peer), peers.handle()))
             .next()
             .filter(|m| !filter_req || m.peer_id() == message.peer_id()))
     }
@@ -1137,7 +1135,7 @@ impl Client {
         let peers = self.build_peer_map(users, chats).await;
         let mut map = messages
             .into_iter()
-            .map(|m| Message::from_raw(self, m, Some(peer.into()), peers.handle()))
+            .map(|m| Message::from_raw(self, m, Some(peer), peers.handle()))
             .filter(|m| m.peer_id() == peer.id)
             .map(|m| (m.id(), m))
             .collect::<HashMap<_, _>>();
@@ -1183,7 +1181,7 @@ impl Client {
         let peers = self.build_peer_map(users, chats).await;
         Ok(messages
             .into_iter()
-            .map(|m| Message::from_raw(self, m, Some(peer.into()), peers.handle()))
+            .map(|m| Message::from_raw(self, m, Some(peer), peers.handle()))
             .find(|m| m.peer_id() == peer.id))
     }
 

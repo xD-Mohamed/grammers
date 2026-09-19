@@ -44,6 +44,7 @@ enum Request {
         dc_id: i32,
         body: Bytes,
         tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
+        permit: Option<crate::InvocationPermit>,
     },
     CheckRetry {
         error: InvocationError,
@@ -60,6 +61,7 @@ enum Request {
 struct Rpc {
     body: Bytes,
     tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
+    permit: Option<crate::InvocationPermit>,
 }
 
 struct ConnectionInfo {
@@ -124,7 +126,7 @@ pub struct SenderPoolFatHandle {
 
 /// Cheaply cloneable handle to interact with its [`SenderPoolRunner`].
 #[derive(Clone)]
-pub struct SenderPoolHandle(mpsc::UnboundedSender<Request>, Routes);
+pub struct SenderPoolHandle(mpsc::UnboundedSender<Request>, Routes, bool);
 
 /// Builder to configure the runner to drive I/O and linked handles.
 pub struct SenderPool {
@@ -153,7 +155,7 @@ pub struct SenderPoolRunner {
     api_id: i32,
     connection_params: ConnectionParams,
     request_rx: mpsc::UnboundedReceiver<Request>,
-    updates_tx: mpsc::Sender<UpdatesLike>,
+    updates_tx: Option<mpsc::Sender<UpdatesLike>>,
     connections: Vec<ConnectionInfo>,
     connection_pool: JoinSet<Result<(), ReadError>>,
     routes: Routes,
@@ -168,6 +170,11 @@ impl Deref for SenderPoolFatHandle {
 }
 
 impl SenderPoolHandle {
+    /// Whether this pool accepts API update delivery (fixed at construction).
+    pub fn updates_enabled(&self) -> bool {
+        self.2
+    }
+
     /// Communicate with the running [`SenderPoolRunner`] instance
     /// to invoke the request in the specified datacenter.
     pub async fn invoke_in_dc<R: tl::RemoteCall>(
@@ -203,13 +210,53 @@ impl SenderPoolHandle {
         dc_id: i32,
         body: Bytes,
     ) -> Result<InvokeResponse, InvocationError> {
+        self.invoke_shared(dc_id, body, None).await
+    }
+
+    /// Invoke with an exclusive reservation held by the SDK until retirement, even
+    /// if the waiting caller times out. Does not add an automatic retry.
+    pub async fn raw_invoke_shared_in_dc_tracked(
+        &self,
+        dc_id: i32,
+        body: Bytes,
+        permit: crate::InvocationPermit,
+    ) -> Result<InvokeResponse, InvocationError> {
+        self.invoke_shared(dc_id, body, Some(permit)).await
+    }
+
+    async fn invoke_shared(
+        &self,
+        dc_id: i32,
+        body: Bytes,
+        permit: Option<crate::InvocationPermit>,
+    ) -> Result<InvokeResponse, InvocationError> {
+        self.start_invoke_shared(dc_id, body, permit)?.await
+    }
+
+    /// Enqueue a tracked request immediately, returning a movable response waiter.
+    /// The caller supplies its own deadline; no task or timer is spawned here.
+    pub fn start_raw_invoke_shared_in_dc_tracked(
+        &self,
+        dc_id: i32,
+        body: Bytes,
+        permit: crate::InvocationPermit,
+    ) -> Result<crate::PendingInvocation, InvocationError> {
+        self.start_invoke_shared(dc_id, body, Some(permit))
+    }
+
+    fn start_invoke_shared(
+        &self,
+        dc_id: i32,
+        body: Bytes,
+        permit: Option<crate::InvocationPermit>,
+    ) -> Result<crate::PendingInvocation, InvocationError> {
         if body.len() < 4 {
             return Err(tl::deserialize::Error::UnexpectedEof.into());
         }
         let (tx, rx) = oneshot::channel();
-        let rpc = Rpc { body, tx };
+        let rpc = Rpc { body, tx, permit };
         let rpc = match self.try_route(dc_id, rpc)? {
-            None => return rx.await.map_err(|_| InvocationError::Dropped)?,
+            None => return Ok(crate::PendingInvocation { receiver: rx }),
             Some(rpc) => rpc,
         };
         self.0
@@ -217,9 +264,10 @@ impl SenderPoolHandle {
                 dc_id,
                 body: rpc.body,
                 tx: rpc.tx,
+                permit: rpc.permit,
             })
             .map_err(|_| InvocationError::Dropped)?;
-        rx.await.map_err(|_| InvocationError::Dropped)?
+        Ok(crate::PendingInvocation { receiver: rx })
     }
 
     fn try_route(&self, dc_id: i32, rpc: Rpc) -> Result<Option<Rpc>, InvocationError> {
@@ -363,6 +411,7 @@ impl SenderPool {
         S: Session + Sized,
         S::Error: std::error::Error + Send + Sync + 'static,
     {
+        let receive_updates = connection_params.receive_updates;
         let session = erase(session);
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         let routes = Routes::default();
@@ -375,13 +424,13 @@ impl SenderPool {
                 api_id,
                 connection_params,
                 request_rx,
-                updates_tx,
+                updates_tx: receive_updates.then_some(updates_tx),
                 connections: Vec::new(),
                 connection_pool: JoinSet::new(),
                 routes: Arc::clone(&routes),
             },
             handle: SenderPoolFatHandle {
-                thin: SenderPoolHandle(request_tx, routes),
+                thin: SenderPoolHandle(request_tx, routes, receive_updates),
                 session: Arc::clone(&session),
                 api_id,
             },
@@ -399,11 +448,9 @@ impl SenderPoolRunner {
             tokio::select! {
                 biased;
                 completion = self.connection_pool.join_next(), if !self.connection_pool.is_empty() => {
-                    if let Err(err) = completion.unwrap() {
-                        if let Ok(reason) = err.try_into_panic() {
+                    if let Some(reason) = completion.unwrap().err().and_then(|err| err.try_into_panic().ok()) {
                             panic::resume_unwind(reason);
                         }
-                    }
                     self.connections
                         .retain(|connection| !connection.abort_handle.is_finished());
                     self.routes.write().unwrap_or_else(|e| e.into_inner())
@@ -434,7 +481,12 @@ impl SenderPoolRunner {
 
     async fn process_request(&mut self, request: Request) -> ControlFlow<()> {
         match request {
-            Request::Invoke { dc_id, body, tx } => {
+            Request::Invoke {
+                dc_id,
+                body,
+                tx,
+                permit,
+            } => {
                 if tx.is_closed() {
                     return ControlFlow::Continue(());
                 }
@@ -452,7 +504,7 @@ impl SenderPoolRunner {
                         },
                     };
                 if !tx.is_closed() {
-                    let _ = connection.rpc_tx.send(Rpc { body, tx });
+                    let _ = connection.rpc_tx.send(Rpc { body, tx, permit });
                 }
                 ControlFlow::Continue(())
             }
@@ -503,7 +555,20 @@ impl SenderPoolRunner {
             None => return Err(InvocationError::InvalidDc),
         };
 
-        let sender = self.connect_sender(&dc_option).await?;
+        let limit = self.connection_params.connection_timeout;
+        let connecting = self.connect_sender(&dc_option);
+        let sender = if let Some(limit) = limit {
+            tokio::time::timeout(limit, connecting)
+                .await
+                .map_err(|_| {
+                    InvocationError::Io(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "connection initialization deadline elapsed",
+                    ))
+                })??
+        } else {
+            connecting.await?
+        };
 
         dc_option.auth_key = Some(sender.auth_key());
         self.session.set_dc_option(&dc_option).await?;
@@ -574,10 +639,12 @@ impl SenderPoolRunner {
             connect(transport(), addr()).await?
         };
 
+        sender.set_receive_updates(self.connection_params.receive_updates);
         let enums::Config::Config(remote_config) = match sender.invoke(&init_connection).await {
             Ok(config) => config,
             Err(InvocationError::Transport(transport::Error::BadStatus { status: 404 })) => {
                 sender = connect(transport(), addr()).await?;
+                sender.set_receive_updates(self.connection_params.receive_updates);
                 sender.invoke(&init_connection).await?
             }
             Err(e) => return Err(e),
@@ -643,7 +710,7 @@ impl SenderPoolRunner {
 async fn run_sender(
     mut sender: Sender<Transport, grammers_mtproto::mtp::Encrypted>,
     mut rpc_rx: mpsc::UnboundedReceiver<Rpc>,
-    updates: mpsc::Sender<UpdatesLike>,
+    updates: Option<mpsc::Sender<UpdatesLike>>,
     home_sender: bool,
 ) -> Result<(), ReadError> {
     let mut dropped: usize = 0;
@@ -654,9 +721,9 @@ async fn run_sender(
         tokio::select! {
             step = sender.step() => match step {
                 Ok(all_new_updates) => {
-                    if updates_closed {
+                    let Some(updates) = updates.as_ref().filter(|_| !updates_closed) else {
                         continue;
-                    }
+                    };
                     for new_updates in all_new_updates {
                         if let Err(e) = updates.try_send(new_updates) {
                             match e {
@@ -681,14 +748,14 @@ async fn run_sender(
                     }
                 },
                 Err(err) => {
-                    if home_sender {
+                    if let (true, Some(updates)) = (home_sender, &updates) {
                         let _ = updates.try_send(UpdatesLike::ConnectionClosed);
                     }
                     break Err(err)
                 },
             },
             rpc = rpc_rx.recv() => match rpc {
-                Some(rpc) => sender.enqueue_body(rpc.body, rpc.tx),
+                Some(rpc) => sender.enqueue_tracked_body(rpc.body, rpc.tx, rpc.permit),
                 None => break Ok(()),
             },
         }
@@ -698,7 +765,9 @@ async fn run_sender(
 impl fmt::Debug for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Invoke { dc_id, body, tx } => f
+            Self::Invoke {
+                dc_id, body, tx, ..
+            } => f
                 .debug_struct("Invoke")
                 .field("dc_id", dc_id)
                 .field(
@@ -734,9 +803,125 @@ impl fmt::Debug for Request {
 mod optimization_tests {
     use super::*;
 
+    #[tokio::test]
+    async fn connection_initialization_deadline_releases_tracked_request() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        session
+            .set_dc_option(&DcOption {
+                id: 4,
+                ipv4: match address {
+                    std::net::SocketAddr::V4(a) => a,
+                    _ => unreachable!(),
+                },
+                ipv6: SocketAddrV6::new(Ipv6Addr::LOCALHOST, address.port(), 0, 0),
+                auth_key: Some([0; 256]),
+            })
+            .await
+            .unwrap();
+        let pool = SenderPool::with_configuration(
+            session,
+            1,
+            ConnectionParams {
+                receive_updates: false,
+                connection_timeout: Some(Duration::from_millis(100)),
+                ..ConnectionParams::default()
+            },
+        );
+        let handle = pool.handle.thin;
+        let runner = tokio::spawn(pool.runner.run());
+        let tracker = crate::InvocationTracker::default();
+        let call = handle
+            .start_raw_invoke_shared_in_dc_tracked(
+                4,
+                Bytes::from_static(&[1; 4]),
+                tracker.try_acquire().unwrap(),
+            )
+            .unwrap();
+        let _peer = tokio::time::timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(1), call)
+            .await
+            .unwrap();
+        assert!(
+            matches!(result, Err(InvocationError::Io(e)) if e.kind() == std::io::ErrorKind::TimedOut)
+        );
+        assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+        assert!(handle.quit());
+        tokio::time::timeout(Duration::from_secs(1), runner)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
     fn fake_handle() -> (SenderPoolHandle, mpsc::UnboundedReceiver<Request>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (SenderPoolHandle(tx, Routes::default()), rx)
+        (SenderPoolHandle(tx, Routes::default(), true), rx)
+    }
+
+    #[tokio::test]
+    async fn disabled_update_configuration_closes_channel_and_rejects_stream_creation() {
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        let config = ConnectionParams {
+            receive_updates: false,
+            ..ConnectionParams::default()
+        };
+        let mut pool = SenderPool::with_configuration(session, 1, config);
+        assert!(!pool.handle.updates_enabled());
+        assert!(pool.updates.recv().await.is_none());
+        let stream = crate::UpdatesReceiver::create(
+            pool.handle.thin,
+            pool.handle.session,
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await;
+        assert!(stream.is_err());
+        assert!(matches!(
+            pool.runner.request_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Disconnected)
+        ));
+        assert!(ConnectionParams::default().receive_updates);
+    }
+
+    #[tokio::test]
+    async fn connection_errors_still_return_without_emitting_disabled_update_events() {
+        for enabled in [true, false] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (sender, peer) = tokio::join!(
+                connect_with_auth(
+                    transport::Full::new(),
+                    ServerAddr::Tcp { address },
+                    [0; 256]
+                ),
+                listener.accept(),
+            );
+            let mut sender = sender.unwrap();
+            sender.set_receive_updates(enabled);
+            let (_rpc_tx, rpc_rx) = mpsc::unbounded_channel();
+            let (updates_tx, mut updates_rx) = mpsc::channel(1);
+            let updates = enabled.then_some(updates_tx);
+            drop(peer.unwrap());
+            let result = tokio::time::timeout(
+                Duration::from_secs(1),
+                run_sender(sender, rpc_rx, updates, true),
+            )
+            .await
+            .unwrap();
+            assert!(result.is_err());
+            if enabled {
+                assert!(matches!(
+                    updates_rx.recv().await,
+                    Some(UpdatesLike::ConnectionClosed)
+                ));
+            } else {
+                assert!(updates_rx.recv().await.is_none());
+            }
+        }
     }
 
     #[tokio::test]
@@ -920,7 +1105,15 @@ mod optimization_tests {
                 let forwarding_tx = rpc_tx.clone();
                 let forwarder = tokio::spawn(async move {
                     while let Some(Request::Invoke { body, tx, .. }) = pool_rx.recv().await {
-                        assert!(forwarding_tx.send(Rpc { body, tx }).is_ok());
+                        assert!(
+                            forwarding_tx
+                                .send(Rpc {
+                                    body,
+                                    tx,
+                                    permit: None
+                                })
+                                .is_ok()
+                        );
                     }
                 });
                 let responder = tokio::spawn(async move {
@@ -967,7 +1160,7 @@ mod optimization_tests {
     #[tokio::test]
     async fn malformed_raw_bodies_fail_before_reaching_the_runner() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = SenderPoolHandle(tx, Routes::default());
+        let handle = SenderPoolHandle(tx, Routes::default(), true);
         for len in 0..4 {
             assert!(matches!(
                 handle.raw_invoke_in_dc(4, vec![0; len]).await,
@@ -990,7 +1183,7 @@ mod optimization_tests {
     async fn shared_and_owned_request_apis_preserve_the_payload_allocation() {
         for shared in [false, true] {
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let handle = SenderPoolHandle(tx, Routes::default());
+            let handle = SenderPoolHandle(tx, Routes::default(), true);
             let body = vec![1, 0, 0, 0];
             let address = body.as_ptr() as usize;
             let call = tokio::spawn(async move {
@@ -1000,7 +1193,10 @@ mod optimization_tests {
                     handle.raw_invoke_in_dc(4, body).await
                 }
             });
-            let Request::Invoke { body, tx, dc_id } = rx.recv().await.unwrap() else {
+            let Request::Invoke {
+                body, tx, dc_id, ..
+            } = rx.recv().await.unwrap()
+            else {
                 panic!("expected invocation");
             };
             assert_eq!(dc_id, 4);
@@ -1013,7 +1209,7 @@ mod optimization_tests {
     #[tokio::test]
     async fn typed_retry_reuses_request_storage_and_keeps_retry_policy() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = SenderPoolHandle(tx, Routes::default());
+        let handle = SenderPoolHandle(tx, Routes::default(), true);
         let call = tokio::spawn(async move { handle.do_invoke_in_dc(4, vec![1, 0, 0, 0]).await });
         let Request::Invoke {
             body: first, tx, ..

@@ -120,7 +120,7 @@ async fn async_main() -> Result {
 
     // Give a chance to all on-going handlers to finish.
     println!("Waiting for any slow handlers to finish...");
-    while let Some(_) = handler_tasks.join_next().await {}
+    while handler_tasks.join_next().await.is_some() {}
 
     Ok(())
 }

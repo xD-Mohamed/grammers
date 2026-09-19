@@ -184,10 +184,10 @@ impl PeerId {
 
     /// Creates a peer identity from a [Bot API dialog ID](https://core.telegram.org/api/bots/ids).
     pub fn from_bot_api_dialog_id(id: i64) -> Option<Self> {
-        if (1 <= id && id <= 0xffffffffff)
-            || (-999999999999 <= id && id <= -1)
-            || (-1997852516352 <= id && id <= -1000000000001
-                || (-4000000000000 <= id && id <= -2002147483649))
+        if (1..=0xffffffffff).contains(&id)
+            || (-999999999999..=-1).contains(&id)
+            || ((-1997852516352..=-1000000000001).contains(&id)
+                || (-4000000000000..=-2002147483649).contains(&id))
         {
             Some(Self(id))
         } else {
@@ -613,7 +613,7 @@ impl<'a> From<&'a tl::types::User> for PeerRef {
             auth: user
                 .access_hash
                 .map(PeerAuth::from_hash)
-                .unwrap_or(PeerAuth::default()),
+                .unwrap_or_default(),
         }
     }
 }
@@ -697,7 +697,7 @@ impl<'a> From<&'a tl::types::Channel> for PeerRef {
             auth: channel
                 .access_hash
                 .map(PeerAuth::from_hash)
-                .unwrap_or(PeerAuth::default()),
+                .unwrap_or_default(),
         }
     }
 }
@@ -730,7 +730,7 @@ impl<'a> From<&'a tl::types::CommunityForbidden> for PeerRef {
             auth: community
                 .access_hash
                 .map(PeerAuth::from_hash)
-                .unwrap_or(PeerAuth::default()),
+                .unwrap_or_default(),
         }
     }
 }
@@ -748,7 +748,7 @@ impl<'a> From<&'a tl::types::Community> for PeerRef {
             auth: community
                 .access_hash
                 .map(PeerAuth::from_hash)
-                .unwrap_or(PeerAuth::default()),
+                .unwrap_or_default(),
         }
     }
 }
@@ -863,22 +863,20 @@ impl From<tl::enums::Chat> for PeerInfo {
 impl<'a> From<&'a tl::enums::Chat> for PeerInfo {
     fn from(chat: &'a tl::enums::Chat) -> Self {
         match chat {
-            tl::enums::Chat::Chat(chat) => <Self as From<&tl::types::Chat>>::from(&chat),
-            tl::enums::Chat::Empty(chat) => <Self as From<&tl::types::ChatEmpty>>::from(&chat),
+            tl::enums::Chat::Chat(chat) => <Self as From<&tl::types::Chat>>::from(chat),
+            tl::enums::Chat::Empty(chat) => <Self as From<&tl::types::ChatEmpty>>::from(chat),
             tl::enums::Chat::Forbidden(chat) => {
-                <Self as From<&tl::types::ChatForbidden>>::from(&chat)
+                <Self as From<&tl::types::ChatForbidden>>::from(chat)
             }
-            tl::enums::Chat::Channel(channel) => {
-                <Self as From<&tl::types::Channel>>::from(&channel)
-            }
+            tl::enums::Chat::Channel(channel) => <Self as From<&tl::types::Channel>>::from(channel),
             tl::enums::Chat::ChannelForbidden(channel) => {
-                <Self as From<&tl::types::ChannelForbidden>>::from(&channel)
+                <Self as From<&tl::types::ChannelForbidden>>::from(channel)
             }
             tl::enums::Chat::CommunityForbidden(community) => {
-                <Self as From<&tl::types::CommunityForbidden>>::from(&community)
+                <Self as From<&tl::types::CommunityForbidden>>::from(community)
             }
             tl::enums::Chat::Community(community) => {
-                <Self as From<&tl::types::Community>>::from(&community)
+                <Self as From<&tl::types::Community>>::from(community)
             }
         }
     }
@@ -893,8 +891,8 @@ impl From<tl::enums::User> for PeerInfo {
 impl<'a> From<&'a tl::enums::User> for PeerInfo {
     fn from(user: &'a tl::enums::User) -> Self {
         match user {
-            tl::enums::User::User(user) => <Self as From<&tl::types::User>>::from(&user),
-            tl::enums::User::Empty(user) => <Self as From<&tl::types::UserEmpty>>::from(&user),
+            tl::enums::User::User(user) => <Self as From<&tl::types::User>>::from(user),
+            tl::enums::User::Empty(user) => <Self as From<&tl::types::UserEmpty>>::from(user),
         }
     }
 }

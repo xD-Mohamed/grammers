@@ -22,7 +22,7 @@ use crate::message_box::defs::UpdatesLike;
 use crate::types::{ChannelState, UpdatesState};
 
 thread_local! {
-    static NOW: RefCell<Instant> = RefCell::new(Instant(Duration::ZERO));
+    static NOW: RefCell<Instant> = const { RefCell::new(Instant(Duration::ZERO)) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -230,8 +230,8 @@ fn test_iter_dialogs_flow() {
         UpdatesState {
             channels: vec![
                 // Notably: sorted, and only the first set is kept.
-                ChannelState { id: 54, pts: 32 }.into(),
-                ChannelState { id: 98, pts: 76 }.into(),
+                ChannelState { id: 54, pts: 32 },
+                ChannelState { id: 98, pts: 76 },
             ],
             ..message_boxes.session_state()
         }
@@ -325,7 +325,7 @@ fn test_next_raw_update_flow_channel_timeout() {
     assert_eq!(
         message_boxes.session_state(),
         UpdatesState {
-            channels: vec![ChannelState { id: 12, pts: 56 }.into()],
+            channels: vec![ChannelState { id: 12, pts: 56 }],
             ..message_boxes.session_state()
         }
     );
@@ -346,7 +346,7 @@ fn test_next_raw_update_flow_channel_issues() {
     assert_eq!(
         message_boxes.session_state(),
         UpdatesState {
-            channels: vec![ChannelState { id: 12, pts: 34 }.into()],
+            channels: vec![ChannelState { id: 12, pts: 34 }],
             ..message_boxes.session_state()
         }
     );
@@ -432,7 +432,7 @@ fn test_process_socket_updates_flow_already_processed() {
         (NO_PTS, 56), // seq ok (0), pts already applied (=)
     ] {
         assert_eq!(
-            message_boxes.process_updates(updates(13, seq, pts).into()), // date doesn't matter
+            message_boxes.process_updates(updates(13, seq, pts)), // date doesn't matter
             Ok((Vec::new(), Vec::new(), Vec::new()))
         );
     }
@@ -454,7 +454,7 @@ fn test_process_socket_updates_flow_common_already_applied() {
         (NO_PTS, 56), // seq ok (0), pts already applied (=)
     ] {
         assert_eq!(
-            message_boxes.process_updates(updates(13, seq, pts).into()), // date doesn't matter
+            message_boxes.process_updates(updates(13, seq, pts)), // date doesn't matter
             Ok((Vec::new(), Vec::new(), Vec::new()))
         );
     }

@@ -25,10 +25,15 @@
 
 mod configuration;
 mod errors;
+mod invocation_tracker;
 mod net;
 mod sender;
 mod sender_pool;
 mod updates_receiver;
+
+pub use invocation_tracker::{
+    InvocationPermit, InvocationStage, InvocationTracker, PendingInvocation,
+};
 
 pub use configuration::{
     AutoSleep, ConnectionParams, NoRetries, RetryContext, RetryPolicy, UpdatesConfiguration,

@@ -98,6 +98,10 @@ pub struct ChatPhoto {
 /// Message media (e.g. photos, polls, videos).
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Keep public variants inline: boxing breaks constructors and adds allocations"
+)]
 pub enum Media {
     /// Compressed JPEG photo.
     Photo(Photo),

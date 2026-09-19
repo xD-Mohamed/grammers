@@ -200,13 +200,11 @@ impl Client {
                 self.0.session.set_home_dc_id(new_dc_id).await?;
                 self.invoke(&request).await?
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         };
 
         match result {
-            tl::enums::auth::Authorization::Authorization(x) => {
-                self.complete_login(x).await.map_err(Into::into)
-            }
+            tl::enums::auth::Authorization::Authorization(x) => self.complete_login(x).await,
             tl::enums::auth::Authorization::SignUpRequired(_) => {
                 panic!("API returned SignUpRequired even though we're logging in as a bot");
             }
@@ -284,7 +282,7 @@ impl Client {
                     SC::PaymentRequired(_) => unimplemented!(),
                 }
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         };
 
         Ok(LoginToken {
@@ -445,7 +443,7 @@ impl Client {
 
         let check_password = tl::functions::auth::CheckPassword {
             password: tl::enums::InputCheckPasswordSrp::Srp(tl::types::InputCheckPasswordSrp {
-                srp_id: password_info.srp_id.clone().unwrap(),
+                srp_id: password_info.srp_id.unwrap(),
                 a: g_a.to_vec(),
                 m1: m1.to_vec(),
             }),

@@ -14,14 +14,15 @@
 mod attributes;
 mod downloadable;
 mod input_media;
-mod media;
+#[path = "media.rs"]
+mod model;
 mod photo_sizes;
 
 pub use attributes::Attribute;
 pub use downloadable::Downloadable;
 use grammers_tl_types as tl;
 pub use input_media::InputMedia;
-pub use media::{
+pub use model::{
     ChatPhoto, Contact, Dice, Document, Geo, GeoLive, Media, Photo, Poll, Sticker, Uploaded, Venue,
     WebPage,
 };

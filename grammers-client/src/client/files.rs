@@ -59,9 +59,8 @@ impl DownloadIter {
     /// the range `MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE`.
     pub fn chunk_size(mut self, size: i32) -> Self {
         assert!((MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE).contains(&size) && size % MIN_CHUNK_SIZE == 0);
-        match &mut self.variant {
-            DownloadIterVariant::Request(request) => request.limit = size,
-            _ => {}
+        if let DownloadIterVariant::Request(request) = &mut self.variant {
+            request.limit = size
         }
         self
     }
@@ -70,11 +69,8 @@ impl DownloadIter {
     /// skip less data, modify the `chunk_size` before calling this method, and then reset it to
     /// any value you want.
     pub fn skip_chunks(mut self, n: i32) -> Self {
-        match &mut self.variant {
-            DownloadIterVariant::Request(request) => {
-                request.offset += request.limit as i64 * (n as i64)
-            }
-            _ => {}
+        if let DownloadIterVariant::Request(request) = &mut self.variant {
+            request.offset += request.limit as i64 * (n as i64)
         }
         self
     }
@@ -191,10 +187,7 @@ impl Client {
                 client: self.clone(),
                 done: false,
                 size: None,
-                variant: DownloadIterVariant::PreFailed(io::Error::new(
-                    io::ErrorKind::Other,
-                    "media not downloadable",
-                )),
+                variant: DownloadIterVariant::PreFailed(io::Error::other("media not downloadable")),
                 dc_id: downloadable.dc_id(),
             }
         }
@@ -430,10 +423,7 @@ impl Client {
                             .map_err(io::Error::other)?;
 
                         if !ok {
-                            return Err(io::Error::new(
-                                io::ErrorKind::Other,
-                                "server failed to store uploaded data",
-                            ));
+                            return Err(io::Error::other("server failed to store uploaded data"));
                         }
                     }
                     Ok(())
@@ -467,10 +457,7 @@ impl Client {
                     .map_err(io::Error::other)?;
 
                 if !ok {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "server failed to store uploaded data",
-                    ));
+                    return Err(io::Error::other("server failed to store uploaded data"));
                 }
             }
             Ok(Uploaded::from_raw(
@@ -537,7 +524,7 @@ struct PartStream<'a, S: AsyncRead + Unpin> {
 
 impl<'a, S: AsyncRead + Unpin> PartStream<'a, S> {
     fn new(stream: &'a mut S, size: usize) -> Self {
-        let total_parts = ((size + MAX_CHUNK_SIZE as usize - 1) / MAX_CHUNK_SIZE as usize) as i32;
+        let total_parts = size.div_ceil(MAX_CHUNK_SIZE as usize) as i32;
         Self {
             inner: AsyncMutex::new(PartStreamInner {
                 stream,

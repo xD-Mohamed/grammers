@@ -34,8 +34,7 @@ padding and checksum validation. Do not remove cryptographic or protocol checks.
 Large-buffer consumers may have different allocation/latency tradeoffs.
 
 Network integration tests using Telegram's public test DC are explicitly ignored;
-default workspace tests do not need live account credentials. Known upstream Clippy
-style warnings remain; do not describe strict Clippy as clean until addressed.
+default workspace tests do not need live account credentials. Strict all-target/all-feature Clippy must pass before publishing.
 The library's initial implementation changes are not deployed to an application
 automatically. Keep consumer compatibility checks isolated from public source.
 
@@ -65,3 +64,31 @@ Follow-up validation: 297 all-feature workspace tests/doctests passed (19 ignore
 all-target/all-feature check passed, and 169 consumer release tests plus strict
 consumer Clippy passed. Library Clippy retains upstream style warnings. See
 PERFORMANCE.md for local ACK/routing benchmarks and their measurement limits.
+
+
+## Optional update delivery and invocation lifetime
+
+ConnectionParams.receive_updates defaults true; disabled mode wraps API calls,
+skips unsolicited update delivery and rejects update-stream creation while keeping
+RPC/service handling. Set it before initialization, including fresh-key fallback.
+Borrowed message/container views must not escape decrypted-input lifetime; returned
+RPC buffers remain owned. Prevalidate all container envelopes before side effects.
+Keep the sender's pinned keepalive timer across step cancellation.
+
+InvocationTracker is optional and its permit belongs to the SDK request, not the
+caller future. Never release a sent reservation solely because a caller cancelled.
+PendingInvocation does not create an extra task. Optional connection_timeout bounds
+network establishment/init, not ordinary RPCs or session-storage calls. Existing
+untracked APIs and default update-enabled behavior remain supported. See
+PERFORMANCE.md for verification and component benchmark limitations.
+
+
+## Warning-clean builds
+
+Workspace all-target/all-feature Clippy passes with -D warnings. Cleanup uses
+behavior-preserving helpers and Rust 1.87-compatible syntax. Example runner tasks
+are explicitly detached. Private module aliases avoid repeated module names.
+The public Media enum retains its inline variants with one documented
+large_enum_variant expectation: boxing would break constructors and introduce
+allocations. There is no blanket warning suppression. Stable rustfmt no longer
+requests the nightly-only group_imports option. Recheck after upstream merges.

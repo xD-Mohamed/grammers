@@ -202,10 +202,8 @@ pub fn step1() -> Result<(tl::functions::ReqPqMulti, Step1), Error> {
     }
 
     let res = do_step1(&random_bytes);
-    if TRACE_AUTH_GEN {
-        if let Ok((x, _)) = &res {
-            println!("> {}", hex::to_hex(&x.to_bytes()));
-        }
+    if let (true, Ok((x, _))) = (TRACE_AUTH_GEN, &res) {
+        println!("> {}", hex::to_hex(&x.to_bytes()));
     }
     res
 }
@@ -237,10 +235,8 @@ pub fn step2(
     }
 
     let res = do_step2(data, response, &random_bytes);
-    if TRACE_AUTH_GEN {
-        if let Ok((x, _)) = &res {
-            println!("> {}", hex::to_hex(&x.to_bytes()));
-        }
+    if let (true, Ok((x, _))) = (TRACE_AUTH_GEN, &res) {
+        println!("> {}", hex::to_hex(&x.to_bytes()));
     }
     res
 }
@@ -372,10 +368,8 @@ pub fn step3(
         .as_secs() as i32;
 
     let res = do_step3(data, response, &random_bytes, now);
-    if TRACE_AUTH_GEN {
-        if let Ok((x, _)) = &res {
-            println!("> {}", hex::to_hex(&x.to_bytes()));
-        }
+    if let (true, Ok((x, _))) = (TRACE_AUTH_GEN, &res) {
+        println!("> {}", hex::to_hex(&x.to_bytes()));
     }
     res
 }

@@ -6,6 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::pin::Pin;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, SystemTime};
 use std::{io, thread};
@@ -24,7 +25,7 @@ use tl::Serializable;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::TryRecvError;
-use tokio::time::{Instant, sleep_until};
+use tokio::time::{Instant, Sleep, sleep_until};
 
 use crate::errors::{InvocationError, ReadError, RpcError};
 use crate::net::{NetStream, ServerAddr};
@@ -108,7 +109,7 @@ pub struct Sender<T: Transport, M: Mtp> {
     mtp: M,
     addr: ServerAddr,
     requests: Vec<Request>,
-    next_ping: Instant,
+    ping_timer: Pin<Box<Sleep>>,
 
     // Transport-level buffers and positions
     read_buffer: Vec<u8>,
@@ -122,6 +123,7 @@ struct Request {
     state: RequestState,
     // None is a protocol-owned keepalive, which must survive caller cancellation.
     result: Option<oneshot::Sender<Result<Vec<u8>, InvocationError>>>,
+    permit: Option<crate::InvocationPermit>,
 }
 
 #[derive(Clone, Debug)]
@@ -158,7 +160,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             mtp,
             addr,
             requests: vec![],
-            next_ping: Instant::now() + PING_DELAY,
+            ping_timer: Box::pin(sleep_until(Instant::now() + PING_DELAY)),
 
             read_buffer: vec![0; INITIAL_BUFFER_SIZE],
             read_tail: 0,
@@ -193,16 +195,26 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         body: Bytes,
         tx: oneshot::Sender<Result<Vec<u8>, InvocationError>>,
     ) {
+        self.enqueue_tracked_body(body, tx, None);
+    }
+
+    pub(crate) fn enqueue_tracked_body(
+        &mut self,
+        body: Bytes,
+        tx: oneshot::Sender<Result<Vec<u8>, InvocationError>>,
+        permit: Option<crate::InvocationPermit>,
+    ) {
         if tx.is_closed() {
             return;
         }
-        self.enqueue_request(body, Some(tx));
+        self.enqueue_request(body, Some(tx), permit);
     }
 
     fn enqueue_request(
         &mut self,
         body: Bytes,
         result: Option<oneshot::Sender<Result<Vec<u8>, InvocationError>>>,
+        permit: Option<crate::InvocationPermit>,
     ) {
         assert!(body.len() >= 4);
         let req_id = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
@@ -215,6 +227,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             body,
             state: RequestState::NotSerialized,
             result,
+            permit,
         });
     }
 
@@ -253,7 +266,6 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         );
 
         let (mut reader, mut writer) = self.stream.split();
-        let sleep = sleep_until(self.next_ping);
 
         let res = tokio::select! {
             n = reader.read(&mut self.read_buffer[self.read_tail..]) => {
@@ -265,7 +277,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                     Ok(Vec::new())
                 })
             }
-            _ = sleep => {
+            _ = self.ping_timer.as_mut() => {
                 self.on_ping_timeout();
                 Ok(Vec::new())
             }
@@ -421,6 +433,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 RequestState::Serialized(pair) => {
                     debug!("sent request with {:?}", pair);
                     req.state = RequestState::Sent(pair.clone());
+                    if let Some(permit) = &req.permit {
+                        permit.mark_sent();
+                    }
                 }
             }
         }
@@ -439,8 +454,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             .to_bytes()
             .into(),
             None,
+            None,
         );
-        self.next_ping = Instant::now() + PING_DELAY;
+        self.ping_timer.as_mut().reset(Instant::now() + PING_DELAY);
     }
 
     /// Handle errors that occured while performing I/O.
@@ -523,13 +539,11 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 } else {
                     updates.push(UpdatesLike::AffectedMessages(affected));
                 }
-                return;
             }
             (Ok(u), _) => {
                 // In the future, we might want to flag "updates produced by the client" somehow.
                 // This would be the starting place to do it.
                 updates.push(u);
-                return;
             }
             (Err(e), _) => {
                 // This shouldn't happen. We just made the request, so they shouldn't be stale.
@@ -690,6 +704,11 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 }
 
 impl<T: Transport> Sender<T, mtp::Encrypted> {
+    /// Configure API update suppression before sending initConnection.
+    /// Protocol messages and RPC replies are unaffected.
+    pub fn set_receive_updates(&mut self, enabled: bool) {
+        self.mtp.set_receive_updates(enabled);
+    }
     pub fn auth_key(&self) -> [u8; 256] {
         self.mtp.auth_key()
     }
@@ -729,6 +748,10 @@ pub async fn generate_auth_key<T: Transport>(
     } = authentication::create_key(data, response)?;
     info!("authorization key generated successfully");
 
+    sender
+        .ping_timer
+        .as_mut()
+        .reset(Instant::now() + PING_DELAY);
     Ok(Sender {
         stream: sender.stream,
         transport: sender.transport,
@@ -737,7 +760,7 @@ pub async fn generate_auth_key<T: Transport>(
             .first_salt(first_salt)
             .finish(auth_key),
         requests: sender.requests,
-        next_ping: Instant::now() + PING_DELAY,
+        ping_timer: sender.ping_timer,
         read_buffer: sender.read_buffer,
         read_tail: sender.read_tail,
         write_buffer: sender.write_buffer,
@@ -758,6 +781,112 @@ pub async fn connect_with_auth<T: Transport>(
 #[cfg(test)]
 mod optimization_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelled_sent_request_keeps_reservation_until_reply_or_disconnect() {
+        for disconnect in [false, true] {
+            let (mut sender, _peer) = pair().await;
+            let tracker = crate::InvocationTracker::default();
+            let (tx, rx) = oneshot::channel();
+            sender.enqueue_tracked_body(Bytes::from_static(&[1; 4]), tx, tracker.try_acquire());
+            sender.try_fill_write();
+            sender.on_net_write(sender.write_buffer.len()).unwrap();
+            let RequestState::Sent(pair) = &sender.requests[0].state else {
+                panic!("unsent");
+            };
+            let msg_id = pair.msg_id;
+            assert_eq!(tracker.stage(), crate::InvocationStage::Sent);
+            drop(rx); // Simulate an outer deadline cancelling the response waiter.
+            sender.try_fill_write();
+            assert!(tracker.try_acquire().is_none());
+            assert_eq!(sender.requests.len(), 1);
+            if disconnect {
+                drop(sender);
+            } else {
+                sender.process_result(RpcResult {
+                    msg_id,
+                    body: vec![1; 4],
+                });
+            }
+            assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+            assert!(tracker.try_acquire().is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_framing_releases_reservation_without_a_send() {
+        let (mut sender, _peer) = pair().await;
+        let tracker = crate::InvocationTracker::default();
+        let (tx, rx) = oneshot::channel();
+        sender.enqueue_tracked_body(Bytes::from_static(&[1; 4]), tx, tracker.try_acquire());
+        drop(rx);
+        sender.try_fill_write();
+        assert!(sender.requests.is_empty());
+        assert!(sender.write_buffer.is_empty());
+        assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelled_steps_keep_one_ping_timer_and_do_not_postpone_keepalive() {
+        let (mut sender, _peer) = pair().await;
+        let timer = sender.ping_timer.as_ref().get_ref() as *const Sleep;
+        let deadline = sender.ping_timer.deadline();
+        for _ in 0..64 {
+            tokio::select! {
+                biased;
+                result = sender.step() => panic!("unexpected IO or ping: {result:?}"),
+                _ = std::future::ready(()) => {},
+            }
+        }
+        assert_eq!(sender.ping_timer.deadline(), deadline);
+        assert_eq!(sender.ping_timer.as_ref().get_ref() as *const Sleep, timer);
+        assert!(sender.requests.is_empty());
+        tokio::time::advance(PING_DELAY).await;
+        sender.step().await.unwrap();
+        assert_eq!(sender.requests.len(), 1);
+        assert!(sender.requests[0].result.is_none());
+        assert_eq!(sender.ping_timer.deadline(), Instant::now() + PING_DELAY);
+        assert_eq!(sender.ping_timer.as_ref().get_ref() as *const Sleep, timer);
+    }
+
+    #[test]
+    #[ignore = "isolated pending timer polling benchmark; no sockets"]
+    fn benchmark_ping_timer_reuse() {
+        use std::{
+            future::{Future, poll_fn},
+            hint::black_box,
+            task::Poll,
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let deadline = Instant::now() + Duration::from_secs(3600);
+            let mut timer = Box::pin(sleep_until(deadline));
+            let mut samples = [Vec::new(), Vec::new()];
+            for round in 0..8 {
+                for reuse in [round % 2 == 0, round % 2 != 0] {
+                    let start = std::time::Instant::now();
+                    for _ in 0..100_000 {
+                        poll_fn(|cx| {
+                            if reuse {
+                                let _ = black_box(timer.as_mut().poll(cx));
+                            } else {
+                                let fresh = sleep_until(deadline);
+                                tokio::pin!(fresh);
+                                let _ = black_box(fresh.as_mut().poll(cx));
+                            }
+                            Poll::Ready(())
+                        }).await;
+                    }
+                    samples[usize::from(reuse)].push(start.elapsed().as_nanos() as f64 / 100_000.0);
+                }
+            }
+            for sample in &mut samples { sample.sort_by(f64::total_cmp); }
+            println!("Pending ping timer median: recreate {:.1} ns, reuse {:.1} ns; retained Sleep={} bytes", samples[0][4], samples[1][4], std::mem::size_of::<Sleep>());
+        });
+    }
 
     async fn pair() -> (Sender<transport::Full, mtp::Plain>, tokio::net::TcpStream) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

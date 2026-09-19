@@ -6,8 +6,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::mem;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::{borrow::Cow, mem};
 
 use grammers_crypto::{AuthKey, DequeBuffer, decrypt_data_v2, encrypt_data_v2};
 use grammers_tl_types::{self as tl, Cursor, Deserializable, Identifiable, Serializable};
@@ -49,6 +49,8 @@ pub struct Builder {
     time_offset: i32,
     first_salt: i64,
     compression_threshold: Option<usize>,
+
+    receive_updates: bool,
 }
 
 /// An implementation of the [Mobile Transport Protocol] for ciphertext
@@ -100,11 +102,20 @@ pub struct Encrypted {
     /// Temporary deserialization results.
     deserialization: Vec<Deserialization>,
 
+    receive_updates: bool,
+
     /// How many messages are there in the buffer.
     msg_count: usize,
 }
 
 impl Builder {
+    /// Whether unsolicited API updates should be returned to the caller.
+    /// Disabled mode also wraps API requests with invokeWithoutUpdates.
+    pub fn receive_updates(mut self, enabled: bool) -> Self {
+        self.receive_updates = enabled;
+        self
+    }
+
     /// Configures the time offset to Telegram servers.
     pub fn time_offset(mut self, offset: i32) -> Self {
         self.time_offset = offset;
@@ -144,6 +155,7 @@ impl Builder {
             last_msg_id: 0,
             pending_ack: vec![],
             compression_threshold: self.compression_threshold,
+            receive_updates: self.receive_updates,
             deserialization: Vec::new(),
             msg_count: 0,
         }
@@ -151,11 +163,18 @@ impl Builder {
 }
 
 impl Encrypted {
+    /// Control unsolicited API updates; configure before initializing a connection.
+    /// RPC results and protocol service messages are always processed normally.
+    pub fn set_receive_updates(&mut self, enabled: bool) {
+        self.receive_updates = enabled;
+    }
+
     /// Start building a new encrypted MTP.
     pub fn build() -> Builder {
         Builder {
             time_offset: 0,
             compression_threshold: crate::DEFAULT_COMPRESSION_THRESHOLD,
+            receive_updates: true,
             first_salt: 0,
         }
     }
@@ -311,7 +330,10 @@ impl Encrypted {
         self.msg_count = 0;
     }
 
-    fn process_message(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn process_message(
+        &mut self,
+        message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
         if message.requires_ack() {
             self.pending_ack.push(message.msg_id);
         }
@@ -452,10 +474,21 @@ impl Encrypted {
     /// [Response to an RPC query]: https://core.telegram.org/mtproto/service_messages#response-to-an-rpc-query
     /// [RPC Error]: https://core.telegram.org/mtproto/service_messages#rpc-error
     /// [Cancellation of an RPC Query]: https://core.telegram.org/mtproto/service_messages#cancellation-of-an-rpc-query
-    fn handle_rpc_result(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
-        let rpc_result = manual_tl::RpcResult::from_owned(message.body)?;
-        let inner_constructor = rpc_result.inner_constructor();
-        let manual_tl::RpcResult { req_msg_id, result } = rpc_result;
+    fn handle_rpc_result(
+        &mut self,
+        message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
+        let (req_msg_id, result) = match message.body {
+            Cow::Borrowed(body) => {
+                let (id, result) = manual_tl::RpcResult::borrowed_parts(body)?;
+                (id, Cow::Borrowed(result))
+            }
+            Cow::Owned(body) => {
+                let rpc = manual_tl::RpcResult::from_owned(body)?;
+                (rpc.req_msg_id, Cow::Owned(rpc.result))
+            }
+        };
+        let inner_constructor = u32::from_bytes(&result);
         let msg_id = MsgId(req_msg_id);
 
         // Any error during a RPC result will be given to the user,
@@ -525,7 +558,7 @@ impl Encrypted {
                 self.deserialization
                     .push(Deserialization::RpcResult(RpcResult {
                         msg_id,
-                        body: result,
+                        body: result.into_owned(),
                     }));
             }
         }
@@ -543,9 +576,12 @@ impl Encrypted {
     /// because the stored update might need to reference the request, which
     /// must not have been dropped yet.
     fn store_own_updates(&mut self, msg_id: MsgId, body: &[u8]) {
+        if !self.receive_updates {
+            return;
+        }
         match u32::from_bytes(body) {
             Ok(body_id) => {
-                if UPDATE_IDS.iter().any(|&id| body_id == id) {
+                if UPDATE_IDS.contains(&body_id) {
                     self.deserialization.push(Deserialization::OwnUpdate {
                         msg_id,
                         update: body.to_vec(),
@@ -587,7 +623,7 @@ impl Encrypted {
     /// transmits a stand-alone acknowledgment.
     ///
     /// [Acknowledgment of Receipt]: https://core.telegram.org/mtproto/service_messages_about_messages#acknowledgment-of-receipt
-    fn handle_ack(&self, message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_ack(&self, message: manual_tl::MessageView<'_>) -> Result<(), DeserializeError> {
         // TODO notify about this somehow
         let _ack = tl::enums::MsgsAck::from_bytes(&message.body)?;
         Ok(())
@@ -661,7 +697,7 @@ impl Encrypted {
     /// [Notice of Ignored Error Message]: https://core.telegram.org/mtproto/service_messages_about_messages#notice-of-ignored-error-message
     fn handle_bad_notification(
         &mut self,
-        message: manual_tl::Message,
+        message: manual_tl::MessageView<'_>,
     ) -> Result<(), DeserializeError> {
         let bad_msg = tl::enums::BadMsgNotification::from_bytes(&message.body)?;
 
@@ -733,7 +769,10 @@ impl Encrypted {
     /// ```
     ///
     /// [Request for Message Status Information]: https://core.telegram.org/mtproto/service_messages_about_messages#request-for-message-status-information
-    fn handle_state_req(&self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_state_req(
+        &self,
+        _message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
         // TODO implement
         Ok(())
     }
@@ -774,7 +813,10 @@ impl Encrypted {
     /// valid, the message is to be wrapped in `msg_copy`).
     ///
     /// [Informational Message regarding Status of Messages]: https://core.telegram.org/mtproto/service_messages_about_messages#informational-message-regarding-status-of-messages
-    fn handle_state_info(&mut self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_state_info(
+        &mut self,
+        _message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
         // TODO implement
         Ok(())
     }
@@ -796,7 +838,10 @@ impl Encrypted {
     /// This message does not require an acknowledgment.
     ///
     /// [Voluntary Communication of Status of Messages]: https://core.telegram.org/mtproto/service_messages_about_messages#voluntary-communication-of-status-of-messages
-    fn handle_msg_all(&mut self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_msg_all(
+        &mut self,
+        _message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
         // TODO implement
         Ok(())
     }
@@ -826,7 +871,7 @@ impl Encrypted {
     /// [Extended Voluntary Communication of Status of One Message]: https://core.telegram.org/mtproto/service_messages_about_messages#extended-voluntary-communication-of-status-of-one-message
     fn handle_detailed_info(
         &mut self,
-        message: manual_tl::Message,
+        message: manual_tl::MessageView<'_>,
     ) -> Result<(), DeserializeError> {
         // TODO https://github.com/telegramdesktop/tdesktop/blob/8f82880b938e06b7a2a27685ef9301edb12b4648/Telegram/SourceFiles/mtproto/connection.cpp#L1790-L1820
         // TODO https://github.com/telegramdesktop/tdesktop/blob/8f82880b938e06b7a2a27685ef9301edb12b4648/Telegram/SourceFiles/mtproto/connection.cpp#L1822-L1845
@@ -870,7 +915,10 @@ impl Encrypted {
     ///
     /// [Explicit Request to Re-Send Answers]: https://core.telegram.org/mtproto/service_messages_about_messages#explicit-request-to-re-send-answers
     /// [Explicit Request to Re-Send Messages]: https://core.telegram.org/mtproto/service_messages_about_messages#explicit-request-to-re-send-messages
-    fn handle_msg_resend(&self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_msg_resend(
+        &self,
+        _message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
         // TODO implement
         // `msg_resend_ans_req` seems to never occur (it was even missing from `mtproto.tl`)
         Ok(())
@@ -898,7 +946,10 @@ impl Encrypted {
     /// does not require an acknowledgment itself.
     ///
     /// [Request for several future salts]: https://core.telegram.org/mtproto/service_messages#request-for-several-future-salts
-    fn handle_future_salts(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_future_salts(
+        &mut self,
+        message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
         let tl::enums::FutureSalts::Salts(salts) =
             tl::enums::FutureSalts::from_bytes(&message.body)?;
 
@@ -912,7 +963,7 @@ impl Encrypted {
             self.deserialization
                 .push(Deserialization::RpcResult(RpcResult {
                     msg_id: MsgId(salts.req_msg_id),
-                    body: message.body,
+                    body: message.body.into_owned(),
                 }));
         }
 
@@ -924,7 +975,10 @@ impl Encrypted {
         Ok(())
     }
 
-    fn handle_future_salt(&mut self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_future_salt(
+        &mut self,
+        _message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
         panic!("no request should trigger a `future_salt` result")
     }
 
@@ -959,13 +1013,13 @@ impl Encrypted {
     ///
     /// [Ping Messages (PING/PONG)]: https://core.telegram.org/mtproto/service_messages#ping-messages-ping-pong
     /// [Deferred Connection Closure + PING]: https://core.telegram.org/mtproto/service_messages#deferred-connection-closure-ping
-    fn handle_pong(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_pong(&mut self, message: manual_tl::MessageView<'_>) -> Result<(), DeserializeError> {
         let tl::enums::Pong::Pong(pong) = tl::enums::Pong::from_bytes(&message.body)?;
 
         self.deserialization
             .push(Deserialization::RpcResult(RpcResult {
                 msg_id: MsgId(pong.msg_id),
-                body: message.body,
+                body: message.body.into_owned(),
             }));
         Ok(())
     }
@@ -984,7 +1038,10 @@ impl Encrypted {
     /// ```
     ///
     /// [Request to Destroy Session]: https://core.telegram.org/mtproto/service_messages#request-to-destroy-session
-    fn handle_destroy_session(&self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_destroy_session(
+        &self,
+        _message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
         // TODO implement
         Ok(())
     }
@@ -1023,7 +1080,7 @@ impl Encrypted {
     /// [New Session Creation Notification]: https://core.telegram.org/mtproto/service_messages#new-session-creation-notification
     fn handle_new_session_created(
         &mut self,
-        message: manual_tl::Message,
+        message: manual_tl::MessageView<'_>,
     ) -> Result<(), DeserializeError> {
         // TODO notify upper layers about the need to use getDifference
         let new_session = tl::enums::NewSession::from_bytes(&message.body)?;
@@ -1077,10 +1134,12 @@ impl Encrypted {
     ///
     /// [Containers]: https://core.telegram.org/mtproto/service_messages#containers
     /// [Simple Container]: https://core.telegram.org/mtproto/service_messages#simple-container
-    fn handle_container(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
-        let container = manual_tl::MessageContainer::from_bytes(&message.body)?;
-        for inner_message in container.messages {
-            self.process_message(inner_message)?;
+    fn handle_container(
+        &mut self,
+        message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
+        for inner_message in manual_tl::MessageContainer::borrowed_messages(&message.body)? {
+            self.process_message(inner_message?)?;
         }
 
         Ok(())
@@ -1106,7 +1165,10 @@ impl Encrypted {
     /// in a simple container with the same result.
     ///
     /// [Message Copies]: https://core.telegram.org/mtproto/service_messages#message-copies
-    fn handle_msg_copy(&self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_msg_copy(
+        &self,
+        _message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
         panic!("msg_copy should not be used")
     }
 
@@ -1126,10 +1188,16 @@ impl Encrypted {
     /// client to server.
     ///
     /// [Packed Object]: https://core.telegram.org/mtproto/service_messages#packed-object
-    fn handle_gzip_packed(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_gzip_packed(
+        &mut self,
+        message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
         let body = manual_tl::GzipPacked::decompress_from_bytes(&message.body)?;
-        self.process_message(manual_tl::Message { body, ..message })
-            .map(|_| ())
+        self.process_message(manual_tl::MessageView {
+            body: Cow::Owned(body),
+            ..message
+        })
+        .map(|_| ())
     }
 
     /// **[HTTP Wait/Long Poll]**
@@ -1178,7 +1246,10 @@ impl Encrypted {
     /// to ping time.
     ///
     /// [HTTP Wait/Long Poll]: https://core.telegram.org/mtproto/service_messages#http-wait-long-poll
-    fn handle_http_wait(&mut self, _message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_http_wait(
+        &mut self,
+        _message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
         // TODO implement
         Ok(())
     }
@@ -1187,10 +1258,16 @@ impl Encrypted {
     ///
     /// Since we handle all the possible service messages, we can
     /// safely treat whatever message body we received as `Updates`.
-    fn handle_update(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
+    fn handle_update(
+        &mut self,
+        message: manual_tl::MessageView<'_>,
+    ) -> Result<(), DeserializeError> {
+        if !self.receive_updates {
+            return Ok(());
+        }
         // TODO if this `Updates` cannot be deserialized, `getDifference` should be used
         self.deserialization
-            .push(Deserialization::Update(message.body));
+            .push(Deserialization::Update(message.body.into_owned()));
         Ok(())
     }
 }
@@ -1233,13 +1310,13 @@ impl Mtp for Encrypted {
 
         // Check to see if the next salt can be used already. If it can, drop the current one and,
         // if the next salt is the last one, fetch more.
-        if let Some((start_secs, start_instant)) = self.start_salt_time {
-            if self.salts.len() > 1 {
-                let salt = &self.salts[self.salts.len() - 2];
-                let now = start_secs + start_instant.elapsed().as_secs() as i32;
-                if now >= salt.valid_since + SALT_USE_DELAY {
-                    self.salts.pop();
-                }
+        if let Some((start_secs, start_instant)) =
+            self.start_salt_time.filter(|_| self.salts.len() > 1)
+        {
+            let salt = &self.salts[self.salts.len() - 2];
+            let now = start_secs + start_instant.elapsed().as_secs() as i32;
+            if now >= salt.valid_since + SALT_USE_DELAY {
+                self.salts.pop();
             }
         }
 
@@ -1259,37 +1336,61 @@ impl Mtp for Encrypted {
             return None;
         }
 
+        let without_updates =
+            tl::functions::InvokeWithoutUpdates::<tl::functions::help::GetConfig>::CONSTRUCTOR_ID;
+        let constructor = u32::from_bytes(request).unwrap_or(0);
+        let is_service = matches!(
+            constructor,
+            tl::functions::Ping::CONSTRUCTOR_ID
+                | tl::functions::PingDelayDisconnect::CONSTRUCTOR_ID
+                | tl::functions::GetFutureSalts::CONSTRUCTOR_ID
+                | tl::functions::RpcDropAnswer::CONSTRUCTOR_ID
+                | tl::functions::DestroySession::CONSTRUCTOR_ID
+        );
+        let wrapper = without_updates.to_le_bytes();
+        let mut prefix: &[u8] =
+            if !self.receive_updates && !is_service && constructor != without_updates {
+                &wrapper
+            } else {
+                &[]
+            };
+
         // Requests that are too large would cause Telegram to close the
         // connection but are so uncommon it's not worth returning `Err`.
         assert!(
-            request.len() + manual_tl::Message::SIZE_OVERHEAD
+            prefix.len() + request.len() + manual_tl::Message::SIZE_OVERHEAD
                 <= manual_tl::MessageContainer::MAXIMUM_SIZE
         );
 
         // Serialized requests will always be correctly padded.
-        assert!(request.len() % 4 == 0);
+        assert!(request.len().is_multiple_of(4));
 
         // Payload provided by the user is always considered to be
         // content-related, which means we can apply compression.
         let mut body = request;
         let compressed;
-        if let Some(threshold) = self.compression_threshold {
-            if request.len() >= threshold {
-                compressed = manual_tl::GzipPacked::new(request).to_bytes();
-                if compressed.len() < request.len() {
-                    body = &compressed;
-                }
+        if self
+            .compression_threshold
+            .is_some_and(|threshold| prefix.len() + request.len() >= threshold)
+        {
+            compressed = manual_tl::GzipPacked::new_prefixed(prefix, request).to_bytes();
+            if compressed.len() < prefix.len() + request.len() {
+                body = &compressed;
+                prefix = &[];
             }
         }
 
-        let new_size = buffer.len() + body.len() + manual_tl::Message::SIZE_OVERHEAD;
+        let new_size = buffer.len() + prefix.len() + body.len() + manual_tl::Message::SIZE_OVERHEAD;
         if new_size >= manual_tl::MessageContainer::MAXIMUM_SIZE {
             // No more messages fit in this container.
             return None;
         }
 
         // This request still fits in the container, so give it a message ID.
-        Some(self.serialize_msg(buffer, body, true))
+        let msg_id = self.serialize_msg_header(buffer, prefix.len() + body.len(), true);
+        buffer.extend(prefix);
+        buffer.extend(body);
+        Some(msg_id)
     }
 
     fn finalize(&mut self, buffer: &mut DequeBuffer<u8>) -> Option<MsgId> {
@@ -1319,7 +1420,7 @@ impl Mtp for Encrypted {
             panic!("wrong session id");
         }
 
-        self.process_message(manual_tl::Message::deserialize(&mut buffer)?)?;
+        self.process_message(manual_tl::MessageView::deserialize(&mut buffer)?)?;
 
         // For simplicity, and to avoid passing too much stuff around (RPC results, updates),
         // the processing result is stored in self. After processing is done, that temporary
@@ -1355,6 +1456,235 @@ mod tests {
 
     fn auth_key() -> [u8; 256] {
         [0; 256]
+    }
+
+    fn test_rpc_body(id: i64, result: &[u8]) -> Vec<u8> {
+        let mut body = manual_tl::RpcResult::CONSTRUCTOR_ID.to_bytes();
+        body.extend(id.to_bytes());
+        body.extend_from_slice(result);
+        body
+    }
+
+    #[test]
+    fn borrowed_and_owned_rpc_results_survive_plain_and_gzip_paths() {
+        let expected = true.to_bytes();
+        let plain = test_rpc_body(42, &expected);
+        let zipped = test_rpc_body(42, &manual_tl::GzipPacked::new(&expected).to_bytes());
+        let outer_gzip = manual_tl::GzipPacked::new(&plain).to_bytes();
+        for receive_updates in [true, false] {
+            for wire in [&plain, &zipped, &outer_gzip] {
+                for own in [false, true] {
+                    let mut mtp = Encrypted::build()
+                        .receive_updates(receive_updates)
+                        .finish(auth_key());
+                    let mut input = wire.to_vec();
+                    let body = if own {
+                        Cow::Owned(input.clone())
+                    } else {
+                        Cow::Borrowed(input.as_slice())
+                    };
+                    mtp.process_message(manual_tl::MessageView {
+                        msg_id: 3,
+                        seq_no: 1,
+                        body,
+                    })
+                    .unwrap();
+                    input.fill(0); // Replies must own their bytes before the receive buffer is reused.
+                    assert!(mtp.pending_ack.contains(&3));
+                    assert_eq!(mtp.deserialization.len(), 1);
+                    let Deserialization::RpcResult(reply) = &mtp.deserialization[0] else {
+                        panic!("missing reply");
+                    };
+                    assert_eq!(reply.msg_id, MsgId(42));
+                    assert_eq!(reply.body, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_container_has_no_partial_inner_effects() {
+        let first = manual_tl::Message {
+            msg_id: 3,
+            seq_no: 1,
+            body: test_rpc_body(42, &true.to_bytes()),
+        }
+        .to_bytes();
+        let mut wire = manual_tl::MessageContainer::CONSTRUCTOR_ID.to_bytes();
+        wire.extend(2i32.to_bytes());
+        wire.extend(first);
+        wire.extend([0; 16]); // Header claims a body below, which is absent.
+        let end = wire.len();
+        wire[end - 4..].copy_from_slice(&100i32.to_le_bytes());
+        let mut mtp = Encrypted::build().finish(auth_key());
+        assert!(
+            mtp.process_message(manual_tl::MessageView {
+                msg_id: 7,
+                seq_no: 0,
+                body: Cow::Borrowed(&wire)
+            })
+            .is_err()
+        );
+        assert!(mtp.pending_ack.is_empty());
+        assert!(mtp.deserialization.is_empty());
+    }
+
+    #[test]
+    fn disabled_updates_are_acknowledged_but_rpc_updates_are_returned() {
+        let update = tl::types::UpdatesTooLong::CONSTRUCTOR_ID.to_bytes();
+        for enabled in [true, false] {
+            let mut mtp = Encrypted::build()
+                .receive_updates(enabled)
+                .finish(auth_key());
+            mtp.process_message(manual_tl::MessageView {
+                msg_id: 3,
+                seq_no: 1,
+                body: Cow::Borrowed(&update),
+            })
+            .unwrap();
+            assert_eq!(mtp.pending_ack, [3]);
+            assert_eq!(mtp.deserialization.len(), usize::from(enabled));
+            mtp.deserialization.clear();
+            let own_update = UPDATE_IDS[0].to_bytes();
+            let rpc = test_rpc_body(42, &own_update);
+            mtp.process_message(manual_tl::MessageView {
+                msg_id: 5,
+                seq_no: 1,
+                body: Cow::Borrowed(&rpc),
+            })
+            .unwrap();
+            assert_eq!(mtp.deserialization.len(), if enabled { 2 } else { 1 });
+            if enabled {
+                assert!(matches!(
+                    mtp.deserialization[0],
+                    Deserialization::OwnUpdate { .. }
+                ));
+            }
+            let Some(Deserialization::RpcResult(reply)) = mtp.deserialization.last() else {
+                panic!("RPC reply was dropped");
+            };
+            assert_eq!(reply.body, own_update);
+        }
+    }
+
+    #[test]
+    fn disabled_updates_keep_compressed_containers_errors_and_service_messages() {
+        let mut mtp = Encrypted::build().receive_updates(false).finish(auth_key());
+        let error = tl::enums::RpcError::Error(tl::types::RpcError {
+            error_code: 420,
+            error_message: "FLOOD_WAIT_3".into(),
+        })
+        .to_bytes();
+        let bodies = [
+            tl::types::UpdatesTooLong::CONSTRUCTOR_ID.to_bytes(),
+            test_rpc_body(42, &true.to_bytes()),
+            test_rpc_body(43, &error),
+        ];
+        let mut container = manual_tl::MessageContainer::CONSTRUCTOR_ID.to_bytes();
+        container.extend((bodies.len() as i32).to_bytes());
+        for (i, body) in bodies.into_iter().enumerate() {
+            container.extend(
+                manual_tl::Message {
+                    msg_id: 3 + i as i64 * 2,
+                    seq_no: 1,
+                    body,
+                }
+                .to_bytes(),
+            );
+        }
+        let zipped = manual_tl::GzipPacked::new(&container).to_bytes();
+        mtp.process_message(manual_tl::MessageView {
+            msg_id: 11,
+            seq_no: 0,
+            body: Cow::Borrowed(&zipped),
+        })
+        .unwrap();
+        assert_eq!(mtp.pending_ack, [3, 5, 7]);
+        assert_eq!(mtp.deserialization.len(), 2);
+        assert!(
+            matches!(&mtp.deserialization[0], Deserialization::RpcResult(r) if r.msg_id == MsgId(42) && r.body == true.to_bytes())
+        );
+        assert!(
+            matches!(&mtp.deserialization[1], Deserialization::RpcError(r) if r.msg_id == MsgId(43) && r.error.error_code == 420)
+        );
+        mtp.deserialization.clear();
+        let created = tl::enums::NewSession::Created(tl::types::NewSessionCreated {
+            first_msg_id: 1,
+            unique_id: 2,
+            server_salt: 123,
+        })
+        .to_bytes();
+        mtp.process_message(manual_tl::MessageView {
+            msg_id: 13,
+            seq_no: 1,
+            body: Cow::Borrowed(&created),
+        })
+        .unwrap();
+        assert_eq!(mtp.get_current_salt(), 123);
+        let pong = tl::enums::Pong::Pong(tl::types::Pong {
+            msg_id: 44,
+            ping_id: 55,
+        })
+        .to_bytes();
+        mtp.process_message(manual_tl::MessageView {
+            msg_id: 15,
+            seq_no: 0,
+            body: Cow::Borrowed(&pong),
+        })
+        .unwrap();
+        assert!(
+            matches!(mtp.deserialization.last(), Some(Deserialization::RpcResult(r)) if r.msg_id == MsgId(44) && r.body == pong)
+        );
+    }
+
+    #[test]
+    fn no_updates_wraps_api_bytes_once_and_excludes_protocol_calls() {
+        let query = tl::functions::users::GetUsers {
+            id: vec![tl::enums::InputUser::UserSelf],
+        };
+        let request = query.to_bytes();
+        let expected = tl::functions::InvokeWithoutUpdates { query }.to_bytes();
+        for enabled in [true, false] {
+            let mut mtp = Encrypted::build()
+                .receive_updates(enabled)
+                .finish(auth_key());
+            let mut buffer = DequeBuffer::with_capacity(4096, 0);
+            mtp.push(&mut buffer, &request).unwrap();
+            assert_eq!(&buffer[16..], if enabled { &request } else { &expected });
+        }
+        let service = [
+            tl::functions::Ping { ping_id: 1 }.to_bytes(),
+            tl::functions::PingDelayDisconnect {
+                ping_id: 1,
+                disconnect_delay: 60,
+            }
+            .to_bytes(),
+            tl::functions::GetFutureSalts { num: 1 }.to_bytes(),
+            tl::functions::RpcDropAnswer { req_msg_id: 1 }.to_bytes(),
+            tl::functions::DestroySession { session_id: 1 }.to_bytes(),
+            expected,
+        ];
+        for body in service {
+            let mut mtp = Encrypted::build().receive_updates(false).finish(auth_key());
+            let mut buffer = DequeBuffer::with_capacity(4096, 0);
+            mtp.push(&mut buffer, &body).unwrap();
+            assert_eq!(&buffer[16..], &body);
+        }
+        let mut mtp = Encrypted::build()
+            .receive_updates(false)
+            .compression_threshold(Some(1))
+            .finish(auth_key());
+        let query = tl::functions::users::GetUsers {
+            id: vec![tl::enums::InputUser::UserSelf; 200],
+        };
+        let request = query.to_bytes();
+        let expected = tl::functions::InvokeWithoutUpdates { query }.to_bytes();
+        let mut buffer = DequeBuffer::with_capacity(4096, 0);
+        mtp.push(&mut buffer, &request).unwrap();
+        assert_eq!(
+            manual_tl::GzipPacked::decompress_from_bytes(&buffer[16..]).unwrap(),
+            expected
+        );
     }
 
     #[test]

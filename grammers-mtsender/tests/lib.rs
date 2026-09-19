@@ -12,6 +12,58 @@ pub const TELEGRAM_TEST_DC_2: &str = "149.154.167.40:443";
 pub const TELEGRAM_DEFAULT_TEST_DC: &str = TELEGRAM_TEST_DC_2;
 
 #[test]
+#[ignore = "read-only unauthenticated query to Telegram's public test DC"]
+fn test_no_updates_initialization_on_public_test_dc() {
+    use grammers_mtproto::transport;
+    use grammers_mtsender::{ServerAddr, connect};
+    use grammers_tl_types::{LAYER, enums, functions};
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let mut sender = connect(
+                transport::Full::new(),
+                ServerAddr::Tcp {
+                    address: TELEGRAM_TEST_DC_2.parse().unwrap(),
+                },
+            )
+            .await
+            .unwrap();
+            sender.set_receive_updates(false);
+            let response = sender
+                .invoke(&functions::InvokeWithLayer {
+                    layer: LAYER,
+                    query: functions::InitConnection {
+                        api_id: 1,
+                        device_model: "SDK test".into(),
+                        system_version: "test".into(),
+                        app_version: "test".into(),
+                        system_lang_code: "en".into(),
+                        lang_pack: String::new(),
+                        lang_code: "en".into(),
+                        proxy: None,
+                        params: None,
+                        query: functions::help::GetNearestDc {},
+                    },
+                })
+                .await;
+            assert!(
+                matches!(response, Ok(enums::NearestDc::Dc(_))),
+                "{response:?}"
+            );
+            assert!(matches!(
+                sender.invoke(&functions::help::GetNearestDc {}).await,
+                Ok(enums::NearestDc::Dc(_))
+            ))
+        })
+        .await
+        .expect("public test DC timeout");
+    });
+}
+
+#[test]
 #[ignore = "contacts Telegram's public test DC; run explicitly with --ignored"]
 fn test_invoke_encrypted_method() {
     use std::str::FromStr;

@@ -80,7 +80,7 @@ pub fn parse_html_message(message: &str) -> (String, Vec<tl::enums::MessageEntit
                         entities.push(tl::types::MessageEntitySpoiler { offset, length }.into());
                     }
                     tag!("code") => {
-                        match entities.iter_mut().rev().next() {
+                        match entities.iter_mut().next_back() {
                             // If the previous tag is an open `<pre>`, don't add `<code>`;
                             // we most likely want to indicate `class="language-foo"`.
                             Some(tl::enums::MessageEntity::Pre(e)) if e.length == 0 => {
@@ -116,8 +116,8 @@ pub fn parse_html_message(message: &str) -> (String, Vec<tl::enums::MessageEntit
                             .map(|a| a.value.to_string())
                             .unwrap_or_else(|| "".to_string());
 
-                        if url.starts_with(MENTION_URL_PREFIX) {
-                            let user_id = url[MENTION_URL_PREFIX.len()..].parse::<i64>().unwrap();
+                        if let Some(user_id) = url.strip_prefix(MENTION_URL_PREFIX) {
+                            let user_id = user_id.parse::<i64>().unwrap();
                             entities.push(
                                 tl::types::MessageEntityMentionName {
                                     offset,
@@ -165,7 +165,7 @@ pub fn parse_html_message(message: &str) -> (String, Vec<tl::enums::MessageEntit
                         update_entity_len!(Spoiler(offset) in entities);
                     }
                     tag!("code") => {
-                        match entities.iter_mut().rev().next() {
+                        match entities.iter_mut().next_back() {
                             // If the previous tag is an open `<pre>`, don't update `<code>` len;
                             // we most likely want to indicate `class="language-foo"`.
                             Some(tl::enums::MessageEntity::Pre(e)) if e.length == 0 => {}
@@ -178,7 +178,7 @@ pub fn parse_html_message(message: &str) -> (String, Vec<tl::enums::MessageEntit
                         update_entity_len!(Pre(offset) in entities);
                     }
                     tag!("a") => {
-                        match entities.iter_mut().rev().next() {
+                        match entities.iter_mut().next_back() {
                             // If the previous url is a mention, don't close with `</a>`;
                             Some(tl::enums::MessageEntity::MentionName(_)) => {
                                 update_entity_len!(MentionName(offset) in entities);
@@ -205,7 +205,7 @@ pub fn parse_html_message(message: &str) -> (String, Vec<tl::enums::MessageEntit
         }
     }
 
-    let mut input = BufferQueue::default();
+    let input = BufferQueue::default();
     input.push_back(StrTendril::from_slice(message).try_reinterpret().unwrap());
 
     let tok = Tokenizer::new(
@@ -216,7 +216,7 @@ pub fn parse_html_message(message: &str) -> (String, Vec<tl::enums::MessageEntit
         },
         Default::default(),
     );
-    let _ = tok.feed(&mut input);
+    let _ = tok.feed(&input);
     tok.end();
 
     let Sink { text, entities, .. } = tok.sink;

@@ -62,6 +62,17 @@ pub struct ConnectionParams {
     /// When the channel is full, newly received updates are **dropped**.
     pub updates_channel_capacity: NonZeroUsize,
 
+    /// Receive unsolicited API updates and copies of updates produced by RPCs.
+    /// Defaults to true. When false, API calls use invokeWithoutUpdates and
+    /// incoming API updates are acknowledged but not decoded/forwarded.
+    /// RPC return values and required MTProto service messages still work.
+    /// The updates channel is closed and creating an update stream is an error.
+    pub receive_updates: bool,
+
+    /// Optional deadline for socket connection, key exchange and initialization.
+    /// None preserves unlimited establishment; this is not an ordinary RPC timeout.
+    pub connection_timeout: Option<Duration>,
+
     #[doc(hidden)]
     pub __non_exhaustive: (),
 }
@@ -148,6 +159,8 @@ impl Default for ConnectionParams {
             proxy_url: None,
             retry_policy: Box::new(super::AutoSleep::default()),
             updates_channel_capacity: NonZeroUsize::new(100).unwrap(),
+            receive_updates: true,
+            connection_timeout: None,
             __non_exhaustive: (),
         }
     }

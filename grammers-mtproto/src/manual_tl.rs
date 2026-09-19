@@ -8,7 +8,7 @@
 
 //! This module contains additional, manual structures for some TL types.
 
-use std::io::Write;
+use std::{borrow::Cow, io::Write};
 
 use flate2::Compression;
 use flate2::write::{GzDecoder, GzEncoder};
@@ -36,6 +36,31 @@ pub(crate) struct Message {
 impl Message {
     // msg_id (8 bytes), seq_no (4 bytes), bytes (4 len)
     pub const SIZE_OVERHEAD: usize = 16;
+}
+
+/// An envelope borrowing decrypted bytes until a reply/update must escape.
+/// Owned bodies are used for gzip wrappers so their decoded allocation can move.
+pub(crate) struct MessageView<'a> {
+    pub msg_id: i64,
+    pub seq_no: i32,
+    pub body: Cow<'a, [u8]>,
+}
+
+impl<'a> MessageView<'a> {
+    pub fn deserialize(buf: &mut Cursor<'a>) -> Result<Self, tl::deserialize::Error> {
+        let msg_id = i64::deserialize(buf)?;
+        let seq_no = i32::deserialize(buf)?;
+        let len = i32::deserialize(buf)?;
+        let len = usize::try_from(len).map_err(|_| tl::deserialize::Error::UnexpectedEof)?;
+        if len >= MessageContainer::MAXIMUM_SIZE {
+            return Err(tl::deserialize::Error::UnexpectedEof);
+        }
+        Ok(Self {
+            msg_id,
+            seq_no,
+            body: Cow::Borrowed(buf.read_slice(len)?),
+        })
+    }
 
     /// Peek the constructor ID from the body.
     pub fn constructor_id(&self) -> Result<u32, tl::deserialize::Error> {
@@ -66,20 +91,11 @@ impl Serializable for Message {
 
 impl Deserializable for Message {
     fn deserialize(buf: &mut Cursor) -> Result<Self, tl::deserialize::Error> {
-        let msg_id = i64::deserialize(buf)?;
-        let seq_no = i32::deserialize(buf)?;
-
-        let len = i32::deserialize(buf)?;
-        let len = usize::try_from(len).map_err(|_| tl::deserialize::Error::UnexpectedEof)?;
-        if len >= MessageContainer::MAXIMUM_SIZE {
-            return Err(tl::deserialize::Error::UnexpectedEof);
-        }
-        let body = buf.read_slice(len)?.to_vec();
-
-        Ok(Message {
-            msg_id,
-            seq_no,
-            body,
+        let message = MessageView::deserialize(buf)?;
+        Ok(Self {
+            msg_id: message.msg_id,
+            seq_no: message.seq_no,
+            body: message.body.into_owned(),
         })
     }
 }
@@ -95,26 +111,27 @@ pub struct RpcResult {
 }
 
 impl RpcResult {
-    /// Peek the constructor ID from the body.
-    /// Reuses the decrypted message allocation instead of allocating another result.
-    pub fn from_owned(mut body: Vec<u8>) -> Result<Self, tl::deserialize::Error> {
-        let mut cursor = Cursor::from_slice(&body);
+    pub fn borrowed_parts(body: &[u8]) -> Result<(i64, &[u8]), tl::deserialize::Error> {
+        let mut cursor = Cursor::from_slice(body);
         let constructor = u32::deserialize(&mut cursor)?;
         if constructor != Self::CONSTRUCTOR_ID {
             return Err(tl::deserialize::Error::UnexpectedConstructor { id: constructor });
         }
         let req_msg_id = i64::deserialize(&mut cursor)?;
-        let start = cursor.pos();
+        Ok((req_msg_id, &body[cursor.pos()..]))
+    }
+
+    /// Peek the constructor ID from the body.
+    /// Reuses the decrypted message allocation instead of allocating another result.
+    pub fn from_owned(mut body: Vec<u8>) -> Result<Self, tl::deserialize::Error> {
+        let (req_msg_id, result) = Self::borrowed_parts(&body)?;
+        let start = body.len() - result.len();
         body.copy_within(start.., 0);
         body.truncate(body.len() - start);
         Ok(Self {
             req_msg_id,
             result: body,
         })
-    }
-
-    pub fn inner_constructor(&self) -> Result<u32, tl::deserialize::Error> {
-        u32::from_bytes(&self.result)
     }
 }
 
@@ -144,10 +161,35 @@ impl Deserializable for RpcResult {
 /// msg_container#73f1f8dc messages:vector<message> = MessageContainer;
 /// ```
 pub(crate) struct MessageContainer {
+    #[cfg(test)]
     pub messages: Vec<Message>,
 }
 
 impl MessageContainer {
+    /// Validate all inner envelopes before handling any, just like the owned
+    /// decoder, then walk them without allocating a Vec of copied messages.
+    pub fn borrowed_messages(bytes: &[u8]) -> Result<MessageIter<'_>, tl::deserialize::Error> {
+        let mut cursor = Cursor::from_slice(bytes);
+        let constructor = u32::deserialize(&mut cursor)?;
+        if constructor != Self::CONSTRUCTOR_ID {
+            return Err(tl::deserialize::Error::UnexpectedConstructor { id: constructor });
+        }
+        let count = usize::try_from(i32::deserialize(&mut cursor)?)
+            .map_err(|_| tl::deserialize::Error::UnexpectedEof)?;
+        let data = &bytes[cursor.pos()..];
+        if count > data.len() / Message::SIZE_OVERHEAD {
+            return Err(tl::deserialize::Error::UnexpectedEof);
+        }
+        let mut check = Cursor::from_slice(data);
+        for _ in 0..count {
+            MessageView::deserialize(&mut check)?;
+        }
+        Ok(MessageIter {
+            cursor: Cursor::from_slice(data),
+            remaining: count,
+        })
+    }
+
     // constructor id (4 bytes), inner vec len (4 bytes)
     pub const SIZE_OVERHEAD: usize = 8;
 
@@ -172,6 +214,23 @@ impl Identifiable for MessageContainer {
     const CONSTRUCTOR_ID: u32 = 0x73f1f8dc;
 }
 
+pub(crate) struct MessageIter<'a> {
+    cursor: Cursor<'a>,
+    remaining: usize,
+}
+
+impl<'a> Iterator for MessageIter<'a> {
+    type Item = Result<MessageView<'a>, tl::deserialize::Error>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.remaining == 0 {
+            return None;
+        }
+        self.remaining -= 1;
+        Some(MessageView::deserialize(&mut self.cursor))
+    }
+}
+
+#[cfg(test)]
 impl Deserializable for MessageContainer {
     fn deserialize(buf: &mut Cursor) -> Result<Self, tl::deserialize::Error> {
         let constructor_id = u32::deserialize(buf)?;
@@ -219,8 +278,14 @@ pub(crate) struct GzipPacked {
 }
 
 impl GzipPacked {
+    #[cfg(test)]
     pub fn new(unpacked_data: &[u8]) -> Self {
+        Self::new_prefixed(&[], unpacked_data)
+    }
+
+    pub fn new_prefixed(prefix: &[u8], unpacked_data: &[u8]) -> Self {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+        encoder.write_all(prefix).unwrap();
         // Safe to unwrap, in-memory data should not fail
         encoder.write_all(unpacked_data).unwrap();
         let packed_data = encoder.finish().unwrap();
@@ -318,6 +383,104 @@ mod tests {
 #[cfg(test)]
 mod optimization_tests {
     use super::*;
+
+    fn message_wire(msg_id: i64, body: &[u8]) -> Vec<u8> {
+        Message {
+            msg_id,
+            seq_no: 1,
+            body: body.to_vec(),
+        }
+        .to_bytes()
+    }
+
+    #[test]
+    fn borrowed_envelope_preserves_fields_and_points_into_input() {
+        for size in [0, 4, 512, 8192] {
+            let wire = message_wire(99, &vec![7; size]);
+            let owned = Message::from_bytes(&wire).unwrap();
+            let mut cursor = Cursor::from_slice(&wire);
+            let borrowed = MessageView::deserialize(&mut cursor).unwrap();
+            assert_eq!(borrowed.msg_id, owned.msg_id);
+            assert_eq!(borrowed.seq_no, owned.seq_no);
+            assert_eq!(borrowed.body.as_ref(), owned.body);
+            assert!(matches!(borrowed.body, Cow::Borrowed(_)));
+            assert_eq!(
+                borrowed.body.as_ptr(),
+                wire[Message::SIZE_OVERHEAD..].as_ptr()
+            );
+            assert_eq!(cursor.pos(), wire.len());
+            for end in 0..wire.len() {
+                assert!(MessageView::deserialize(&mut Cursor::from_slice(&wire[..end])).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn borrowed_containers_match_owned_decoder_and_validate_before_iteration() {
+        for count in [0, 1, 3, 101] {
+            let mut wire = MessageContainer::CONSTRUCTOR_ID.to_bytes();
+            wire.extend((count as i32).to_bytes());
+            for id in 0..count {
+                wire.extend(message_wire(id, &true.to_bytes()));
+            }
+            let owned = MessageContainer::from_bytes(&wire).unwrap();
+            let borrowed: Vec<_> = MessageContainer::borrowed_messages(&wire)
+                .unwrap()
+                .map(Result::unwrap)
+                .collect();
+            assert_eq!(borrowed.len(), owned.messages.len());
+            for (left, right) in borrowed.iter().zip(&owned.messages) {
+                assert_eq!(left.msg_id, right.msg_id);
+                assert_eq!(left.body.as_ref(), right.body);
+                assert!(matches!(left.body, Cow::Borrowed(_)));
+            }
+            for end in 0..wire.len() {
+                assert!(MessageContainer::borrowed_messages(&wire[..end]).is_err());
+            }
+        }
+        for count in [-1i32, i32::MAX] {
+            let mut wire = MessageContainer::CONSTRUCTOR_ID.to_bytes();
+            wire.extend(count.to_bytes());
+            assert!(MessageContainer::borrowed_messages(&wire).is_err());
+        }
+        assert!(MessageContainer::borrowed_messages(&[0; 8]).is_err());
+    }
+
+    #[test]
+    #[ignore = "isolated decoder copy benchmark; no encryption, sockets or Telegram"]
+    fn benchmark_borrowed_response_envelope() {
+        use std::{hint::black_box, time::Instant};
+        for size in [512, 2048, 8192] {
+            let wire = message_wire(99, &rpc_wire(&vec![7; size]));
+            let mut samples = [Vec::new(), Vec::new()];
+            for round in 0..8 {
+                for borrowed in [round % 2 == 0, round % 2 != 0] {
+                    let start = Instant::now();
+                    for _ in 0..100_000 {
+                        if borrowed {
+                            let message =
+                                MessageView::deserialize(&mut Cursor::from_slice(black_box(&wire)))
+                                    .unwrap();
+                            let (id, result) = RpcResult::borrowed_parts(&message.body).unwrap();
+                            black_box((id, result.to_vec()));
+                        } else {
+                            let message = Message::from_bytes(black_box(&wire)).unwrap();
+                            black_box(RpcResult::from_owned(message.body).unwrap());
+                        }
+                    }
+                    samples[usize::from(borrowed)]
+                        .push(start.elapsed().as_nanos() as f64 / 100_000.0);
+                }
+            }
+            for sample in &mut samples {
+                sample.sort_by(f64::total_cmp);
+            }
+            println!(
+                "{size}-byte reply median: owned envelope {:.1} ns, borrowed {:.1} ns",
+                samples[0][4], samples[1][4]
+            );
+        }
+    }
 
     fn rpc_wire(body: &[u8]) -> Vec<u8> {
         let mut wire = RpcResult::CONSTRUCTOR_ID.to_bytes();

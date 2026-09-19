@@ -213,7 +213,7 @@ impl SqliteSession {
 
         let home_dc = db
             .fetch_one("SELECT * FROM dc_home LIMIT 1", named_params![], |row| {
-                Ok(row.get::<i32>(0)?)
+                row.get::<i32>(0)
             })
             .await?
             .unwrap_or(DEFAULT_DC);
@@ -415,8 +415,8 @@ impl Session for SqliteSession {
                 params.push((":hash".to_owned(), hash));
             }
             let subtype = subtype.map(|s| s as i64);
-            if subtype.is_some() {
-                params.push((":subtype".to_owned(), subtype.unwrap()));
+            if let Some(subtype) = subtype {
+                params.push((":subtype".to_owned(), subtype));
             }
             stmt.execute(params).await?;
             Ok(())
@@ -473,8 +473,8 @@ impl Session for SqliteSession {
                     params.push((":hash".to_owned(), hash));
                 }
                 let subtype = subtype.map(|s| s as i64);
-                if subtype.is_some() {
-                    params.push((":subtype".to_owned(), subtype.unwrap()));
+                if let Some(subtype) = subtype {
+                    params.push((":subtype".to_owned(), subtype));
                 }
                 if let Err(err) = stmt.execute(params).await {
                     result = Err(err.into());

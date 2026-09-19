@@ -23,16 +23,18 @@ use crate::{InvocationError, SenderPoolHandle, UpdatesConfiguration};
 const BOT_CHANNEL_DIFF_LIMIT: i32 = 100000;
 const USER_CHANNEL_DIFF_LIMIT: i32 = 100;
 
+type BufferedUpdates = (
+    Vec<(tl::enums::Update, State)>,
+    Vec<tl::enums::User>,
+    Vec<tl::enums::Chat>,
+);
+
 pub struct UpdatesReceiver {
     handle: SenderPoolHandle,
     session: Arc<ErasedSession>,
     message_box: MessageBoxes,
     updates: mpsc::Receiver<UpdatesLike>,
-    buffer: VecDeque<(
-        Vec<(tl::enums::Update, State)>,
-        Vec<tl::enums::User>,
-        Vec<tl::enums::Chat>,
-    )>,
+    buffer: VecDeque<BufferedUpdates>,
     should_get_state: bool,
 }
 
@@ -91,6 +93,13 @@ impl UpdatesReceiver {
         updates: mpsc::Receiver<UpdatesLike>,
         configuration: UpdatesConfiguration,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        if !handle.updates_enabled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "API updates are disabled by ConnectionParams.receive_updates",
+            )
+            .into());
+        }
         let message_box = if configuration.catch_up {
             MessageBoxes::load(session.updates_state().await?)
         } else {
@@ -254,11 +263,8 @@ impl UpdatesReceiver {
     }
 
     async fn process_socket_updates(&mut self, updates: UpdatesLike) {
-        match self.message_box.process_updates(updates) {
-            Ok((updates, users, chats)) => {
-                self.extend_update_queue(updates, users, chats);
-            }
-            Err(_) => {}
+        if let Ok((updates, users, chats)) = self.message_box.process_updates(updates) {
+            self.extend_update_queue(updates, users, chats);
         }
     }
 

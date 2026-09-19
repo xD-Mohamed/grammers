@@ -70,7 +70,7 @@ impl<'a> Metadata<'a> {
     pub fn is_unused_flag(&self, def: &Definition, flag: &Parameter) -> bool {
         self.unused_flags
             .get(&(&def.namespace, &def.name))
-            .map(|flags| flags.iter().any(|f| *f == flag))
+            .map(|flags| flags.contains(&flag))
             .unwrap_or(false)
     }
 

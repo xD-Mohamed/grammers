@@ -16,13 +16,14 @@ mod inline_query;
 mod inline_send;
 mod message;
 mod message_deletion;
+#[path = "update.rs"]
+mod model;
 mod raw;
-mod update;
 
 pub use callback_query::CallbackQuery;
 pub use inline_query::{Article, InlineQuery};
 pub use inline_send::InlineSend;
 pub use message::Message;
 pub use message_deletion::MessageDeletion;
+pub use model::Update;
 pub use raw::Raw;
-pub use update::Update;

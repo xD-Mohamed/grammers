@@ -141,10 +141,7 @@ impl Channel {
     /// Additional information about this channel.
     #[inline]
     pub fn kind(&self) -> Option<ChannelKind> {
-        match <ChannelKind as TryFrom<&Channel>>::try_from(self) {
-            Ok(channel_kind) => Some(channel_kind),
-            Err(()) => None,
-        }
+        <ChannelKind as TryFrom<&Channel>>::try_from(self).ok()
     }
 
     /// Return the title of this channel.

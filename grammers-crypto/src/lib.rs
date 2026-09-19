@@ -165,7 +165,7 @@ pub fn decrypt_data_v2<'b>(
     let side = Side::Server;
     let x = side.x();
 
-    if buffer.len() < 24 || (buffer.len() - 24) % 16 != 0 {
+    if buffer.len() < 24 || !(buffer.len() - 24).is_multiple_of(16) {
         return Err(Error::InvalidBuffer);
     }
 

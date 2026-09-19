@@ -152,3 +152,59 @@ all-target Clippy passed with isolated local overrides. New tests cover ACK byte
 and capacity, result-list reuse/retention, direct routing, failed-send fallback,
 lost replies without replay, cancellation, repeated disconnects, late publication,
 pool shutdown and cached-handle release. No live Telegram/account operation ran.
+
+
+## Timer, reply decoding and optional update delivery
+
+Each sender now retains one pinned keepalive Sleep and resets it only when its
+keepalive fires. Cancelling a step does not postpone the deadline. This adds one
+small retained allocation per connection (112 bytes for Sleep in the measured
+Windows build) instead of repeatedly registering and discarding pending timers.
+
+Incoming message envelopes and container children borrow from decrypted input.
+Containers validate every child envelope before processing any child. Final RPC
+results still own their bytes; gzip-produced storage is reused where possible.
+Length, constructor, checksum and protocol validation are retained. This does not
+make a complete RPC allocation-free.
+
+ConnectionParams.receive_updates defaults to true. Setting it false before pool
+creation wraps API calls with Telegram's invokeWithoutUpdates, acknowledges but
+skips unsolicited API update delivery, and suppresses duplicate own-update copies.
+Explicit RPC return values, errors and required MTProto service messages remain
+available. The update channel is closed and update-stream creation returns an error.
+Already wrapped calls are not wrapped twice; service requests are left unchanged.
+A compatible explicit struct literal must initialize the new fields, or use defaults.
+
+Optional InvocationTracker reservations follow a request inside the SDK. Dropping
+a waiting caller does not release a serialized/sent request's reservation. It is
+released when the request completes, is discarded before transmission, or its
+connection is torn down. PendingInvocation is a movable response future without
+an additional task or timer. The old untracked APIs remain available. The Sent
+stage means a transport packet was fully written, not that the server processed it.
+No automatic retry or consumer-specific scheduling policy is added.
+
+ConnectionParams.connection_timeout optionally bounds connection/key exchange/API
+initialization. Its default None preserves existing unlimited establishment. It
+does not impose a deadline on ordinary RPCs or persistent session-storage calls.
+
+Windows release medians from eight alternating synthetic samples:
+
+| Component | Previous path | New path |
+|---|---:|---:|
+| Pending keepalive timer creation/poll/drop versus reuse | 339.9 ns | 18.4 ns |
+| 512-byte reply envelope to owned result | 40.7 ns | 32.6 ns |
+| 2048-byte reply envelope to owned result | 69.3 ns | 48.5 ns |
+| 8192-byte reply envelope to owned result | 110.1 ns | 79.3 ns |
+
+Reproduce with the ignored benchmark_ping_timer_reuse and
+benchmark_borrowed_response_envelope release tests. These omit sockets, encryption
+and server work; they do not establish total CPU or end-to-end latency savings.
+
+Validation: 310 all-feature workspace tests/doctests passed, 22 ignored, plus
+all-target/all-feature compilation. Subsequent warning cleanup passed strict
+all-target/all-feature Clippy with -D warnings. Tests cover cancelled callers, retained reservations, sent/unsent
+lifetime, initialization expiry, borrowed container validation, compressed replies,
+update suppression, RPC errors and required control responses. The opt-in
+unauthenticated public-test-DC initialization/GetNearestDc test passed; it uses no
+account credentials. Authenticated account/bot update suppression and production
+performance remain deployment checks.

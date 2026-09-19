@@ -195,8 +195,8 @@ impl MessageBoxes {
     fn set_pts(&mut self, key: Key, pts: i32) {
         if !self.update_entry(key, |entry| entry.pts = pts) {
             self.set_entry(LiveEntry {
-                key: key,
-                pts: pts,
+                key,
+                pts,
                 deadline: next_updates_deadline(),
                 possible_gap: None,
             });
@@ -223,7 +223,7 @@ impl MessageBoxes {
                 .entries
                 .iter()
                 .filter_map(|entry| match entry.key {
-                    Key::Channel(id) => Some(ChannelState { id, pts: entry.pts }.into()),
+                    Key::Channel(id) => Some(ChannelState { id, pts: entry.pts }),
                     _ => None,
                 })
                 .collect(),
@@ -337,7 +337,7 @@ impl MessageBoxes {
         if self.entry(Key::Channel(id)).is_none() {
             self.set_entry(LiveEntry {
                 key: Key::Channel(id),
-                pts: pts,
+                pts,
                 deadline: next_updates_deadline(),
                 possible_gap: None,
             });
@@ -705,7 +705,7 @@ impl MessageBoxes {
         // We need to process those as if they were socket updates to discard any we have already handled.
         // If the channel's difference is planned to be handled, skip its updates
         updates.retain(|update| {
-            let Some(info) = PtsInfo::from_update(&update) else {
+            let Some(info) = PtsInfo::from_update(update) else {
                 return true;
             };
             if let Key::Channel(_) = info.key {

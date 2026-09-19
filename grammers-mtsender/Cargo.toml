@@ -31,7 +31,7 @@ hickory-resolver = { version = "0.26.1", optional = true }
 url = { version = "2.5.8", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1.52.3", default-features = false, features = ["rt-multi-thread"] }
+tokio = { version = "1.52.3", default-features = false, features = ["rt-multi-thread", "test-util"] }
 simple_logger = { version = "5.2.0", default-features = false, features = ["colors"] }
 toml = "1.1.2"
 socks5-server = "0.10.1"

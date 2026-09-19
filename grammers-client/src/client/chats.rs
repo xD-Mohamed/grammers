@@ -709,14 +709,16 @@ impl Client {
                 })
                 .await?;
             let tl::enums::messages::ChatFull::Full(chat) = chat;
-            if let tl::enums::ChatFull::Full(chat) = chat.full_chat {
-                if let tl::enums::ChatParticipants::Participants(participants) = chat.participants {
-                    for participant in participants.participants {
-                        if participant.user_id() == user_id {
-                            return Ok(ParticipantPermissions(ParticipantPermissionsInner::Chat(
-                                participant,
-                            )));
-                        }
+            if let tl::enums::ChatFull::Full(tl::types::ChatFull {
+                participants: tl::enums::ChatParticipants::Participants(participants),
+                ..
+            }) = chat.full_chat
+            {
+                for participant in participants.participants {
+                    if participant.user_id() == user_id {
+                        return Ok(ParticipantPermissions(ParticipantPermissionsInner::Chat(
+                            participant,
+                        )));
                     }
                 }
             }
@@ -751,7 +753,7 @@ impl Client {
         let url_parse = url_parse_result.unwrap();
         let scheme = url_parse.scheme();
         let path = url_parse.path();
-        if url_parse.host_str().is_none() || !vec!["https", "http"].contains(&scheme) {
+        if url_parse.host_str().is_none() || !["https", "http"].contains(&scheme) {
             return None;
         }
         let host = url_parse.host_str().unwrap();
@@ -914,9 +916,8 @@ impl Client {
             .map(|peer| (peer.id(), peer))
             .collect::<HashMap<_, _>>();
 
-        if self.0.configuration.auto_cache_peers {
-            if let Err(e) = self
-                .0
+        let cache_result = if self.0.configuration.auto_cache_peers {
+            self.0
                 .session
                 .cache_peers(
                     map.values()
@@ -925,9 +926,11 @@ impl Client {
                         .collect(),
                 )
                 .await
-            {
-                log::warn!("cache_peer fail: {:?}", e)
-            }
+        } else {
+            Ok(())
+        };
+        if let Err(e) = cache_result {
+            log::warn!("cache_peer fail: {:?}", e);
         }
 
         PeerMap {
