@@ -103,3 +103,52 @@ upstream Clippy style warnings remain and strict `-D warnings` is not clean.
 Before deployment, compare against upstream on one server at matched throughput:
 CPU per completed request, memory, tail latency, timeouts and flood waits. Faster
 throughput alone can increase total CPU even when per-request work decreases.
+
+## ACK, reply-list and routing follow-up (2026-09-19)
+
+- ACK serialization writes directly into the outgoing message buffer. Its message-ID
+  vector is cleared and retained instead of discarded, with no temporary serialized
+  ACK Vec. Constructor, IDs, sequence number and message length stay identical.
+- Sender returns consumed deserialization-list storage to MTP for reuse. Encrypted
+  MTP retains capacity up to 64 entries; larger one-off lists are released. This is
+  a storage-retention bound, not a response-count limit. Result bodies still move
+  into their callers. The new trait hook has a default no-op for compatibility.
+- Established DC connections receive shared requests directly instead of making
+  the pool task forward each call to the connection task. The routing cache is per
+  pool, uses a short RwLock read and a sender-handle clone, and is written only on
+  connection/control changes. No lock is held while sending or awaiting replies.
+  It adds small retained per-pool storage in exchange for one fewer queue handoff.
+- A rejected channel send returns a request which was not queued and may use the
+  normal pool path. A request accepted by a connection is NEVER automatically
+  resent here if its reply disappears. Typed retry policy still decides typed
+  retries; raw invocation still bypasses that policy.
+- Disconnect invalidates the route immediately. Pending disconnect counts prevent
+  a concurrent connection initialization from publishing a stale route; different
+  DCs remain independent. Quit blocks publication and clears cached senders so they
+  cannot keep connection tasks alive after pool shutdown.
+
+All changes apply to existing shared/raw and typed APIs; no consumer API change is
+needed. No new runtime dependency, per-request task, timer or protocol relaxation
+was added. Multi-thread Tokio is enabled only as a dev dependency for benchmarking.
+
+Windows release medians (eight alternating samples):
+
+| Component | Previous path | Follow-up |
+|---|---:|---:|
+| One-ID ACK serialization, including message header | 121.9 ns | 27.0 ns |
+| Synthetic request routing, single-thread runtime | 1,105.9 ns | 1,060.1 ns |
+| Synthetic request routing, four-thread runtime | 2,200.9 ns | 1,904.6 ns |
+
+Routing includes a shared body, response channel, trivial four-byte response and
+task scheduling, but no sockets/encryption/Telegram. The baseline keeps routes
+uncached and forwards through the pool task. These component timings do not predict
+complete RPC latency, Linux CPU reduction or claim wins. Response-channel and owned
+reply allocations still exist; the complete request is not allocation-free.
+
+Validation: 297 all-feature workspace tests/doctests passed, 19 ignored;
+all-target/all-feature compilation passed. Workspace Clippy completed with existing
+upstream warnings. A consuming application's 169 release tests and strict release
+all-target Clippy passed with isolated local overrides. New tests cover ACK bytes
+and capacity, result-list reuse/retention, direct routing, failed-send fallback,
+lost replies without replay, cancellation, repeated disconnects, late publication,
+pool shutdown and cached-handle release. No live Telegram/account operation ran.

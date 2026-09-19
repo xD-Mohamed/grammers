@@ -223,4 +223,9 @@ pub trait Mtp {
     /// Deserializes a single incoming message payload into zero or more responses.
     fn deserialize(&mut self, payload: &mut [u8])
     -> Result<Vec<Deserialization>, DeserializeError>;
+
+    /// Return consumed response-list storage for reuse by a later packet.
+    /// Implementations may retain its capacity; any remaining entries are dropped.
+    /// The default preserves the previous behavior of releasing the allocation.
+    fn recycle_deserialization(&mut self, _results: Vec<Deserialization>) {}
 }

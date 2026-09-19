@@ -9,7 +9,7 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::num::NonZeroU32;
 use std::ops::{ControlFlow, Deref};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use std::{fmt, panic};
 
@@ -68,6 +68,42 @@ struct ConnectionInfo {
     abort_handle: AbortHandle,
 }
 
+// One small list per pool (usually one DC). Written only on connection changes;
+// the read guard is released before queueing or awaiting a response.
+#[derive(Default)]
+struct RouteCache {
+    entries: Vec<(i32, mpsc::UnboundedSender<Rpc>)>,
+    disconnecting: Vec<(i32, usize)>,
+    stopping: bool,
+}
+type Routes = Arc<RwLock<RouteCache>>;
+
+impl RouteCache {
+    fn publish(&mut self, dc_id: i32, tx: &mpsc::UnboundedSender<Rpc>) {
+        if !self.stopping && !self.disconnecting.iter().any(|(id, _)| *id == dc_id) {
+            self.entries.retain(|(id, _)| *id != dc_id);
+            self.entries.push((dc_id, tx.clone()));
+        }
+    }
+
+    fn begin_disconnect(&mut self, dc_id: i32) {
+        self.entries.retain(|(id, _)| *id != dc_id);
+        if let Some((_, count)) = self.disconnecting.iter_mut().find(|(id, _)| *id == dc_id) {
+            *count += 1;
+        } else {
+            self.disconnecting.push((dc_id, 1));
+        }
+    }
+
+    fn finish_disconnect(&mut self, dc_id: i32) {
+        self.entries.retain(|(id, _)| *id != dc_id);
+        if let Some((_, count)) = self.disconnecting.iter_mut().find(|(id, _)| *id == dc_id) {
+            *count -= 1;
+        }
+        self.disconnecting.retain(|(_, count)| *count != 0);
+    }
+}
+
 /// A fat [`SenderPoolHandle`] with additional metadata from its attached [`SenderPoolRunner`].
 #[derive(Clone)]
 pub struct SenderPoolFatHandle {
@@ -88,7 +124,7 @@ pub struct SenderPoolFatHandle {
 
 /// Cheaply cloneable handle to interact with its [`SenderPoolRunner`].
 #[derive(Clone)]
-pub struct SenderPoolHandle(mpsc::UnboundedSender<Request>);
+pub struct SenderPoolHandle(mpsc::UnboundedSender<Request>, Routes);
 
 /// Builder to configure the runner to drive I/O and linked handles.
 pub struct SenderPool {
@@ -120,6 +156,7 @@ pub struct SenderPoolRunner {
     updates_tx: mpsc::Sender<UpdatesLike>,
     connections: Vec<ConnectionInfo>,
     connection_pool: JoinSet<Result<(), ReadError>>,
+    routes: Routes,
 }
 
 impl Deref for SenderPoolFatHandle {
@@ -158,6 +195,9 @@ impl SenderPoolHandle {
     /// Like `raw_invoke_in_dc`, this method does not apply the retry policy.
     /// Dropped callers are discarded before serialization when possible; an
     /// already serialized/sent RPC cannot be revoked by dropping its future.
+    /// Established connections receive calls directly, bypassing the pool queue.
+    /// Only a call rejected before queueing may fall back to connection routing;
+    /// a lost reply is returned as an error and never replayed here.
     pub async fn raw_invoke_shared_in_dc(
         &self,
         dc_id: i32,
@@ -167,10 +207,45 @@ impl SenderPoolHandle {
             return Err(tl::deserialize::Error::UnexpectedEof.into());
         }
         let (tx, rx) = oneshot::channel();
+        let rpc = Rpc { body, tx };
+        let rpc = match self.try_route(dc_id, rpc)? {
+            None => return rx.await.map_err(|_| InvocationError::Dropped)?,
+            Some(rpc) => rpc,
+        };
         self.0
-            .send(Request::Invoke { dc_id, body, tx })
+            .send(Request::Invoke {
+                dc_id,
+                body: rpc.body,
+                tx: rpc.tx,
+            })
             .map_err(|_| InvocationError::Dropped)?;
         rx.await.map_err(|_| InvocationError::Dropped)?
+    }
+
+    fn try_route(&self, dc_id: i32, rpc: Rpc) -> Result<Option<Rpc>, InvocationError> {
+        if self.0.is_closed() {
+            return Err(InvocationError::Dropped);
+        }
+        let route = {
+            let cache = self.1.read().unwrap_or_else(|e| e.into_inner());
+            if cache.stopping {
+                return Err(InvocationError::Dropped);
+            }
+            cache
+                .entries
+                .iter()
+                .find(|(id, _)| *id == dc_id)
+                .map(|(_, tx)| tx.clone())
+        };
+        match route {
+            // SendError gives back an RPC that was NOT queued. Only this case
+            // may fall back to the pool; a lost reply must never trigger replay.
+            Some(route) => match route.send(rpc) {
+                Ok(()) => Ok(None),
+                Err(error) => Ok(Some(error.0)),
+            },
+            None => Ok(Some(rpc)),
+        }
     }
 
     /// Communicate with the running [`SenderPoolRunner`] instance
@@ -181,12 +256,21 @@ impl SenderPoolHandle {
     /// This is useful after datacenter migrations during sign in,
     /// when the old connection is known to not be needed anymore.
     pub fn disconnect_from_dc(&self, dc_id: i32) -> bool {
+        {
+            let mut cache = self.1.write().unwrap_or_else(|e| e.into_inner());
+            cache.begin_disconnect(dc_id);
+        }
         self.0.send(Request::Disconnect { dc_id }).is_ok()
     }
 
     /// Communicate with the running [`SenderPoolRunner`] instance
     /// to drop all active connections and gracefully stop running.
     pub fn quit(&self) -> bool {
+        {
+            let mut cache = self.1.write().unwrap_or_else(|e| e.into_inner());
+            cache.stopping = true;
+            cache.entries.clear();
+        }
         self.0.send(Request::Quit).is_ok()
     }
 
@@ -281,6 +365,7 @@ impl SenderPool {
     {
         let session = erase(session);
         let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let routes = Routes::default();
         let (updates_tx, updates_rx) =
             mpsc::channel(connection_params.updates_channel_capacity.get());
 
@@ -293,9 +378,10 @@ impl SenderPool {
                 updates_tx,
                 connections: Vec::new(),
                 connection_pool: JoinSet::new(),
+                routes: Arc::clone(&routes),
             },
             handle: SenderPoolFatHandle {
-                thin: SenderPoolHandle(request_tx),
+                thin: SenderPoolHandle(request_tx, routes),
                 session: Arc::clone(&session),
                 api_id,
             },
@@ -320,6 +406,8 @@ impl SenderPoolRunner {
                     }
                     self.connections
                         .retain(|connection| !connection.abort_handle.is_finished());
+                    self.routes.write().unwrap_or_else(|e| e.into_inner())
+                        .entries.retain(|(_, tx)| !tx.is_closed());
                 }
                 request = self.request_rx.recv() => {
                     let flow = if let Some(request) = request {
@@ -335,6 +423,11 @@ impl SenderPoolRunner {
             }
         }
 
+        {
+            let mut cache = self.routes.write().unwrap_or_else(|e| e.into_inner());
+            cache.stopping = true;
+            cache.entries.clear();
+        }
         self.connections.clear(); // drop all channels to cause the `run_sender` loops to stop
         self.connection_pool.join_all().await;
     }
@@ -345,20 +438,19 @@ impl SenderPoolRunner {
                 if tx.is_closed() {
                     return ControlFlow::Continue(());
                 }
-                let connection = match self
-                    .connections
-                    .iter()
-                    .find(|connection| connection.dc_id == dc_id)
-                {
-                    Some(connection) => connection,
-                    None => match self.create_connection(dc_id).await {
-                        Ok(x) => x,
-                        Err(e) => {
-                            let _ = tx.send(Err(e));
-                            return ControlFlow::Continue(());
-                        }
-                    },
-                };
+                let connection =
+                    match self.connections.iter().find(|connection| {
+                        connection.dc_id == dc_id && !connection.rpc_tx.is_closed()
+                    }) {
+                        Some(connection) => connection,
+                        None => match self.create_connection(dc_id).await {
+                            Ok(x) => x,
+                            Err(e) => {
+                                let _ = tx.send(Err(e));
+                                return ControlFlow::Continue(());
+                            }
+                        },
+                    };
                 if !tx.is_closed() {
                     let _ = connection.rpc_tx.send(Rpc { body, tx });
                 }
@@ -387,6 +479,10 @@ impl SenderPoolRunner {
                 ControlFlow::Continue(())
             }
             Request::Disconnect { dc_id } => {
+                {
+                    let mut cache = self.routes.write().unwrap_or_else(|e| e.into_inner());
+                    cache.finish_disconnect(dc_id);
+                }
                 self.connections.retain(|connection| {
                     if connection.dc_id == dc_id {
                         connection.abort_handle.abort();
@@ -419,6 +515,10 @@ impl SenderPoolRunner {
             self.updates_tx.clone(),
             dc_option.id == self.session.home_dc_id()?,
         ));
+        {
+            let mut cache = self.routes.write().unwrap_or_else(|e| e.into_inner());
+            cache.publish(dc_id, &rpc_tx);
+        }
         self.connections.push(ConnectionInfo {
             dc_id,
             rpc_tx,
@@ -634,10 +734,240 @@ impl fmt::Debug for Request {
 mod optimization_tests {
     use super::*;
 
+    fn fake_handle() -> (SenderPoolHandle, mpsc::UnboundedReceiver<Request>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (SenderPoolHandle(tx, Routes::default()), rx)
+    }
+
+    #[tokio::test]
+    async fn warm_route_bypasses_pool_and_keeps_shared_payload() {
+        let (handle, mut pool_rx) = fake_handle();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle.1.write().unwrap().publish(4, &tx);
+        let body = Bytes::from(vec![1; 152]);
+        let ptr = body.as_ptr() as usize;
+        let call = tokio::spawn(async move { handle.raw_invoke_shared_in_dc(4, body).await });
+        let rpc = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(rpc.body.as_ptr() as usize, ptr);
+        assert!(matches!(
+            pool_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+        rpc.tx.send(Ok(vec![7; 4])).unwrap();
+        assert_eq!(call.await.unwrap().unwrap(), [7; 4]);
+    }
+
+    #[tokio::test]
+    async fn rejected_queue_send_falls_back_once_but_lost_reply_does_not() {
+        let (handle, mut pool_rx) = fake_handle();
+        let (tx, rx) = mpsc::unbounded_channel();
+        handle.1.write().unwrap().publish(4, &tx);
+        drop(rx);
+        let task_handle = handle.clone();
+        let call = tokio::spawn(async move {
+            task_handle
+                .raw_invoke_shared_in_dc(4, Bytes::from_static(&[1; 4]))
+                .await
+        });
+        let Request::Invoke { dc_id, tx, .. } = pool_rx.recv().await.unwrap() else {
+            panic!("fallback");
+        };
+        assert_eq!(dc_id, 4);
+        let (new_tx, mut new_rx) = mpsc::unbounded_channel();
+        handle.1.write().unwrap().publish(4, &new_tx);
+        tx.send(Ok(vec![2; 4])).unwrap();
+        assert_eq!(call.await.unwrap().unwrap(), [2; 4]);
+
+        let task_handle = handle.clone();
+        let call = tokio::spawn(async move {
+            task_handle
+                .raw_invoke_shared_in_dc(4, Bytes::from_static(&[1; 4]))
+                .await
+        });
+        let accepted = new_rx.recv().await.unwrap();
+        drop(accepted.tx);
+        assert!(matches!(call.await.unwrap(), Err(InvocationError::Dropped)));
+        assert!(matches!(
+            pool_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    fn pending_disconnects_block_stale_route_publication() {
+        let (handle, mut rx) = fake_handle();
+        let (tx, _rpc_rx) = mpsc::unbounded_channel();
+        {
+            let mut cache = handle.1.write().unwrap();
+            cache.publish(2, &tx);
+            cache.publish(4, &tx);
+        }
+        assert!(handle.disconnect_from_dc(4));
+        assert!(handle.disconnect_from_dc(4));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Request::Disconnect { dc_id: 4 })
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Request::Disconnect { dc_id: 4 })
+        ));
+        let mut cache = handle.1.write().unwrap();
+        cache.publish(4, &tx);
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.entries[0].0, 2);
+        cache.finish_disconnect(4);
+        cache.publish(4, &tx);
+        assert_eq!(cache.entries.len(), 1);
+        cache.finish_disconnect(4);
+        cache.publish(4, &tx);
+        assert_eq!(cache.entries.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn warm_route_cancellation_keeps_the_response_channel_cancelled() {
+        let (handle, _pool_rx) = fake_handle();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle.1.write().unwrap().publish(4, &tx);
+        let call = tokio::spawn(async move {
+            handle
+                .raw_invoke_shared_in_dc(4, Bytes::from_static(&[1; 4]))
+                .await
+        });
+        let rpc = rx.recv().await.unwrap();
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        assert!(rpc.tx.is_closed());
+    }
+
+    #[tokio::test]
+    async fn quit_releases_cached_channels_and_stops_connection_tasks() {
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        let pool = SenderPool::with_configuration(session, 1, ConnectionParams::default());
+        let handle = pool.handle.thin;
+        let mut runner = pool.runner;
+        let (tx, mut rx) = mpsc::unbounded_channel::<Rpc>();
+        runner.routes.write().unwrap().publish(4, &tx);
+        let abort_handle = runner.connection_pool.spawn(async move {
+            while let Some(rpc) = rx.recv().await {
+                let _ = rpc.tx.send(Ok(vec![1; 4]));
+            }
+            Ok(())
+        });
+        runner.connections.push(ConnectionInfo {
+            dc_id: 4,
+            rpc_tx: tx,
+            abort_handle,
+        });
+        let task = tokio::spawn(runner.run());
+        assert!(handle.quit());
+        // Even if connection creation completes during quit, it cannot republish.
+        let (late_tx, _late_rx) = mpsc::unbounded_channel();
+        handle.1.write().unwrap().publish(4, &late_tx);
+        assert!(handle.1.read().unwrap().entries.is_empty());
+        assert!(matches!(
+            handle
+                .raw_invoke_shared_in_dc(4, Bytes::from_static(&[1; 4]))
+                .await,
+            Err(InvocationError::Dropped)
+        ));
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn stopped_pool_rejects_even_a_still_open_cached_route() {
+        let (handle, pool_rx) = fake_handle();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle.1.write().unwrap().publish(4, &tx);
+        drop(pool_rx);
+        assert!(matches!(
+            handle
+                .raw_invoke_shared_in_dc(4, Bytes::from_static(&[1; 4]))
+                .await,
+            Err(InvocationError::Dropped)
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[test]
+    #[ignore = "isolated routing benchmark; no sockets or Telegram RPCs"]
+    fn benchmark_warm_connection_route() {
+        for threads in [1, 4] {
+            let runtime = if threads == 1 {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            } else {
+                tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(threads)
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            };
+            runtime.block_on(async {
+                let (handle, mut pool_rx) = fake_handle();
+                let (rpc_tx, mut rpc_rx) = mpsc::unbounded_channel::<Rpc>();
+                let forwarding_tx = rpc_tx.clone();
+                let forwarder = tokio::spawn(async move {
+                    while let Some(Request::Invoke { body, tx, .. }) = pool_rx.recv().await {
+                        assert!(forwarding_tx.send(Rpc { body, tx }).is_ok());
+                    }
+                });
+                let responder = tokio::spawn(async move {
+                    while let Some(rpc) = rpc_rx.recv().await {
+                        let _ = rpc.tx.send(Ok(vec![1; 4]));
+                    }
+                });
+                let mut samples = [Vec::new(), Vec::new()];
+                for round in 0..8 {
+                    for direct in [round % 2 == 0, round % 2 != 0] {
+                        if direct {
+                            handle.1.write().unwrap().publish(4, &rpc_tx);
+                        } else {
+                            handle.1.write().unwrap().entries.clear();
+                        }
+                        let started = Instant::now();
+                        for _ in 0..20_000 {
+                            std::hint::black_box(
+                                handle
+                                    .raw_invoke_shared_in_dc(4, Bytes::from_static(&[1; 4]))
+                                    .await
+                                    .unwrap(),
+                            );
+                        }
+                        samples[usize::from(direct)]
+                            .push(started.elapsed().as_nanos() as f64 / 20_000.0);
+                    }
+                }
+                for values in &mut samples {
+                    values.sort_by(f64::total_cmp);
+                }
+                println!(
+                    "Routing threads={threads} median: pool {:.1} ns, direct {:.1} ns",
+                    samples[0][4], samples[1][4]
+                );
+                forwarder.abort();
+                responder.abort();
+                let _ = forwarder.await;
+                let _ = responder.await;
+            });
+        }
+    }
+
     #[tokio::test]
     async fn malformed_raw_bodies_fail_before_reaching_the_runner() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = SenderPoolHandle(tx);
+        let handle = SenderPoolHandle(tx, Routes::default());
         for len in 0..4 {
             assert!(matches!(
                 handle.raw_invoke_in_dc(4, vec![0; len]).await,
@@ -660,7 +990,7 @@ mod optimization_tests {
     async fn shared_and_owned_request_apis_preserve_the_payload_allocation() {
         for shared in [false, true] {
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let handle = SenderPoolHandle(tx);
+            let handle = SenderPoolHandle(tx, Routes::default());
             let body = vec![1, 0, 0, 0];
             let address = body.as_ptr() as usize;
             let call = tokio::spawn(async move {
@@ -683,7 +1013,7 @@ mod optimization_tests {
     #[tokio::test]
     async fn typed_retry_reuses_request_storage_and_keeps_retry_policy() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = SenderPoolHandle(tx);
+        let handle = SenderPoolHandle(tx, Routes::default());
         let call = tokio::spawn(async move { handle.do_invoke_in_dc(4, vec![1, 0, 0, 0]).await });
         let Request::Invoke {
             body: first, tx, ..

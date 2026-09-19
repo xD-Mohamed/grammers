@@ -461,10 +461,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     /// Process the result of deserializing an MTP buffer.
     fn process_mtp_buffer(
         &mut self,
-        results: Vec<Deserialization>,
+        mut results: Vec<Deserialization>,
         updates: &mut Vec<UpdatesLike>,
     ) {
-        for result in results {
+        for result in results.drain(..) {
             match result {
                 Deserialization::OwnUpdate { msg_id, update } => {
                     self.process_own_update(updates, msg_id, update)
@@ -476,6 +476,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 Deserialization::Failure(failure) => self.process_deserialize_error(failure),
             }
         }
+        self.mtp.recycle_deserialization(results);
     }
 
     fn process_own_update(

@@ -212,15 +212,41 @@ impl Encrypted {
         body: &[u8],
         content_related: bool,
     ) -> MsgId {
+        let msg_id = self.serialize_msg_header(buffer, body.len(), content_related);
+        buffer.extend(body);
+        msg_id
+    }
+
+    fn serialize_msg_header(
+        &mut self,
+        buffer: &mut DequeBuffer<u8>,
+        body_len: usize,
+        content_related: bool,
+    ) -> MsgId {
         let msg_id = self.get_new_msg_id();
 
         msg_id.serialize(buffer);
         self.get_seq_no(content_related).serialize(buffer);
-        (body.len() as i32).serialize(buffer);
-        buffer.extend(body);
+        (body_len as i32).serialize(buffer);
 
         self.msg_count += 1;
         MsgId(msg_id)
+    }
+
+    fn serialize_pending_ack(&mut self, buffer: &mut DequeBuffer<u8>) {
+        let count = self.pending_ack.len();
+        if count == 0 {
+            return;
+        }
+        let ack = tl::enums::MsgsAck::Ack(tl::types::MsgsAck {
+            msg_ids: mem::take(&mut self.pending_ack),
+        });
+        // Constructor + vector constructor + count + the i64 message IDs.
+        self.serialize_msg_header(buffer, 12 + count * 8, false);
+        ack.serialize(buffer);
+        let tl::enums::MsgsAck::Ack(ack) = ack;
+        self.pending_ack = ack.msg_ids;
+        self.pending_ack.clear();
     }
 
     fn get_current_salt(&self) -> i64 {
@@ -1226,14 +1252,7 @@ impl Mtp for Encrypted {
         // If we need to acknowledge messages, this notification goes in with the rest of requests
         // so that we can also include it. It has priority over user requests because these should
         // be sent out as soon as possible.
-        if !self.pending_ack.is_empty() {
-            // TODO avoid to_bytes here, serialize it in-place
-            let body = tl::enums::MsgsAck::Ack(tl::types::MsgsAck {
-                msg_ids: mem::take(&mut self.pending_ack),
-            })
-            .to_bytes();
-            self.serialize_msg(buffer, &body, false);
-        }
+        self.serialize_pending_ack(buffer);
 
         // Serialize `MAXIMUM_LENGTH` requests at most.
         if self.msg_count == manual_tl::MessageContainer::MAXIMUM_LENGTH {
@@ -1307,6 +1326,15 @@ impl Mtp for Encrypted {
         // state is cleaned and returned with `mem::take`.
         Ok(mem::take(&mut self.deserialization))
     }
+
+    fn recycle_deserialization(&mut self, mut results: Vec<Deserialization>) {
+        results.clear();
+        // Keep ordinary small-packet capacity, not a rare giant container's
+        // allocation on every long-lived connection.
+        if results.capacity() <= 64 && results.capacity() > self.deserialization.capacity() {
+            self.deserialization = results;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1327,6 +1355,100 @@ mod tests {
 
     fn auth_key() -> [u8; 256] {
         [0; 256]
+    }
+
+    #[test]
+    fn acknowledgements_match_typed_encoding_and_reuse_ids() {
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let mut buffer = DequeBuffer::with_capacity(4096, 0);
+        for ids in [vec![1], vec![3, 5, 7], (0..128).collect()] {
+            mtp.pending_ack.extend_from_slice(&ids);
+            let allocation = mtp.pending_ack.as_ptr();
+            let capacity = mtp.pending_ack.capacity();
+            let sequence = mtp.sequence;
+            let expected = tl::enums::MsgsAck::Ack(tl::types::MsgsAck { msg_ids: ids }).to_bytes();
+            buffer.clear();
+            mtp.serialize_pending_ack(&mut buffer);
+            assert_eq!(
+                i32::from_le_bytes(buffer[8..12].try_into().unwrap()),
+                sequence
+            );
+            assert_eq!(
+                i32::from_le_bytes(buffer[12..16].try_into().unwrap()) as usize,
+                expected.len()
+            );
+            assert_eq!(&buffer[16..], expected.as_slice());
+            assert_eq!(mtp.pending_ack.as_ptr(), allocation);
+            assert_eq!(mtp.pending_ack.capacity(), capacity);
+            assert!(mtp.pending_ack.is_empty());
+            assert_eq!(mtp.sequence, sequence);
+            let len = buffer.len();
+            mtp.serialize_pending_ack(&mut buffer);
+            assert_eq!(buffer.len(), len);
+        }
+    }
+
+    #[test]
+    fn response_list_recycling_preserves_small_capacity_only() {
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let mut results = Vec::with_capacity(4);
+        results.push(Deserialization::RpcResult(RpcResult {
+            msg_id: MsgId(1),
+            body: vec![1; 4],
+        }));
+        let allocation = results.as_ptr();
+        mtp.recycle_deserialization(results);
+        assert!(mtp.deserialization.is_empty());
+        assert_eq!(mtp.deserialization.as_ptr(), allocation);
+        mtp.deserialization
+            .push(Deserialization::RpcResult(RpcResult {
+                msg_id: MsgId(2),
+                body: vec![2; 4],
+            }));
+        let mut returned = mem::take(&mut mtp.deserialization);
+        assert_eq!(returned.len(), 1);
+        returned.clear();
+        mtp.recycle_deserialization(returned);
+        assert_eq!(mtp.deserialization.as_ptr(), allocation);
+        mtp.recycle_deserialization(Vec::with_capacity(1024));
+        assert_eq!(mtp.deserialization.as_ptr(), allocation);
+    }
+
+    #[test]
+    #[ignore = "isolated ACK allocation benchmark; run release with nocapture"]
+    fn benchmark_ack_serialization() {
+        use std::hint::black_box;
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let mut buffer = DequeBuffer::with_capacity(4096, 0);
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..8 {
+            for reuse in [round % 2 == 0, round % 2 != 0] {
+                let started = Instant::now();
+                for i in 0..100_000 {
+                    mtp.msg_count = 0;
+                    mtp.pending_ack.push(black_box(i));
+                    buffer.clear();
+                    if reuse {
+                        mtp.serialize_pending_ack(&mut buffer);
+                    } else {
+                        let body = tl::enums::MsgsAck::Ack(tl::types::MsgsAck {
+                            msg_ids: mem::take(&mut mtp.pending_ack),
+                        })
+                        .to_bytes();
+                        mtp.serialize_msg(&mut buffer, &body, false);
+                    }
+                    black_box(&buffer);
+                }
+                samples[usize::from(reuse)].push(started.elapsed().as_nanos() as f64 / 100_000.0);
+            }
+        }
+        for values in &mut samples {
+            values.sort_by(f64::total_cmp);
+        }
+        println!(
+            "ACK median: allocate {:.1} ns, reuse {:.1} ns",
+            samples[0][4], samples[1][4]
+        );
     }
 
     fn ensure_buffer_is_message(buffer: &[u8], body: &[u8], seq_no: u8) {
