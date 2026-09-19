@@ -2,7 +2,8 @@
 
 This is a public library fork. Canonical upstream is Codeberg; see UPSTREAM.md
 for remotes, branch roles and the update procedure. Keep upstream history and
-Apache-2.0/MIT licenses intact. The archived GitHub parent is not the update source.
+Apache-2.0/MIT licenses intact. This is a cross-host Git fork with no native GitHub
+fork relationship. The archived GitHub repository is not the update source.
 
 The Cargo workspace includes client, session storage, sender, MTProto, crypto,
 TL parser/generator/types and the grammers command-line crate. Follow the upstream

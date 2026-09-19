@@ -4,14 +4,15 @@ Canonical upstream: https://codeberg.org/Lonami/grammers
 
 Initial Codeberg baseline: `82eba650098b54e4c2cb9de83fdab7ea2d21a957`.
 
-This repository is a GitHub fork of the project's archived GitHub repository,
-`Lonami/grammers`. The working `main` branch comes directly from Codeberg, with
-its history and licenses intact. Codeberg is the source for future updates;
-GitHub's **Sync fork** button follows the archived GitHub parent instead.
+The working `main` branch comes directly from Codeberg, with its full history
+and licenses intact. This is an independently maintained Git fork hosted on
+GitHub; GitHub does not support native fork relationships to Codeberg repositories.
+Codeberg is the source for future updates, using the commands below rather than
+GitHub's **Sync fork** button. The archived GitHub repository is not used.
 
 ## Remotes and branches
 
-- `origin`: https://github.com/xD-Mohamed/grammers-fork.git
+- `origin`: https://github.com/xD-Mohamed/grammers.git
 - `upstream`: https://codeberg.org/Lonami/grammers.git
 - `main`: our working branch, tracking `origin/main`.
 - `upstream/master`: canonical upstream development.
