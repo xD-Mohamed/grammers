@@ -427,7 +427,7 @@ impl Encrypted {
     /// [RPC Error]: https://core.telegram.org/mtproto/service_messages#rpc-error
     /// [Cancellation of an RPC Query]: https://core.telegram.org/mtproto/service_messages#cancellation-of-an-rpc-query
     fn handle_rpc_result(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
-        let rpc_result = manual_tl::RpcResult::from_bytes(&message.body)?;
+        let rpc_result = manual_tl::RpcResult::from_owned(message.body)?;
         let inner_constructor = rpc_result.inner_constructor();
         let manual_tl::RpcResult { req_msg_id, result } = rpc_result;
         let msg_id = MsgId(req_msg_id);
@@ -480,16 +480,10 @@ impl Encrypted {
             // would probably outweight the benefits) so we don't check
             // that the decompressed payload is an error or answer drop.
             manual_tl::GzipPacked::CONSTRUCTOR_ID => {
-                let body = match manual_tl::GzipPacked::from_bytes(&result) {
-                    Ok(gzip) => match gzip.decompress() {
-                        Ok(x) => {
-                            self.store_own_updates(msg_id, &x);
-                            Ok(x)
-                        }
-                        Err(e) => Err(e),
-                    },
-                    Err(e) => Err(DeserializeError::from(e)),
-                };
+                let body = manual_tl::GzipPacked::decompress_from_bytes(&result);
+                if let Ok(body) = &body {
+                    self.store_own_updates(msg_id, body);
+                }
 
                 match body {
                     Ok(body) => self
@@ -1107,12 +1101,9 @@ impl Encrypted {
     ///
     /// [Packed Object]: https://core.telegram.org/mtproto/service_messages#packed-object
     fn handle_gzip_packed(&mut self, message: manual_tl::Message) -> Result<(), DeserializeError> {
-        let container = manual_tl::GzipPacked::from_bytes(&message.body)?;
-        self.process_message(manual_tl::Message {
-            body: container.decompress()?,
-            ..message
-        })
-        .map(|_| ())
+        let body = manual_tl::GzipPacked::decompress_from_bytes(&message.body)?;
+        self.process_message(manual_tl::Message { body, ..message })
+            .map(|_| ())
     }
 
     /// **[HTTP Wait/Long Poll]**

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{fmt, panic};
 
+use bytes::Bytes;
 use grammers_mtproto::{mtp, transport};
 use grammers_session::Session;
 use grammers_session::storages::{ErasedSession, erase};
@@ -41,7 +42,7 @@ type InvokeResponse = Vec<u8>;
 enum Request {
     Invoke {
         dc_id: i32,
-        body: Vec<u8>,
+        body: Bytes,
         tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
     },
     CheckRetry {
@@ -57,7 +58,7 @@ enum Request {
 }
 
 struct Rpc {
-    body: Vec<u8>,
+    body: Bytes,
     tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
 }
 
@@ -149,6 +150,22 @@ impl SenderPoolHandle {
         dc_id: i32,
         body: Vec<u8>,
     ) -> Result<InvokeResponse, InvocationError> {
+        self.raw_invoke_shared_in_dc(dc_id, body.into()).await
+    }
+
+    /// Invoke an immutable prepared body without copying its payload.
+    /// Clone a [`crate::RequestBody`] to reuse a serialized request across calls.
+    /// Like `raw_invoke_in_dc`, this method does not apply the retry policy.
+    /// Dropped callers are discarded before serialization when possible; an
+    /// already serialized/sent RPC cannot be revoked by dropping its future.
+    pub async fn raw_invoke_shared_in_dc(
+        &self,
+        dc_id: i32,
+        body: Bytes,
+    ) -> Result<InvokeResponse, InvocationError> {
+        if body.len() < 4 {
+            return Err(tl::deserialize::Error::UnexpectedEof.into());
+        }
         let (tx, rx) = oneshot::channel();
         self.0
             .send(Request::Invoke { dc_id, body, tx })
@@ -179,11 +196,15 @@ impl SenderPoolHandle {
         dc_id: i32,
         request_body: Vec<u8>,
     ) -> Result<Vec<u8>, InvocationError> {
+        let request_body = Bytes::from(request_body);
         let mut fail_count = NonZeroU32::new(1).unwrap();
         let mut slept_so_far = Duration::default();
 
         loop {
-            match self.raw_invoke_in_dc(dc_id, request_body.clone()).await {
+            match self
+                .raw_invoke_shared_in_dc(dc_id, request_body.clone())
+                .await
+            {
                 Ok(response) => break Ok(response),
                 Err(e) => {
                     let error_info = format!("{}", e);
@@ -321,6 +342,9 @@ impl SenderPoolRunner {
     async fn process_request(&mut self, request: Request) -> ControlFlow<()> {
         match request {
             Request::Invoke { dc_id, body, tx } => {
+                if tx.is_closed() {
+                    return ControlFlow::Continue(());
+                }
                 let connection = match self
                     .connections
                     .iter()
@@ -335,7 +359,9 @@ impl SenderPoolRunner {
                         }
                     },
                 };
-                let _ = connection.rpc_tx.send(Rpc { body, tx });
+                if !tx.is_closed() {
+                    let _ = connection.rpc_tx.send(Rpc { body, tx });
+                }
                 ControlFlow::Continue(())
             }
             Request::CheckRetry {
@@ -600,6 +626,123 @@ impl fmt::Debug for Request {
                 f.debug_struct("Disconnect").field("dc_id", dc_id).finish()
             }
             Self::Quit => write!(f, "Quit"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod optimization_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn malformed_raw_bodies_fail_before_reaching_the_runner() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = SenderPoolHandle(tx);
+        for len in 0..4 {
+            assert!(matches!(
+                handle.raw_invoke_in_dc(4, vec![0; len]).await,
+                Err(InvocationError::Deserialize(_))
+            ));
+            assert!(matches!(
+                handle
+                    .raw_invoke_shared_in_dc(4, Bytes::from(vec![0; len]))
+                    .await,
+                Err(InvocationError::Deserialize(_))
+            ));
+        }
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn shared_and_owned_request_apis_preserve_the_payload_allocation() {
+        for shared in [false, true] {
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            let handle = SenderPoolHandle(tx);
+            let body = vec![1, 0, 0, 0];
+            let address = body.as_ptr() as usize;
+            let call = tokio::spawn(async move {
+                if shared {
+                    handle.raw_invoke_shared_in_dc(4, body.into()).await
+                } else {
+                    handle.raw_invoke_in_dc(4, body).await
+                }
+            });
+            let Request::Invoke { body, tx, dc_id } = rx.recv().await.unwrap() else {
+                panic!("expected invocation");
+            };
+            assert_eq!(dc_id, 4);
+            assert_eq!(body.as_ptr() as usize, address);
+            tx.send(Ok(vec![2, 0, 0, 0])).unwrap();
+            assert_eq!(call.await.unwrap().unwrap(), [2, 0, 0, 0]);
+        }
+    }
+
+    #[tokio::test]
+    async fn typed_retry_reuses_request_storage_and_keeps_retry_policy() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let handle = SenderPoolHandle(tx);
+        let call = tokio::spawn(async move { handle.do_invoke_in_dc(4, vec![1, 0, 0, 0]).await });
+        let Request::Invoke {
+            body: first, tx, ..
+        } = rx.recv().await.unwrap()
+        else {
+            panic!("invoke");
+        };
+        tx.send(Err(InvocationError::Dropped)).unwrap();
+        let Request::CheckRetry { tx, fail_count, .. } = rx.recv().await.unwrap() else {
+            panic!("policy");
+        };
+        assert_eq!(fail_count.get(), 1);
+        tx.send(ControlFlow::Continue(Duration::ZERO)).unwrap();
+        let Request::Invoke {
+            body: second, tx, ..
+        } = rx.recv().await.unwrap()
+        else {
+            panic!("retry");
+        };
+        assert_eq!(first.as_ptr(), second.as_ptr());
+        assert_eq!(first, second);
+        tx.send(Ok(vec![3, 0, 0, 0])).unwrap();
+        assert_eq!(call.await.unwrap().unwrap(), [3, 0, 0, 0]);
+    }
+
+    #[test]
+    #[ignore = "isolated payload clone benchmark; run release with nocapture"]
+    fn benchmark_prepared_request_clones() {
+        use std::hint::black_box;
+        const N: usize = 500_000;
+        for size in [152, 1024, 8192] {
+            let owned = vec![7u8; size];
+            let shared = Bytes::from(owned.clone());
+            let mut owned_ns = Vec::new();
+            let mut shared_ns = Vec::new();
+            for round in 0..10 {
+                for share in [round % 2 == 0, round % 2 != 0] {
+                    let started = Instant::now();
+                    for _ in 0..N {
+                        if share {
+                            black_box(black_box(&shared).clone());
+                        } else {
+                            black_box(black_box(&owned).clone());
+                        }
+                    }
+                    let elapsed = started.elapsed().as_nanos() as f64 / N as f64;
+                    if share {
+                        shared_ns.push(elapsed);
+                    } else {
+                        owned_ns.push(elapsed);
+                    }
+                }
+            }
+            owned_ns.sort_by(f64::total_cmp);
+            shared_ns.sort_by(f64::total_cmp);
+            println!(
+                "{size}-byte request clone median: Vec {:.1} ns, shared {:.1} ns",
+                owned_ns[5], shared_ns[5]
+            );
         }
     }
 }

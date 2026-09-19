@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, SystemTime};
 use std::{io, thread};
 
+use bytes::Bytes;
 use grammers_crypto::DequeBuffer;
 use grammers_mtproto::mtp::{
     self, BadMessage, Deserialization, DeserializationFailure, Mtp, RpcResult, RpcResultError,
@@ -38,6 +39,7 @@ use crate::net::{NetStream, ServerAddr};
 /// so to account for the transports' own overhead, we add a few extra
 /// kilobytes to the maximum data size.
 const MAXIMUM_DATA: usize = (1024 * 1024) + (8 * 1024);
+const INITIAL_BUFFER_SIZE: usize = 4 * 1024;
 
 /// How much leading space should be reserved in a buffer to avoid moving memory.
 const LEADING_BUFFER_SPACE: usize = mtp::MAX_TRANSPORT_HEADER_LEN
@@ -116,9 +118,10 @@ pub struct Sender<T: Transport, M: Mtp> {
 }
 
 struct Request {
-    body: Vec<u8>,
+    body: Bytes,
     state: RequestState,
-    result: oneshot::Sender<Result<Vec<u8>, InvocationError>>,
+    // None is a protocol-owned keepalive, which must survive caller cancellation.
+    result: Option<oneshot::Sender<Result<Vec<u8>, InvocationError>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -157,9 +160,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             requests: vec![],
             next_ping: Instant::now() + PING_DELAY,
 
-            read_buffer: vec![0; MAXIMUM_DATA],
+            read_buffer: vec![0; INITIAL_BUFFER_SIZE],
             read_tail: 0,
-            write_buffer: DequeBuffer::with_capacity(MAXIMUM_DATA, LEADING_BUFFER_SPACE),
+            write_buffer: DequeBuffer::with_capacity(INITIAL_BUFFER_SIZE, LEADING_BUFFER_SPACE),
             write_head: 0,
         })
     }
@@ -179,7 +182,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         request: &R,
     ) -> Result<R::Return, InvocationError> {
         let (tx, rx) = oneshot::channel();
-        self.enqueue_body(request.to_bytes(), tx);
+        self.enqueue_body(request.to_bytes().into(), tx);
         self.step_until_receive(rx)
             .await
             .and_then(|vec| R::Return::from_bytes(&vec).map_err(|err| err.into()))
@@ -187,8 +190,19 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
     pub(crate) fn enqueue_body(
         &mut self,
-        body: Vec<u8>,
+        body: Bytes,
         tx: oneshot::Sender<Result<Vec<u8>, InvocationError>>,
+    ) {
+        if tx.is_closed() {
+            return;
+        }
+        self.enqueue_request(body, Some(tx));
+    }
+
+    fn enqueue_request(
+        &mut self,
+        body: Bytes,
+        result: Option<oneshot::Sender<Result<Vec<u8>, InvocationError>>>,
     ) {
         assert!(body.len() >= 4);
         let req_id = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
@@ -200,7 +214,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         self.requests.push(Request {
             body,
             state: RequestState::NotSerialized,
-            result: tx,
+            result,
         });
     }
 
@@ -227,6 +241,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     /// If an error is returned, the connection should be treated
     /// as dead and the sender instance recreated.
     pub async fn step(&mut self) -> Result<Vec<UpdatesLike>, ReadError> {
+        if let Err(error) = self.prepare_read_buffer() {
+            self.on_error(&error);
+            return Err(error);
+        }
         self.try_fill_write();
         let write_len = self.write_buffer.len() - self.write_head;
         trace!(
@@ -242,9 +260,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 n.map_err(ReadError::Io).and_then(|n| self.on_net_read(n))
             }
             n = writer.write(&self.write_buffer[self.write_head..]), if !self.write_buffer.is_empty() => {
-                n.map_err(ReadError::Io).map(|n| {
-                    self.on_net_write(n);
-                    Vec::new()
+                n.map_err(ReadError::Io).and_then(|n| {
+                    self.on_net_write(n)?;
+                    Ok(Vec::new())
                 })
             }
             _ = sleep => {
@@ -262,8 +280,28 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         }
     }
 
+    fn prepare_read_buffer(&mut self) -> Result<(), ReadError> {
+        if self.read_tail == self.read_buffer.len() {
+            if self.read_tail >= MAXIMUM_DATA {
+                return Err(ReadError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "transport packet exceeds receive limit",
+                )));
+            }
+            let next = (self.read_buffer.len() * 2).min(MAXIMUM_DATA);
+            self.read_buffer.resize(next, 0);
+        }
+        Ok(())
+    }
+
     /// Setup the write buffer for the transport, unless a write is already pending.
     fn try_fill_write(&mut self) {
+        // Serialized packets may already be partially written; preserve those
+        // and their update metadata. Only unsent, unframed calls can be removed.
+        self.requests.retain(|r| {
+            !matches!(r.state, RequestState::NotSerialized)
+                || r.result.as_ref().is_none_or(|tx| !tx.is_closed())
+        });
         if !self.write_buffer.is_empty() {
             return;
         }
@@ -356,7 +394,13 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     }
 
     /// Handle `n` more written bytes being ready to process by the transport.
-    fn on_net_write(&mut self, n: usize) {
+    fn on_net_write(&mut self, n: usize) -> Result<(), ReadError> {
+        if n == 0 && !self.write_buffer.is_empty() {
+            return Err(ReadError::Io(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "socket wrote zero bytes",
+            )));
+        }
         self.write_head += n;
         trace!(
             "written {} bytes to the network ({}/{})",
@@ -366,7 +410,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         );
         assert!(self.write_head <= self.write_buffer.len());
         if self.write_head != self.write_buffer.len() {
-            return;
+            return Ok(());
         }
 
         self.write_buffer.clear();
@@ -380,20 +424,21 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 }
             }
         }
+        Ok(())
     }
 
     /// Handle a ping timeout, meaning we need to enqueue a new ping request.
     fn on_ping_timeout(&mut self) {
         let ping_id = generate_random_id();
         debug!("enqueueing keepalive ping {}", ping_id);
-        let (tx, _rx) = oneshot::channel();
-        self.enqueue_body(
+        self.enqueue_request(
             tl::functions::PingDelayDisconnect {
                 ping_id,
                 disconnect_delay: NO_PING_DISCONNECT,
             }
-            .to_bytes(),
-            tx,
+            .to_bytes()
+            .into(),
+            None,
         );
         self.next_ping = Instant::now() + PING_DELAY;
     }
@@ -406,9 +451,11 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             &error
         );
 
-        self.requests
-            .drain(..)
-            .for_each(|r| drop(r.result.send(Err(InvocationError::from(error.clone())))));
+        self.requests.drain(..).for_each(|r| {
+            if let Some(tx) = r.result {
+                let _ = tx.send(Err(InvocationError::from(error.clone())));
+            }
+        });
     }
 
     /// Process the result of deserializing an MTP buffer.
@@ -515,7 +562,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 tl::name_for_id(res_id),
                 result.msg_id
             );
-            drop(req.result.send(Ok(x)));
+            if let Some(tx) = req.result {
+                let _ = tx.send(Ok(x));
+            }
         } else {
             info!(
                 "got rpc result {:?} but no such request is saved",
@@ -527,13 +576,15 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     fn process_error(&mut self, error: RpcResultError) {
         if let Some(req) = self.pop_request(error.msg_id) {
             debug!("got rpc error {:?}", error.error);
-            let x = req.body.as_slice();
-            drop(
-                req.result.send(Err(InvocationError::Rpc(
-                    RpcError::from(error.error)
-                        .with_caused_by(u32::from_le_bytes([x[0], x[1], x[2], x[3]])),
-                ))),
-            );
+            let x = req.body.as_ref();
+            if let Some(tx) = req.result {
+                drop(
+                    tx.send(Err(InvocationError::Rpc(
+                        RpcError::from(error.error)
+                            .with_caused_by(u32::from_le_bytes([x[0], x[1], x[2], x[3]])),
+                    ))),
+                );
+            }
         } else {
             info!(
                 "got rpc error {:?} but no such request is saved",
@@ -558,7 +609,13 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                     if pair.msg_id == bad_msg.msg_id || pair.container_msg_id == bad_msg.msg_id =>
                 {
                     // TODO add a test to make sure we resend the request
-                    if bad_msg.retryable() {
+                    if self.requests[i]
+                        .result
+                        .as_ref()
+                        .is_some_and(|tx| tx.is_closed())
+                    {
+                        self.requests.swap_remove(i);
+                    } else if bad_msg.retryable() {
                         info!(
                             "{}; re-sending request {:?}",
                             bad_msg.description(),
@@ -582,7 +639,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                             );
                         }
                         let req = self.requests.swap_remove(i);
-                        drop(req.result.send(Err(InvocationError::Dropped)));
+                        if let Some(tx) = req.result {
+                            let _ = tx.send(Err(InvocationError::Dropped));
+                        }
                     }
                 }
                 _ => {}
@@ -593,7 +652,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     fn process_deserialize_error(&mut self, failure: DeserializationFailure) {
         if let Some(req) = self.pop_request(failure.msg_id) {
             debug!("got deserialization failure {:?}", failure.error);
-            drop(req.result.send(Err(InvocationError::from(failure.error))));
+            if let Some(tx) = req.result {
+                let _ = tx.send(Err(InvocationError::from(failure.error)));
+            }
         } else {
             info!(
                 "got deserialization failure {:?} but no such request is saved",
@@ -691,4 +752,133 @@ pub async fn connect_with_auth<T: Transport>(
     auth_key: [u8; 256],
 ) -> Result<Sender<T, mtp::Encrypted>, io::Error> {
     Sender::connect(transport, mtp::Encrypted::build().finish(auth_key), addr).await
+}
+
+#[cfg(test)]
+mod optimization_tests {
+    use super::*;
+
+    async fn pair() -> (Sender<transport::Full, mtp::Plain>, tokio::net::TcpStream) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = ServerAddr::Tcp {
+            address: listener.local_addr().unwrap(),
+        };
+        let (sender, peer) = tokio::join!(
+            Sender::connect(transport::Full::new(), mtp::Plain::new(), addr),
+            listener.accept()
+        );
+        (sender.unwrap(), peer.unwrap().0)
+    }
+
+    #[tokio::test]
+    async fn cancelled_unsent_requests_are_removed_but_keepalives_are_sent() {
+        let (mut sender, _peer) = pair().await;
+        let (tx, rx) = oneshot::channel();
+        sender.enqueue_body(Bytes::from_static(&[1, 0, 0, 0]), tx);
+        drop(rx);
+        sender.try_fill_write();
+        assert!(sender.requests.is_empty());
+        assert!(sender.write_buffer.is_empty());
+        let (tx, rx) = oneshot::channel();
+        drop(rx);
+        sender.enqueue_body(Bytes::from_static(&[1, 0, 0, 0]), tx);
+        assert!(sender.requests.is_empty());
+        sender.on_ping_timeout();
+        sender.try_fill_write();
+        assert_eq!(sender.requests.len(), 1);
+        assert!(sender.requests[0].result.is_none());
+        assert!(!sender.write_buffer.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancellation_preserves_framed_data_but_does_not_resend_rejected_requests() {
+        let (mut sender, _peer) = pair().await;
+        let (tx, rx) = oneshot::channel();
+        sender.enqueue_body(Bytes::from_static(&[1, 0, 0, 0]), tx);
+        sender.try_fill_write();
+        let size = sender.write_buffer.len();
+        drop(rx);
+        sender.try_fill_write();
+        assert_eq!(sender.requests.len(), 1);
+        assert_eq!(sender.write_buffer.len(), size);
+        sender.on_net_write(size).unwrap();
+        let msg_id = match &sender.requests[0].state {
+            RequestState::Sent(pair) => pair.msg_id,
+            _ => panic!("not sent"),
+        };
+        sender.process_bad_message(BadMessage { msg_id, code: 48 });
+        assert!(sender.requests.is_empty());
+        sender.try_fill_write();
+        assert!(sender.write_buffer.is_empty());
+    }
+
+    #[tokio::test]
+    async fn zero_byte_writes_are_errors_instead_of_busy_loops() {
+        let (mut sender, _peer) = pair().await;
+        sender.on_ping_timeout();
+        sender.try_fill_write();
+        assert!(
+            matches!(sender.on_net_write(0), Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::WriteZero)
+        );
+    }
+
+    #[tokio::test]
+    async fn receive_buffer_grows_for_fragmented_packets_and_keeps_the_hard_limit() {
+        let (mut sender, mut peer) = pair().await;
+        assert_eq!(sender.read_buffer.len(), INITIAL_BUFFER_SIZE);
+        let body = vec![17u8; INITIAL_BUFFER_SIZE * 5];
+        let (tx, mut rx) = oneshot::channel();
+        sender.enqueue_body(Bytes::from_static(&[1, 0, 0, 0]), tx);
+        sender.try_fill_write();
+        sender.on_net_write(sender.write_buffer.len()).unwrap();
+        let mut packet = DequeBuffer::with_capacity(body.len() + 32, 0);
+        let mut plain = mtp::Plain::new();
+        plain.push(&mut packet, &body);
+        plain.finalize(&mut packet);
+        packet[8..16].copy_from_slice(&1i64.to_le_bytes()); // Valid server response id.
+        transport::Full::new().pack(&mut packet);
+        let bytes = packet.as_ref().to_vec();
+        let writer = tokio::spawn(async move {
+            for fragment in bytes.chunks(997) {
+                peer.write_all(fragment).await.unwrap();
+            }
+            peer
+        });
+        let got = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(result) = rx.try_recv() {
+                    break result.unwrap();
+                }
+                sender.step().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(got, body);
+        assert!(sender.read_buffer.len() > INITIAL_BUFFER_SIZE);
+        assert!(sender.read_buffer.len() <= MAXIMUM_DATA);
+        let _peer = writer.await.unwrap();
+        sender.read_buffer.resize(MAXIMUM_DATA, 0);
+        sender.read_tail = MAXIMUM_DATA;
+        assert!(
+            matches!(sender.prepare_read_buffer(), Err(ReadError::Io(error)) if error.kind() == io::ErrorKind::InvalidData)
+        );
+    }
+
+    #[test]
+    #[ignore = "isolated allocation benchmark; run release with nocapture"]
+    fn benchmark_initial_receive_allocation() {
+        use std::hint::black_box;
+        const N: usize = 5_000;
+        for size in [MAXIMUM_DATA, INITIAL_BUFFER_SIZE] {
+            let started = std::time::Instant::now();
+            for _ in 0..N {
+                black_box(vec![0u8; black_box(size)]);
+            }
+            println!(
+                "initial receive buffer: {size} bytes, {:.1} ns/construction",
+                started.elapsed().as_nanos() as f64 / N as f64
+            );
+        }
+    }
 }

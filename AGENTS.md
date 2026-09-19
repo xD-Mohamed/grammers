@@ -16,5 +16,31 @@ Never add credentials, application session files, user inventories or unrelated
 application source to this public repository. Push only when authorized by the
 user's task. This checkout's publication policy is separate from sibling projects.
 
-Initial setup copies the canonical upstream implementation without modifications.
-Do not begin performance patches until the user requests them.
+## Polling-oriented changes
+
+See PERFORMANCE.md for changes and reproducible benchmarks. Preserve the legacy
+Vec-based raw invocation API alongside the shared RequestBody API. Never mutate
+prepared request bytes after sharing them. Ordinary typed retry policies remain
+configurable; applications may explicitly choose NoRetries.
+
+Cancellation only discards work before framing, or after a definitive retryable
+rejection. Do not remove serialized/sent metadata blindly: it supports own updates
+and partially written packets. Keepalives have no user response channel and must
+survive cancellation cleanup. A zero-byte nonempty write must terminate with error.
+
+Buffers grow from4KiB to the existing receive cap; preserve complete-packet and
+fragmented-packet behavior. Borrowed TL/gzip paths retain constructor, length,
+padding and checksum validation. Do not remove cryptographic or protocol checks.
+Large-buffer consumers may have different allocation/latency tradeoffs.
+
+Network integration tests using Telegram's public test DC are explicitly ignored;
+default workspace tests do not need live account credentials. Known upstream Clippy
+style warnings remain; do not describe strict Clippy as clean until addressed.
+The library's initial implementation changes are not deployed to an application
+automatically. Keep consumer compatibility checks isolated from public source.
+
+Verified baseline for this patch:272 default-feature and289 all-feature workspace
+tests/doctests passed; all-target/all-feature check passed;168 consumer release
+tests passed with local overrides. Three isolated release microbenchmarks passed.
+No consumer deployment or account authorization was performed. These measurements
+do not establish VPS CPU savings or a cause for prior connection-timeout bursts.

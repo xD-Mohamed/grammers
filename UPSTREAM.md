@@ -36,5 +36,6 @@ changes in small, focused commits so upstream updates remain easy to review.
 Performance changes need release benchmarks and integration checks; successful
 compilation alone does not establish lower CPU use or better latency.
 
-The original Apache-2.0/MIT licensing and attribution are preserved. No library
-implementation changes are included in the initial setup.
+The original Apache-2.0/MIT licensing and attribution are preserved. See
+[PERFORMANCE.md](PERFORMANCE.md) for the fork's implementation changes, measured
+microbenchmarks and validation limits.

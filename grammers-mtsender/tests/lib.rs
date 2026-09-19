@@ -12,6 +12,7 @@ pub const TELEGRAM_TEST_DC_2: &str = "149.154.167.40:443";
 pub const TELEGRAM_DEFAULT_TEST_DC: &str = TELEGRAM_TEST_DC_2;
 
 #[test]
+#[ignore = "contacts Telegram's public test DC; run explicitly with --ignored"]
 fn test_invoke_encrypted_method() {
     use std::str::FromStr;
 
@@ -63,6 +64,7 @@ fn test_invoke_encrypted_method() {
 
 #[test]
 #[cfg(feature = "proxy")]
+#[ignore = "contacts Telegram's public test DC through a local proxy; run explicitly with --ignored"]
 fn test_connection_through_proxy() {
     use std::str::FromStr;
     use std::sync::Arc;

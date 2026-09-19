@@ -79,6 +79,40 @@ impl<'a> Cursor<'a> {
         }
     }
 
+    /// Borrows the next `len` bytes without allocating or copying them.
+    /// The cursor is unchanged when there are not enough bytes.
+    pub fn read_slice(&mut self, len: usize) -> Result<&'a [u8]> {
+        let end = self
+            .pos
+            .checked_add(len)
+            .filter(|end| *end <= self.buf.len())
+            .ok_or(Error::UnexpectedEof)?;
+        let result = &self.buf[self.pos..end];
+        self.pos = end;
+        Ok(result)
+    }
+
+    /// Borrows a TL byte-string, consuming its length prefix and padding.
+    /// This follows the same encoding as `Vec<u8>::deserialize`.
+    pub fn read_bytes(&mut self) -> Result<&'a [u8]> {
+        let first = self.read_byte()?;
+        let (len, padding) = if first == 254 {
+            let bytes = self.read_slice(3)?;
+            let len = usize::from(bytes[0])
+                | (usize::from(bytes[1]) << 8)
+                | (usize::from(bytes[2]) << 16);
+            (len, len % 4)
+        } else {
+            let len = usize::from(first);
+            (len, (len + 1) % 4)
+        };
+        let result = self.read_slice(len)?;
+        if padding != 0 {
+            self.read_slice(4 - padding)?;
+        }
+        Ok(result)
+    }
+
     /// Reads an exact amount of bytes to fill the input buffer.
     pub fn read_exact(&mut self, buf: &mut [u8]) -> Result<()> {
         if self.pos + buf.len() > self.buf.len() {
@@ -386,7 +420,7 @@ impl Deserializable for String {
     /// );
     /// ```
     fn deserialize(buf: Buffer) -> Result<Self> {
-        Ok(String::from_utf8_lossy(&Vec::<u8>::deserialize(buf)?).into())
+        Ok(String::from_utf8_lossy(buf.read_bytes()?).into_owned())
     }
 }
 
@@ -405,28 +439,42 @@ impl Deserializable for Vec<u8> {
     /// assert_eq!(Vec::<u8>::from_bytes(&[0x01, 0x7f, 0x00, 0x00]).unwrap(), vec![0x7f_u8]);
     /// ```
     fn deserialize(buf: Buffer) -> Result<Self> {
-        let first_byte = buf.read_byte()?;
-        let (len, padding) = if first_byte == 254 {
-            let mut buffer = [0u8; 3];
-            buf.read_exact(&mut buffer)?;
-            let len =
-                (buffer[0] as usize) | ((buffer[1] as usize) << 8) | ((buffer[2] as usize) << 16);
+        Ok(buf.read_bytes()?.to_vec())
+    }
+}
 
-            (len, len % 4)
-        } else {
-            let len = first_byte as usize;
-            (len, (len + 1) % 4)
-        };
+#[cfg(test)]
+mod borrowed_bytes_tests {
+    use super::*;
+    use crate::Serializable;
 
-        let mut result = vec![0u8; len];
-        buf.read_exact(&mut result)?;
-
-        if padding > 0 {
-            for _ in 0..(4 - padding) {
-                buf.read_byte()?;
+    #[test]
+    fn borrowed_strings_preserve_short_long_payloads_padding_and_positions() {
+        for len in [0usize, 1, 2, 3, 4, 253, 254, 255, 256, 1024, 4097] {
+            let data: Vec<_> = (0..len).map(|i| i as u8).collect();
+            let bytes = data.to_bytes();
+            let mut cursor = Cursor::from_slice(&bytes);
+            let borrowed = cursor.read_bytes().unwrap();
+            assert_eq!(borrowed, data);
+            assert_eq!(Vec::<u8>::from_bytes(&bytes).unwrap(), data);
+            assert_eq!(cursor.pos(), bytes.len());
+            let offset = if len < 254 { 1 } else { 4 };
+            assert_eq!(borrowed.as_ptr(), bytes[offset..].as_ptr());
+            for cut in 0..bytes.len() {
+                assert!(Cursor::from_slice(&bytes[..cut]).read_bytes().is_err());
             }
         }
+    }
 
-        Ok(result)
+    #[test]
+    fn borrowed_reads_reject_overflow_and_keep_lossy_string_behavior() {
+        let mut cursor = Cursor::from_slice(&[1, 2, 3]);
+        assert_eq!(cursor.read_slice(1).unwrap(), &[1]);
+        assert_eq!(cursor.read_slice(usize::MAX), Err(Error::UnexpectedEof));
+        assert_eq!(cursor.pos(), 1);
+        assert_eq!(
+            String::from_bytes(&vec![0xff, b'a'].to_bytes()).unwrap(),
+            "\u{fffd}a"
+        );
     }
 }

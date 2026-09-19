@@ -70,11 +70,11 @@ impl Deserializable for Message {
         let seq_no = i32::deserialize(buf)?;
 
         let len = i32::deserialize(buf)?;
-        assert!(len >= 0);
-        let len = len as usize;
-        assert!(len < MessageContainer::MAXIMUM_SIZE);
-        let mut body = vec![0; len];
-        buf.read_exact(&mut body)?;
+        let len = usize::try_from(len).map_err(|_| tl::deserialize::Error::UnexpectedEof)?;
+        if len >= MessageContainer::MAXIMUM_SIZE {
+            return Err(tl::deserialize::Error::UnexpectedEof);
+        }
+        let body = buf.read_slice(len)?.to_vec();
 
         Ok(Message {
             msg_id,
@@ -96,6 +96,23 @@ pub struct RpcResult {
 
 impl RpcResult {
     /// Peek the constructor ID from the body.
+    /// Reuses the decrypted message allocation instead of allocating another result.
+    pub fn from_owned(mut body: Vec<u8>) -> Result<Self, tl::deserialize::Error> {
+        let mut cursor = Cursor::from_slice(&body);
+        let constructor = u32::deserialize(&mut cursor)?;
+        if constructor != Self::CONSTRUCTOR_ID {
+            return Err(tl::deserialize::Error::UnexpectedConstructor { id: constructor });
+        }
+        let req_msg_id = i64::deserialize(&mut cursor)?;
+        let start = cursor.pos();
+        body.copy_within(start.., 0);
+        body.truncate(body.len() - start);
+        Ok(Self {
+            req_msg_id,
+            result: body,
+        })
+    }
+
     pub fn inner_constructor(&self) -> Result<u32, tl::deserialize::Error> {
         u32::from_bytes(&self.result)
     }
@@ -210,11 +227,25 @@ impl GzipPacked {
         Self { packed_data }
     }
 
+    #[cfg(test)]
     pub fn decompress(&self) -> Result<Vec<u8>, mtp::DeserializeError> {
-        let writer = Vec::new();
-        let mut decoder = GzDecoder::new(writer);
+        Self::decompress_payload(&self.packed_data)
+    }
+
+    /// Decode the TL envelope by borrowing compressed bytes from its input.
+    pub fn decompress_from_bytes(bytes: &[u8]) -> Result<Vec<u8>, mtp::DeserializeError> {
+        let mut cursor = Cursor::from_slice(bytes);
+        let constructor = u32::deserialize(&mut cursor)?;
+        if constructor != Self::CONSTRUCTOR_ID {
+            return Err(tl::deserialize::Error::UnexpectedConstructor { id: constructor }.into());
+        }
+        Self::decompress_payload(cursor.read_bytes()?)
+    }
+
+    fn decompress_payload(packed: &[u8]) -> Result<Vec<u8>, mtp::DeserializeError> {
+        let mut decoder = GzDecoder::new(Vec::new());
         decoder
-            .write_all(&self.packed_data[..])
+            .write_all(packed)
             .map_err(|_| mtp::DeserializeError::DecompressionFailed)?;
         decoder
             .finish()
@@ -281,5 +312,107 @@ mod tests {
         let gzipped = &rpc_result[12..rpc_result.len()];
         let gzip = GzipPacked::from_bytes(gzipped).unwrap();
         assert_eq!(gzip.decompress().unwrap().len(), 984);
+    }
+}
+
+#[cfg(test)]
+mod optimization_tests {
+    use super::*;
+
+    fn rpc_wire(body: &[u8]) -> Vec<u8> {
+        let mut wire = RpcResult::CONSTRUCTOR_ID.to_bytes();
+        wire.extend(42i64.to_bytes());
+        wire.extend_from_slice(body);
+        wire
+    }
+
+    #[test]
+    fn rpc_result_reuses_allocation_and_matches_the_original_decoder() {
+        for size in [0, 4, 1024, 8192] {
+            let wire = rpc_wire(&vec![7; size]);
+            let expected = RpcResult::from_bytes(&wire).unwrap();
+            let ptr = wire.as_ptr();
+            let actual = RpcResult::from_owned(wire).unwrap();
+            assert_eq!(actual.req_msg_id, expected.req_msg_id);
+            assert_eq!(actual.result, expected.result);
+            assert_eq!(actual.result.as_ptr(), ptr);
+        }
+        for size in 0..12 {
+            assert!(RpcResult::from_owned(rpc_wire(&[])[..size].to_vec()).is_err());
+        }
+        assert!(RpcResult::from_owned(vec![0; 16]).is_err());
+    }
+
+    #[test]
+    fn borrowed_gzip_keeps_crc_and_truncation_validation() {
+        for size in [0, 16, 1024, 8192] {
+            let original: Vec<_> = (0..size).map(|i| (i * 37) as u8).collect();
+            let gzip = GzipPacked::new(&original);
+            let wire = gzip.to_bytes();
+            assert_eq!(GzipPacked::decompress_from_bytes(&wire).unwrap(), original);
+            for cut in 0..wire.len() {
+                assert!(GzipPacked::decompress_from_bytes(&wire[..cut]).is_err());
+            }
+            let mut corrupt = gzip.packed_data.clone();
+            let crc = corrupt.len() - 8;
+            corrupt[crc] ^= 1;
+            assert!(
+                GzipPacked::decompress_from_bytes(
+                    &GzipPacked {
+                        packed_data: corrupt
+                    }
+                    .to_bytes()
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_message_lengths_return_errors_without_panicking() {
+        for len in [-1i32, MessageContainer::MAXIMUM_SIZE as i32, i32::MAX, 100] {
+            let mut wire = 42i64.to_bytes();
+            wire.extend(1i32.to_bytes());
+            wire.extend(len.to_bytes());
+            assert!(Message::from_bytes(&wire).is_err());
+        }
+    }
+
+    #[test]
+    #[ignore = "isolated allocation/copy benchmark; run release with nocapture"]
+    fn benchmark_rpc_result_reuse() {
+        use std::hint::black_box;
+        use std::time::Instant;
+        const N: usize = 200_000;
+        for size in [512, 2048, 8192] {
+            let wire = rpc_wire(&vec![7; size]);
+            let mut old = Vec::new();
+            let mut new = Vec::new();
+            for round in 0..10 {
+                for reuse in [round % 2 == 0, round % 2 != 0] {
+                    let start = Instant::now();
+                    for _ in 0..N {
+                        let input = black_box(&wire).clone(); // Both own a decrypted envelope.
+                        if reuse {
+                            black_box(RpcResult::from_owned(input).unwrap());
+                        } else {
+                            black_box(RpcResult::from_bytes(&input).unwrap());
+                        }
+                    }
+                    let ns = start.elapsed().as_nanos() as f64 / N as f64;
+                    if reuse {
+                        new.push(ns);
+                    } else {
+                        old.push(ns);
+                    }
+                }
+            }
+            old.sort_by(f64::total_cmp);
+            new.sort_by(f64::total_cmp);
+            println!(
+                "{size}-byte RPC envelope median: allocate {:.1} ns, reuse {:.1} ns",
+                old[5], new[5]
+            );
+        }
     }
 }
