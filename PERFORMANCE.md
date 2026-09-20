@@ -208,3 +208,48 @@ update suppression, RPC errors and required control responses. The opt-in
 unauthenticated public-test-DC initialization/GetNearestDc test passed; it uses no
 account credentials. Authenticated account/bot update suppression and production
 performance remain deployment checks.
+
+
+## Send/receive robustness audit (2026-09-20)
+
+Reviewed the raw/typed invoke path, warm routes, connection initialization,
+request cancellation/retirement, socket framing, reply dispatch, gzip handling,
+and temporary buffer ownership. This is a source and offline-regression audit,
+not a production CPU profile or a claim that every possible issue is eliminated.
+
+Reproduced and fixed:
+
+- RPC payloads inside gzip now use normal constructor validation and error
+  classification. A compressed rpc_error previously reached callers as a success
+  payload; an empty/short decoded payload could reach a sender assertion. Both
+  now produce the appropriate RPC/deserialization error. Gzip validation remains.
+- rpc_drop_answer acknowledgements complete the cancellation RPC itself. They
+  previously disappeared during dispatch, leaving its caller pending. This does
+  not retire the separate original request or imply remote work was undone.
+- A cancelled caller now interrupts its uncommitted cold initialization. Quit
+  and matching-DC disconnect also interrupt setup, including with no configured
+  connection deadline. Unrelated DC control changes do not cancel it. A per-pool
+  Notify is registered only during cold setup, with registration before checking
+  control state; established RPCs gain no task, timer or notification subscription.
+  Already-framed/sent request tracking and the no-replay policy remain intact.
+- Intermediate transport validates header plus entire advertised body before
+  returning offsets or reading a status. Fragmented input previously could panic
+  or produce an out-of-bounds range. Abridged extended lengths are decoded as
+  unsigned 24-bit values, avoiding huge wrapped offsets. Negative status conversion
+  handles the minimum signed integer without a debug-build overflow.
+- Typed retry handling no longer eagerly allocates/formats an error String before
+  knowing whether a retry is permitted. Retry logging formats the borrowed error
+  only when retry is approved and the log level is enabled. Returned errors and
+  policy decisions remain unchanged; raw calls already bypass this typed path.
+
+The new regressions reproduced failures before fixes. Current validation:
+319 all-feature workspace tests/doctests passed, 22 ignored, and strict
+all-target/all-feature Clippy passed. Tests use local fixtures/loopback sockets;
+no credentials or production RPCs are required.
+
+A separate native-CPU Windows release experiment preallocated gzip output using
+its trailer size, capped at 32 KiB. Eight alternating medians improved only
+0.3-1.4% over 256-16384-byte synthetic outputs, so it was rejected. Production
+allocation policy is unchanged. Prior AES experiments were also rejected.
+These fixes target failure handling and avoidable typed-error work, not a measured
+reduction in steady-state whole-process CPU or network latency.

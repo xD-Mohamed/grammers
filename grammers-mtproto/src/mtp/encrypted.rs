@@ -478,7 +478,7 @@ impl Encrypted {
         &mut self,
         message: manual_tl::MessageView<'_>,
     ) -> Result<(), DeserializeError> {
-        let (req_msg_id, result) = match message.body {
+        let (req_msg_id, mut result) = match message.body {
             Cow::Borrowed(body) => {
                 let (id, result) = manual_tl::RpcResult::borrowed_parts(body)?;
                 (id, Cow::Borrowed(result))
@@ -488,8 +488,26 @@ impl Encrypted {
                 (rpc.req_msg_id, Cow::Owned(rpc.result))
             }
         };
-        let inner_constructor = u32::from_bytes(&result);
         let msg_id = MsgId(req_msg_id);
+        // A compressed payload follows the same validation and error dispatch
+        // as an ordinary result; gzip is not evidence of RPC success.
+        if matches!(
+            u32::from_bytes(&result),
+            Ok(manual_tl::GzipPacked::CONSTRUCTOR_ID)
+        ) {
+            match manual_tl::GzipPacked::decompress_from_bytes(&result) {
+                Ok(body) => result = Cow::Owned(body),
+                Err(error) => {
+                    self.deserialization
+                        .push(Deserialization::Failure(DeserializationFailure {
+                            msg_id,
+                            error,
+                        }));
+                    return Ok(());
+                }
+            }
+        }
+        let inner_constructor = u32::from_bytes(&result);
 
         // Any error during a RPC result will be given to the user,
         // which means this method itself is doing its job `Ok`.
@@ -520,39 +538,8 @@ impl Encrypted {
                 }
             },
 
-            // Cancellation of an RPC Query
-            tl::types::RpcAnswerUnknown::CONSTRUCTOR_ID => {
-                // The `msg_id` corresponds to the `rpc_drop_answer` request.
-            }
-            tl::types::RpcAnswerDroppedRunning::CONSTRUCTOR_ID => {
-                // We will receive two `rpc_result`, one with the `msg_id` of
-                // `rpc_drop_answer` request and other for the original RPC.
-            }
-            tl::types::RpcAnswerDropped::CONSTRUCTOR_ID => {
-                // "the RPC response was removed from the server's outgoing
-                // queue, and its msg_id, seq_no, and length in bytes are
-                // transmitted to the client."
-            }
-
-            // Response to an RPC query
-            // Telegram shouldn't send compressed errors (the overhead
-            // would probably outweight the benefits) so we don't check
-            // that the decompressed payload is an error or answer drop.
-            manual_tl::GzipPacked::CONSTRUCTOR_ID => {
-                let body = manual_tl::GzipPacked::decompress_from_bytes(&result);
-                if let Ok(body) = &body {
-                    self.store_own_updates(msg_id, body);
-                }
-
-                match body {
-                    Ok(body) => self
-                        .deserialization
-                        .push(Deserialization::RpcResult(RpcResult { msg_id, body })),
-                    Err(e) => self.deserialization.push(Deserialization::Failure(
-                        DeserializationFailure { msg_id, error: e },
-                    )),
-                }
-            }
+            // rpc_drop_answer acknowledgements are results for that call,
+            // not permission to discard the unrelated original request.
             _ => {
                 self.store_own_updates(msg_id, &result);
                 self.deserialization
@@ -1463,6 +1450,71 @@ mod tests {
         body.extend(id.to_bytes());
         body.extend_from_slice(result);
         body
+    }
+
+    #[test]
+    fn regression_compressed_errors_and_short_replies_are_not_successes() {
+        let error = tl::enums::RpcError::Error(tl::types::RpcError {
+            error_code: 420,
+            error_message: "FLOOD_WAIT_30".into(),
+        })
+        .to_bytes();
+        for receive_updates in [true, false] {
+            for payload in [&error[..], &[][..], &[1, 2, 3][..]] {
+                let mut mtp = Encrypted::build()
+                    .receive_updates(receive_updates)
+                    .finish(auth_key());
+                let body = test_rpc_body(42, &manual_tl::GzipPacked::new(payload).to_bytes());
+                mtp.process_message(manual_tl::MessageView {
+                    msg_id: 3,
+                    seq_no: 1,
+                    body: Cow::Borrowed(&body),
+                })
+                .unwrap();
+                assert_eq!(mtp.deserialization.len(), 1);
+                if payload == error {
+                    assert!(
+                        matches!(&mtp.deserialization[0], Deserialization::RpcError(e)
+                        if e.msg_id == MsgId(42) && e.error.error_code == 420 && e.error.error_message == "FLOOD_WAIT_30")
+                    );
+                } else {
+                    assert!(
+                        matches!(&mtp.deserialization[0], Deserialization::Failure(e) if e.msg_id == MsgId(42))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn regression_drop_answer_replies_complete_their_own_request() {
+        for payload in [
+            tl::types::RpcAnswerUnknown::CONSTRUCTOR_ID.to_bytes(),
+            tl::types::RpcAnswerDroppedRunning::CONSTRUCTOR_ID.to_bytes(),
+            [
+                tl::types::RpcAnswerDropped::CONSTRUCTOR_ID.to_bytes(),
+                tl::types::RpcAnswerDropped {
+                    msg_id: 7,
+                    seq_no: 1,
+                    bytes: 4,
+                }
+                .to_bytes(),
+            ]
+            .concat(),
+        ] {
+            let mut mtp = Encrypted::build().finish(auth_key());
+            let body = test_rpc_body(42, &payload);
+            mtp.process_message(manual_tl::MessageView {
+                msg_id: 3,
+                seq_no: 1,
+                body: Cow::Borrowed(&body),
+            })
+            .unwrap();
+            assert!(
+                matches!(mtp.deserialization.as_slice(), [Deserialization::RpcResult(r)]
+                if r.msg_id == MsgId(42) && r.body == payload)
+            );
+        }
     }
 
     #[test]

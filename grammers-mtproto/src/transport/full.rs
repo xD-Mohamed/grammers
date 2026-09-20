@@ -78,7 +78,7 @@ impl Transport for Full {
         if len < 12 {
             if len < 0 {
                 return Err(Error::BadStatus {
-                    status: (-len) as u32,
+                    status: len.unsigned_abs(),
                 });
             }
             return Err(Error::BadLen { got: len });
@@ -131,6 +131,14 @@ mod tests {
         let mut buffer = DequeBuffer::with_capacity(n, 0);
         buffer.extend((0..n).map(|x| (x & 0xff) as u8));
         (Full::new(), buffer)
+    }
+
+    #[test]
+    fn regression_minimum_status_does_not_overflow() {
+        assert_eq!(
+            Full::new().unpack(&mut i32::MIN.to_le_bytes()),
+            Err(Error::BadStatus { status: 1u32 << 31 })
+        );
     }
 
     #[test]

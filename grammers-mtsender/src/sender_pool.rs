@@ -77,6 +77,7 @@ struct RouteCache {
     entries: Vec<(i32, mpsc::UnboundedSender<Rpc>)>,
     disconnecting: Vec<(i32, usize)>,
     stopping: bool,
+    control_changed: Arc<tokio::sync::Notify>,
 }
 type Routes = Arc<RwLock<RouteCache>>;
 
@@ -299,7 +300,8 @@ impl SenderPoolHandle {
     /// Communicate with the running [`SenderPoolRunner`] instance
     /// to drop any active connections to the given datacenter.
     ///
-    /// Has no effect if there was no connection to the datacenter.
+    /// Also cancels pending initialization for this datacenter.
+    /// Has no effect if no established or initializing connection exists.
     ///
     /// This is useful after datacenter migrations during sign in,
     /// when the old connection is known to not be needed anymore.
@@ -307,6 +309,7 @@ impl SenderPoolHandle {
         {
             let mut cache = self.1.write().unwrap_or_else(|e| e.into_inner());
             cache.begin_disconnect(dc_id);
+            cache.control_changed.notify_waiters();
         }
         self.0.send(Request::Disconnect { dc_id }).is_ok()
     }
@@ -318,6 +321,7 @@ impl SenderPoolHandle {
             let mut cache = self.1.write().unwrap_or_else(|e| e.into_inner());
             cache.stopping = true;
             cache.entries.clear();
+            cache.control_changed.notify_waiters();
         }
         self.0.send(Request::Quit).is_ok()
     }
@@ -338,19 +342,15 @@ impl SenderPoolHandle {
                 .await
             {
                 Ok(response) => break Ok(response),
-                Err(e) => {
-                    let error_info = format!("{}", e);
-                    match self.check_retry(e, fail_count, slept_so_far).await {
-                        ControlFlow::Continue(delay) => {
-                            info!("sleeping on {} for {:?} before retrying", error_info, delay,);
-                            sleep(delay).await;
-                            fail_count = fail_count.saturating_add(1);
-                            slept_so_far += delay;
-                            continue;
-                        }
-                        ControlFlow::Break(final_error) => break Err(final_error),
+                Err(e) => match self.check_retry(e, fail_count, slept_so_far).await {
+                    ControlFlow::Continue(delay) => {
+                        sleep(delay).await;
+                        fail_count = fail_count.saturating_add(1);
+                        slept_so_far += delay;
+                        continue;
                     }
-                }
+                    ControlFlow::Break(final_error) => break Err(final_error),
+                },
             }
         }
     }
@@ -484,25 +484,31 @@ impl SenderPoolRunner {
             Request::Invoke {
                 dc_id,
                 body,
-                tx,
+                mut tx,
                 permit,
             } => {
                 if tx.is_closed() {
                     return ControlFlow::Continue(());
                 }
-                let connection =
-                    match self.connections.iter().find(|connection| {
-                        connection.dc_id == dc_id && !connection.rpc_tx.is_closed()
-                    }) {
-                        Some(connection) => connection,
-                        None => match self.create_connection(dc_id).await {
-                            Ok(x) => x,
-                            Err(e) => {
-                                let _ = tx.send(Err(e));
-                                return ControlFlow::Continue(());
-                            }
-                        },
-                    };
+                let connection = match self
+                    .connections
+                    .iter()
+                    .find(|connection| connection.dc_id == dc_id && !connection.rpc_tx.is_closed())
+                {
+                    Some(connection) => connection,
+                    None => match tokio::select! {
+                        biased;
+                        _ = tx.closed() => return ControlFlow::Continue(()),
+                        _ = wait_for_connection_cancel(Arc::clone(&self.routes), dc_id) => Err(InvocationError::Dropped),
+                        result = self.create_connection(dc_id) => result,
+                    } {
+                        Ok(x) => x,
+                        Err(e) => {
+                            let _ = tx.send(Err(e));
+                            return ControlFlow::Continue(());
+                        }
+                    },
+                };
                 if !tx.is_closed() {
                     let _ = connection.rpc_tx.send(Rpc { body, tx, permit });
                 }
@@ -524,7 +530,13 @@ impl SenderPoolRunner {
                     .retry_policy
                     .should_retry(&retry_context)
                 {
-                    ControlFlow::Continue(delay) => ControlFlow::Continue(delay),
+                    ControlFlow::Continue(delay) => {
+                        info!(
+                            "retry approved for {} after {:?}",
+                            retry_context.error, delay
+                        );
+                        ControlFlow::Continue(delay)
+                    }
                     ControlFlow::Break(()) => ControlFlow::Break(retry_context.error),
                 };
                 let _ = tx.send(flow);
@@ -707,6 +719,28 @@ impl SenderPoolRunner {
     }
 }
 
+// Only cold connection setup subscribes. Established requests add no wakeup.
+async fn wait_for_connection_cancel(routes: Routes, dc_id: i32) {
+    let changed = Arc::clone(
+        &routes
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .control_changed,
+    );
+    loop {
+        let notified = changed.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        {
+            let cache = routes.read().unwrap_or_else(|e| e.into_inner());
+            if cache.stopping || cache.disconnecting.iter().any(|(id, _)| *id == dc_id) {
+                return;
+            }
+        }
+        notified.await;
+    }
+}
+
 async fn run_sender(
     mut sender: Sender<Transport, grammers_mtproto::mtp::Encrypted>,
     mut rpc_rx: mpsc::UnboundedReceiver<Rpc>,
@@ -802,6 +836,126 @@ impl fmt::Debug for Request {
 #[cfg(test)]
 mod optimization_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn regression_cancelled_cold_call_does_not_block_pool_shutdown() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        session
+            .set_dc_option(&DcOption {
+                id: 4,
+                ipv4: match address {
+                    std::net::SocketAddr::V4(a) => a,
+                    _ => unreachable!(),
+                },
+                ipv6: SocketAddrV6::new(Ipv6Addr::LOCALHOST, address.port(), 0, 0),
+                auth_key: Some([0; 256]),
+            })
+            .await
+            .unwrap();
+        let pool = SenderPool::with_configuration(session, 1, ConnectionParams::default());
+        let handle = pool.handle.thin;
+        let mut runner = tokio::spawn(pool.runner.run());
+        let tracker = crate::InvocationTracker::default();
+        let call = handle
+            .start_raw_invoke_shared_in_dc_tracked(
+                4,
+                Bytes::from_static(&[1; 4]),
+                tracker.try_acquire().unwrap(),
+            )
+            .unwrap();
+        let _peer = tokio::time::timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        drop(call);
+        assert!(handle.quit());
+        let stopped = tokio::time::timeout(Duration::from_secs(1), &mut runner).await;
+        if stopped.is_err() {
+            runner.abort();
+        }
+        assert!(
+            stopped.is_ok(),
+            "cancelled initialization kept the pool blocked"
+        );
+        assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+    }
+
+    #[tokio::test]
+    async fn regression_quit_interrupts_cold_initialization_with_a_live_caller() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        session
+            .set_dc_option(&DcOption {
+                id: 4,
+                ipv4: match address {
+                    std::net::SocketAddr::V4(a) => a,
+                    _ => unreachable!(),
+                },
+                ipv6: SocketAddrV6::new(Ipv6Addr::LOCALHOST, address.port(), 0, 0),
+                auth_key: Some([0; 256]),
+            })
+            .await
+            .unwrap();
+        let pool = SenderPool::with_configuration(session, 1, ConnectionParams::default());
+        let handle = pool.handle.thin;
+        let mut runner = tokio::spawn(pool.runner.run());
+        let tracker = crate::InvocationTracker::default();
+        let call = handle
+            .start_raw_invoke_shared_in_dc_tracked(
+                4,
+                Bytes::from_static(&[1; 4]),
+                tracker.try_acquire().unwrap(),
+            )
+            .unwrap();
+        let _peer = tokio::time::timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(handle.quit());
+        let stopped = tokio::time::timeout(Duration::from_secs(1), &mut runner).await;
+        if stopped.is_err() {
+            runner.abort();
+        }
+        assert!(
+            stopped.is_ok(),
+            "cancelled initialization kept the pool blocked"
+        );
+        assert!(matches!(call.await, Err(InvocationError::Dropped)));
+        assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+    }
+
+    #[tokio::test]
+    async fn connection_cancel_wakeup_is_scoped_and_cannot_be_missed() {
+        let routes = Routes::default();
+        let first = tokio::spawn(wait_for_connection_cancel(Arc::clone(&routes), 4));
+        tokio::task::yield_now().await;
+        {
+            let mut cache = routes.write().unwrap();
+            cache.begin_disconnect(2);
+            cache.control_changed.notify_waiters();
+        }
+        tokio::task::yield_now().await;
+        assert!(!first.is_finished());
+        {
+            let mut cache = routes.write().unwrap();
+            cache.begin_disconnect(4);
+            cache.control_changed.notify_waiters();
+        }
+        tokio::time::timeout(Duration::from_secs(1), first)
+            .await
+            .unwrap()
+            .unwrap();
+        // Registration after the wake still sees the published state.
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            wait_for_connection_cancel(routes, 4),
+        )
+        .await
+        .unwrap();
+    }
 
     #[tokio::test]
     async fn connection_initialization_deadline_releases_tracked_request() {
@@ -1204,6 +1358,36 @@ mod optimization_tests {
             tx.send(Ok(vec![2, 0, 0, 0])).unwrap();
             assert_eq!(call.await.unwrap().unwrap(), [2, 0, 0, 0]);
         }
+    }
+
+    #[tokio::test]
+    async fn rejected_retry_does_not_format_the_original_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        #[derive(Debug)]
+        struct CountDisplay(Arc<AtomicUsize>);
+        impl fmt::Display for CountDisplay {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                f.write_str("fixture error")
+            }
+        }
+        impl std::error::Error for CountDisplay {}
+        let (handle, mut rx) = fake_handle();
+        let formatted = Arc::new(AtomicUsize::new(0));
+        let call = tokio::spawn(async move { handle.do_invoke_in_dc(4, vec![1; 4]).await });
+        let Request::Invoke { tx, .. } = rx.recv().await.unwrap() else {
+            panic!("invoke");
+        };
+        tx.send(Err(InvocationError::Io(std::io::Error::other(
+            CountDisplay(Arc::clone(&formatted)),
+        ))))
+        .unwrap();
+        let Request::CheckRetry { error, tx, .. } = rx.recv().await.unwrap() else {
+            panic!("retry");
+        };
+        tx.send(ControlFlow::Break(error)).unwrap();
+        assert!(matches!(call.await.unwrap(), Err(InvocationError::Io(_))));
+        assert_eq!(formatted.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]

@@ -60,18 +60,18 @@ impl Transport for Intermediate {
         }
 
         let len = i32::from_le_bytes(buffer[0..4].try_into().unwrap());
-        if (buffer.len() as i32) < len {
+        if len < 4 {
+            return Err(Error::BadLen { got: len });
+        }
+        // The advertised length excludes the four-byte header.
+        if buffer.len() < 4 + len as usize {
             return Err(Error::MissingBytes);
         }
-
-        if len <= 4 {
-            if len >= 4 {
-                let data = i32::from_le_bytes(buffer[4..8].try_into().unwrap());
-                return Err(Error::BadStatus {
-                    status: (-data) as u32,
-                });
-            }
-            return Err(Error::BadLen { got: len });
+        if len == 4 {
+            let data = i32::from_le_bytes(buffer[4..8].try_into().unwrap());
+            return Err(Error::BadStatus {
+                status: data.wrapping_neg() as u32,
+            });
         }
 
         let len = len as usize;
@@ -99,6 +99,23 @@ mod tests {
         let mut buffer = DequeBuffer::with_capacity(n, 0);
         buffer.extend((0..n).map(|x| (x & 0xff) as u8));
         (Intermediate::new(), buffer)
+    }
+
+    #[test]
+    fn regression_fragmented_packets_wait_for_header_and_entire_body() {
+        for size in [4usize, 8, 128] {
+            let mut packet = (size as i32).to_le_bytes().to_vec();
+            packet.extend(vec![0; size]);
+            if size == 4 {
+                packet[4..].copy_from_slice(&(-404i32).to_le_bytes());
+            }
+            for end in 0..packet.len() {
+                assert_eq!(
+                    Intermediate::new().unpack(&mut packet[..end]),
+                    Err(Error::MissingBytes)
+                );
+            }
+        }
     }
 
     #[test]

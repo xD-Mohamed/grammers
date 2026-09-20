@@ -92,3 +92,23 @@ The public Media enum retains its inline variants with one documented
 large_enum_variant expectation: boxing would break constructors and introduce
 allocations. There is no blanket warning suppression. Stable rustfmt no longer
 requests the nightly-only group_imports option. Recheck after upstream merges.
+
+
+## Send/receive audit follow-up
+
+Compressed RPC results must pass the same constructor/error handling as plain
+results. A gzip wrapper does not establish success; preserve CRC validation and
+per-request deserialization failures. Return rpc_drop_answer acknowledgements to
+their own caller without retiring another request's sent metadata.
+
+Cold initialization is cancellable by its caller, Quit or matching-DC disconnect.
+Register the per-pool control Notify before checking state to avoid missed wakes.
+Other DCs are independent, and ordinary routed calls do not subscribe. Cancelling
+setup may discard an uncommitted connection; never apply this shortcut to already
+serialized/sent RPCs. Keep original typed errors without eager string formatting
+when retry is rejected. Transport offsets must cover only complete input, and
+length/status conversions must not wrap into out-of-bounds ranges.
+
+Verification: 319 all-feature tests/doctests passed (22 ignored), strict
+all-target/all-feature Clippy passed. See PERFORMANCE.md for scope and rejected
+micro-optimizations. No production performance benefit has been measured.

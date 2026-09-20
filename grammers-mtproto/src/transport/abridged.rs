@@ -75,18 +75,18 @@ impl Transport for Abridged {
         let len = buffer[0];
         let len = if len < 127 {
             header_len = 1;
-            len as i32
+            usize::from(len)
         } else {
             if buffer.len() < 4 {
                 return Err(Error::MissingBytes);
             }
 
             header_len = 4;
-            i32::from_le_bytes(buffer[0..4].try_into().unwrap()) >> 8
+            u32::from_le_bytes([buffer[1], buffer[2], buffer[3], 0]) as usize
         };
 
         let len = len * 4;
-        if (buffer.len() as i32) < header_len + len {
+        if buffer.len() < header_len + len {
             return Err(Error::MissingBytes);
         }
 
@@ -94,13 +94,10 @@ impl Transport for Abridged {
             let data = i32::from_le_bytes(buffer[1..5].try_into().unwrap());
             if data < 0 {
                 return Err(Error::BadStatus {
-                    status: (-data) as u32,
+                    status: data.unsigned_abs(),
                 });
             }
         }
-
-        let header_len = header_len as usize;
-        let len = len as usize;
 
         Ok(UnpackedOffset {
             data_range: header_len..header_len + len,
@@ -125,6 +122,15 @@ mod tests {
         let mut buffer = DequeBuffer::with_capacity(n, 0);
         buffer.extend((0..n).map(|x| (x & 0xff) as u8));
         (Abridged::new(), buffer)
+    }
+
+    #[test]
+    fn regression_extended_length_is_unsigned_and_waits_for_payload() {
+        let mut prefix = [0x7f, 0x00, 0x00, 0x80];
+        assert_eq!(
+            Abridged::new().unpack(&mut prefix),
+            Err(Error::MissingBytes)
+        );
     }
 
     #[test]
