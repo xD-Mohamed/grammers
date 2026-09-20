@@ -19,7 +19,7 @@ use grammers_mtproto::{MsgId, authentication};
 use grammers_session::updates::UpdatesLike;
 use grammers_tl_types::{self as tl, Deserializable, RemoteCall};
 use log::{debug, error, info, trace, warn};
-use tl::Serializable;
+use tl::{Cursor, Identifiable, Serializable};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::TryRecvError;
@@ -455,14 +455,19 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 // Check if the original request targeted a channel (e.g. channels.deleteMessages).
                 // If so, the pts belongs to that channel, not the common/user pts sequence.
                 let channel_id = self.peek_request(msg_id).and_then(|request| {
-                    let request =
-                        match tl::functions::channels::DeleteMessages::from_bytes(&request.body) {
-                            Ok(r) => r,
-                            Err(_) => return None,
-                        };
-
-                    match request.channel {
-                        tl::enums::InputChannel::Channel(c) => Some((c.channel_id, request.id)),
+                    let buf = &mut Cursor::from_slice(&request.body);
+                    let id = u32::deserialize(buf).unwrap();
+                    match id {
+                        tl::functions::channels::DeleteMessages::CONSTRUCTOR_ID => {
+                            let request =
+                                tl::functions::channels::DeleteMessages::deserialize(buf).unwrap();
+                            match request.channel {
+                                tl::enums::InputChannel::Channel(c) => {
+                                    Some((c.channel_id, request.id))
+                                }
+                                _ => None,
+                            }
+                        }
                         _ => None,
                     }
                 });
