@@ -801,12 +801,32 @@ impl Client {
     ///
     /// See also: [`Message::edit`].
     ///
+    /// # Note
+    ///
+    /// An empty message text ("") is filtered out (treated as `None`), to avoid the `RpcError 400: MESSAGE_EMPTY`
+    /// error. And makes it possible to edit only the reply markup (buttons) without changing the text.
+    ///
     /// # Examples
     ///
     /// ```
-    /// # async fn f(peer: grammers_session::types::PeerRef, client: grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn f(
+    /// #     peer: grammers_session::types::PeerRef,
+    /// #     client: grammers_client::Client,
+    /// # ) -> Result<(), Box<dyn std::error::Error>> {
     /// let old_message_id = 123;
     /// client.edit_message(peer, old_message_id, "New text message").await?;
+    ///
+    /// use grammers_client::message::{Button, InputMessage, ReplyMarkup};
+    /// // Add a button to the message without editing it's text.
+    /// client
+    ///     .edit_message(
+    ///         peer,
+    ///         old_message_id,
+    ///         InputMessage::new().reply_markup(ReplyMarkup::from_buttons_row(&[
+    ///             Button::url("url", "https://example.com")
+    ///         ]))
+    ///     )
+    ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -823,7 +843,7 @@ impl Client {
             invert_media: new_message.invert_media,
             peer: peer.into().into(),
             id: message_id,
-            message: Some(new_message.text),
+            message: Some(new_message.text).filter(|text| !text.is_empty()),
             media: new_message.media,
             reply_markup: new_message.reply_markup,
             entities,

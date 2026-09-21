@@ -158,13 +158,14 @@ impl Client {
 
     /// Edits an inline message sent by a bot.
     ///
-    /// Similar to [`Client::send_message`], advanced formatting can be achieved with the
+    /// Similar to [`Client::edit_message`], advanced formatting can be achieved with the
     /// options offered by [`InputMessage`].
     pub(crate) async fn edit_inline_message(
         &self,
         message_id: tl::enums::InputBotInlineMessageId,
         message: InputMessage,
     ) -> Result<bool, InvocationError> {
+        let text = Some(message.text).filter(|text| !text.is_empty());
         let entities = parse_mention_entities(self, message.entities).await;
         if message.media.as_ref().is_some_and(|media| {
             !matches!(
@@ -178,7 +179,7 @@ impl Client {
                 dc_id,
                 &tl::functions::messages::EditInlineBotMessage {
                     id: message_id,
-                    message: Some(message.text),
+                    message: text,
                     media: message.media,
                     entities,
                     no_webpage: !message.link_preview,
@@ -191,7 +192,7 @@ impl Client {
         } else {
             self.invoke(&tl::functions::messages::EditInlineBotMessage {
                 id: message_id,
-                message: Some(message.text),
+                message: text,
                 media: message.media,
                 entities,
                 no_webpage: !message.link_preview,
