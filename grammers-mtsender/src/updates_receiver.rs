@@ -247,6 +247,9 @@ impl UpdatesReceiver {
     ///
     /// This is **not** automatically done on drop.
     pub async fn sync_update_state(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if self.message_box.is_empty() {
+            return Ok(());
+        }
         self.session
             .clone()
             .set_update_state(UpdateState::All(self.message_box.session_state()))

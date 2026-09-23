@@ -9,7 +9,9 @@
 use grammers_session::updates::State;
 use grammers_tl_types as tl;
 
-use super::{CallbackQuery, InlineQuery, InlineSend, Message, MessageDeletion, Raw};
+use super::{
+    CallbackQuery, GuestChatQuery, InlineQuery, InlineSend, Message, MessageDeletion, Raw,
+};
 use crate::{Client, peer::PeerMap, utils};
 
 /// An update that indicates some event, which may be of interest to the logged-in account, has occured.
@@ -33,6 +35,9 @@ pub enum Update {
     InlineQuery(InlineQuery),
     /// Represents an update of user choosing the result of inline query and sending it to their peer partner.
     InlineSend(InlineSend),
+    /// Occurs whenever you sign in as a bot and a user sends a message mention you in a public group
+    /// such as `hi @bot`.
+    GuestChatQuery(GuestChatQuery),
     /// Raw events are not actual events.
     /// Instead, they are the raw Update object that Telegram sends. You
     /// normally shouldn’t need these.
@@ -150,6 +155,25 @@ impl Update {
                 peers,
             }),
 
+            // GuestChatQuery
+            tl::enums::Update::BotGuestChatQuery(raw) => Self::GuestChatQuery(GuestChatQuery {
+                message: crate::message::Message::from_raw(
+                    client,
+                    raw.message.clone(),
+                    None,
+                    peers.clone(),
+                ),
+                reference_messages: raw
+                    .reference_messages
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|msg| crate::message::Message::from_raw(client, msg, None, peers.clone()))
+                    .collect(),
+                raw: update,
+                state,
+            }),
+
             // Raw
             _ => Self::Raw(Raw { raw: update, state }),
         }
@@ -164,6 +188,7 @@ impl Update {
             Update::CallbackQuery(update) => &update.state,
             Update::InlineQuery(update) => &update.state,
             Update::InlineSend(update) => &update.state,
+            Update::GuestChatQuery(update) => &update.state,
             Update::Raw(update) => &update.state,
         }
     }
@@ -180,6 +205,7 @@ impl Update {
             Update::CallbackQuery(update) => &update.raw,
             Update::InlineQuery(update) => &update.raw,
             Update::InlineSend(update) => &update.raw,
+            Update::GuestChatQuery(update) => &update.raw,
             Update::Raw(update) => &update.raw,
         }
     }

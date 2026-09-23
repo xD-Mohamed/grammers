@@ -322,6 +322,33 @@ impl Message {
         }
     }
 
+    /// The [`Self::guestchat_via_from`]'s identifier, if there is a sender.
+    pub fn guestchat_via_from_id(&self) -> Option<PeerId> {
+        match &self.raw {
+            tl::enums::Message::Empty(_) => None,
+            tl::enums::Message::Message(message) => {
+                message.guestchat_via_from.clone().map(PeerId::from)
+            }
+            tl::enums::Message::Service(_) => None,
+        }
+    }
+
+    /// Cached reference to the [`Self::guestchat_via_from`], if there is a guestchat_via_from and they are in cache.
+    pub async fn guestchat_via_from_ref(
+        &self,
+    ) -> Result<Option<PeerRef>, Box<dyn std::error::Error + Send + Sync>> {
+        match self.guestchat_via_from_id() {
+            None => Ok(None),
+            Some(x) => self.peers.get_ref(x).await,
+        }
+    }
+
+    /// If the message was posted by a guest bot, the peer on whose behalf the bot sent the message.
+    pub fn guestchat_via_from(&self) -> Option<&Peer> {
+        self.guestchat_via_from_id()
+            .and_then(|id| self.peers.get(id))
+    }
+
     /// If this message is replying to a previous message, return the header with information
     /// about that reply.
     pub fn reply_header(&self) -> Option<tl::enums::MessageReplyHeader> {

@@ -21,7 +21,7 @@ use grammers_mtproto::{MsgId, authentication};
 use grammers_session::updates::UpdatesLike;
 use grammers_tl_types::{self as tl, Deserializable, RemoteCall};
 use log::{debug, error, info, trace, warn};
-use tl::Serializable;
+use tl::{Cursor, Identifiable, Serializable};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::TryRecvError;
@@ -89,7 +89,9 @@ fn deserialize_updates_like(update: Vec<u8>) -> tl::deserialize::Result<UpdatesL
                 tl::enums::messages::AffectedMessages::from_bytes(&update)
             {
                 Ok(UpdatesLike::AffectedMessages(u))
-            } else if let Ok(u) = tl::types::messages::InvitedUsers::from_bytes(&update) {
+            } else if let Ok(tl::enums::messages::InvitedUsers::Users(u)) =
+                tl::enums::messages::InvitedUsers::from_bytes(&update)
+            {
                 Ok(UpdatesLike::InvitedUsers(u))
             } else if let Ok(tl::enums::messages::ChatInviteJoinResult::Ok(u)) =
                 tl::enums::messages::ChatInviteJoinResult::from_bytes(&update)
@@ -99,6 +101,17 @@ fn deserialize_updates_like(update: Vec<u8>) -> tl::deserialize::Result<UpdatesL
                 Err(e)
             }
         }
+    }
+}
+
+fn deserialize_request<T>(body: &[u8]) -> Option<T>
+where
+    T: Identifiable + Deserializable,
+{
+    let buf = &mut Cursor::from_slice(body);
+    match u32::deserialize(buf) {
+        Ok(id) if id == T::CONSTRUCTOR_ID => T::deserialize(buf).ok(),
+        _ => None,
     }
 }
 
@@ -504,7 +517,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         match (
             deserialize_updates_like(update),
             self.peek_request(msg_id).and_then(|request| {
-                tl::functions::messages::SendMessage::from_bytes(&request.body).ok()
+                deserialize_request::<tl::functions::messages::SendMessage>(&request.body)
             }),
         ) {
             (
@@ -518,18 +531,17 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             (Ok(UpdatesLike::AffectedMessages(affected)), _) => {
                 // Check if the original request targeted a channel (e.g. channels.deleteMessages).
                 // If so, the pts belongs to that channel, not the common/user pts sequence.
-                let channel_id = self.peek_request(msg_id).and_then(|request| {
-                    let request =
-                        match tl::functions::channels::DeleteMessages::from_bytes(&request.body) {
-                            Ok(r) => r,
-                            Err(_) => return None,
-                        };
-
-                    match request.channel {
+                let channel_id = self
+                    .peek_request(msg_id)
+                    .and_then(|request| {
+                        deserialize_request::<tl::functions::channels::DeleteMessages>(
+                            &request.body,
+                        )
+                    })
+                    .and_then(|request| match request.channel {
                         tl::enums::InputChannel::Channel(c) => Some((c.channel_id, request.id)),
                         _ => None,
-                    }
-                });
+                    });
                 if let Some((channel_id, message_ids)) = channel_id {
                     updates.push(UpdatesLike::AffectedChannelMessages {
                         affected,

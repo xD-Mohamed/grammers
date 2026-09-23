@@ -12,6 +12,7 @@
 //! Keep in mind that **these fields are not part of the semantic versioning guarantees**.
 
 mod callback_query;
+mod guestchat_query;
 mod inline_query;
 mod inline_send;
 mod message;
@@ -21,6 +22,7 @@ mod model;
 mod raw;
 
 pub use callback_query::CallbackQuery;
+pub use guestchat_query::GuestChatQuery;
 pub use inline_query::{Article, InlineQuery};
 pub use inline_send::InlineSend;
 pub use message::Message;
