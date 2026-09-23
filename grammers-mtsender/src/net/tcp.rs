@@ -6,10 +6,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use log::info;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 pub use tokio::net::tcp::{ReadHalf, WriteHalf};
+use tracing::info;
 
 use super::ServerAddr;
 

@@ -19,13 +19,13 @@ use grammers_session::storages::{ErasedSession, erase};
 use grammers_session::types::DcOption;
 use grammers_session::updates::UpdatesLike;
 use grammers_tl_types::{self as tl, Deserializable, enums};
-use log::{debug, info, warn};
 use tokio::task::AbortHandle;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
     time::sleep,
 };
+use tracing::{debug, info, warn};
 
 use crate::configuration::{ConnectionParams, RetryContext};
 use crate::errors::{InvocationError, ReadError};
@@ -189,7 +189,7 @@ impl SenderPoolHandle {
                     let error_info = format!("{}", e);
                     match self.check_retry(e, fail_count, slept_so_far).await {
                         ControlFlow::Continue(delay) => {
-                            info!("sleeping on {} for {:?} before retrying", error_info, delay,);
+                            info!(?delay, "sleeping on {} before retrying", error_info);
                             sleep(delay).await;
                             fail_count = fail_count.saturating_add(1);
                             slept_so_far += delay;
@@ -538,8 +538,10 @@ async fn run_sender(
                                     dropped += 1;
                                     if last_update_limit_warn.elapsed() >= UPDATES_DROPPED_LOG_COOLDOWN {
                                         warn!(
-                                          "updates channel full (cap {}), dropped {} updates in the last {:?}",
-                                          updates.max_capacity(), dropped, last_update_limit_warn.elapsed()
+                                            capacity = updates.max_capacity(),
+                                            dropped_count = dropped,
+                                            last_time = ?last_update_limit_warn.elapsed(),
+                                            "updates channel full",
                                         );
                                         dropped = 0;
                                         last_update_limit_warn = Instant::now();

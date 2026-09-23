@@ -46,9 +46,9 @@ use defs::Key;
 pub use defs::{Gap, MessageBox, MessageBoxes, State, UpdatesLike};
 use defs::{LiveEntry, NO_DATE, NO_PTS, NO_SEQ, POSSIBLE_GAP_TIMEOUT, PossibleGap, PtsInfo};
 use grammers_tl_types as tl;
-use log::{debug, info, trace};
 #[cfg(test)]
 use tests::Instant;
+use tracing::{debug, info, trace};
 
 use crate::types::{ChannelState, UpdatesState};
 
@@ -112,7 +112,7 @@ impl MessageBoxes {
 
     /// Create a [`MessageBoxes`] from a previously known update state.
     pub fn load(state: UpdatesState) -> Self {
-        trace!("created new message box with state: {:?}", state);
+        trace!(?state, "created new message box with state");
         let mut entries = Vec::with_capacity(2 + state.channels.len());
         let mut getting_diff_for = Vec::with_capacity(2 + state.channels.len());
         let deadline = next_updates_deadline();
@@ -250,7 +250,7 @@ impl MessageBoxes {
             self.getting_diff_for
                 .extend(self.entries.iter().filter_map(|entry| {
                     if now >= entry.effective_deadline() {
-                        debug!("deadline for forcibly fetching updates met for {:?}", entry);
+                        debug!(?entry, "deadline for forcibly fetching updates met");
                         Some(entry.key)
                     } else {
                         None
@@ -309,7 +309,7 @@ impl MessageBoxes {
     ///
     /// Should only be called while [`MessageBoxes::is_empty`].
     pub fn set_state(&mut self, state: tl::types::updates::State) {
-        trace!("setting state {:?}", state);
+        trace!(?state, "setting state");
         debug_assert!(self.is_empty());
         let deadline = next_updates_deadline();
         self.set_entry(LiveEntry {
@@ -333,7 +333,7 @@ impl MessageBoxes {
     ///
     /// The update state will only be updated if no entry was known previously.
     pub fn try_set_channel_state(&mut self, id: i64, pts: i32) {
-        trace!("trying to set channel state for {}: {}", id, pts);
+        trace!(channel_id = id, pts, "trying to set channel state");
         if self.entry(Key::Channel(id)).is_none() {
             self.set_entry(LiveEntry {
                 key: Key::Channel(id),
@@ -353,7 +353,10 @@ impl MessageBoxes {
             if self.update_entry(key, |entry| entry.possible_gap = None) {
                 self.getting_diff_for.push(key);
             } else {
-                info!("tried to begin getting difference but do not have entry for key: {key:?}");
+                info!(
+                    ?key,
+                    "tried to begin getting difference but do not have entry for the key"
+                );
             }
         }
     }
@@ -391,7 +394,8 @@ impl MessageBoxes {
     ///
     /// [updates' documentation]: https://core.telegram.org/api/updates
     pub fn process_updates(&mut self, updates: UpdatesLike) -> Result<defs::UpdateAndPeers, Gap> {
-        trace!("processing updates: {:?}", updates);
+        trace!(?updates, "processing updates");
+
         let deadline = next_updates_deadline();
 
         // Top level, when handling received `updates` and `updatesCombined`.
@@ -489,8 +493,10 @@ impl MessageBoxes {
 
             if self.getting_diff_for.contains(&info.key) {
                 debug!(
-                    "forcing update to apply {:?} (getting difference, count {:?}, remote {:?})",
-                    info.key, info.count, info.pts
+                    key = ?info.key,
+                    count = ?info.count,
+                    remote = ?info.pts,
+                    "forcing update to apply (getting difference)",
                 );
                 // Order does not need to be checked. These always must be applied.
                 self.reset_deadline(info.key, next_updates_deadline());
@@ -517,15 +523,21 @@ impl MessageBoxes {
                         // Ignore
                         Ordering::Greater => {
                             debug!(
-                                "skipping update for {:?} (local {:?}, count {:?}, remote {:?})",
-                                info.key, entry.pts, info.count, info.pts
+                                key = ?info.key,
+                                local = ?entry.pts,
+                                count = ?info.count,
+                                remote = ?info.pts,
+                                "skipping update",
                             );
                         }
                         Ordering::Less => {
                             // TODO store chats too?
                             info!(
-                                "gap on update for {:?} (local {:?}, count {:?}, remote {:?})",
-                                info.key, entry.pts, info.count, info.pts
+                                key = ?info.key,
+                                local = ?entry.pts,
+                                count = ?info.count,
+                                remote = ?info.pts,
+                                "gap on update",
                             );
 
                             entry
@@ -604,7 +616,7 @@ impl MessageBoxes {
                         .unwrap_or(NO_PTS),
                     qts_limit: None,
                 };
-                trace!("requesting {:?}", gd);
+                trace!(?gd, "requesting");
                 return Some(gd);
             }
         }
@@ -616,7 +628,7 @@ impl MessageBoxes {
         &mut self,
         difference: tl::enums::updates::Difference,
     ) -> defs::UpdateAndPeers {
-        trace!("applying account difference: {:?}", difference);
+        trace!(?difference, "applying account difference");
         debug_assert!(
             self.getting_diff_for.contains(&Key::Common)
                 || self.getting_diff_for.contains(&Key::Secondary)
@@ -635,8 +647,8 @@ impl MessageBoxes {
             }
             tl::enums::updates::Difference::Difference(diff) => {
                 debug!(
-                    "handling full difference {:?}; no longer getting diff",
-                    diff.state
+                    state = ?diff.state,
+                    "handling full difference; no longer getting diff",
                 );
                 finish = true;
                 self.apply_difference_type(diff)
@@ -649,7 +661,7 @@ impl MessageBoxes {
                 users,
                 intermediate_state: state,
             }) => {
-                debug!("handling partial difference {:?}", state);
+                debug!(?state, "handling partial difference");
                 finish = false;
                 self.apply_difference_type(tl::types::updates::Difference {
                     new_messages,
@@ -787,7 +799,7 @@ impl MessageBoxes {
                 pts,
                 limit: 0,
             };
-            trace!("requesting {:?}", gd);
+            trace!(?gd, "requesting");
             Some(gd)
         } else {
             panic!("Should not try to get difference for an entry {key:?} without known state");
@@ -803,10 +815,7 @@ impl MessageBoxes {
             .channel_in_diff()
             .expect("applying channel difference to have a channel in getting_diff_for");
 
-        trace!(
-            "applying channel difference for {}: {:?}",
-            channel_id, difference
-        );
+        trace!(channel_id, ?difference, "applying channel difference");
 
         self.update_entry(key, |entry| entry.possible_gap = None);
 
@@ -868,10 +877,7 @@ impl MessageBoxes {
             .channel_in_diff()
             .expect("ending channel difference to have a channel in getting_diff_for");
 
-        trace!(
-            "ending channel difference for {} because {:?}",
-            channel_id, reason
-        );
+        trace!(channel_id, ?reason, "ending channel difference");
         match reason {
             PrematureEndReason::TemporaryServerIssues => {
                 self.update_entry(key, |entry| entry.possible_gap = None);

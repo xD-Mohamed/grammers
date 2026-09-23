@@ -18,11 +18,11 @@ fn test_invoke_encrypted_method() {
     use grammers_mtproto::transport;
     use grammers_mtsender::connect;
     use grammers_tl_types::{LAYER, enums, functions};
-    use simple_logger::SimpleLogger;
     use tokio::runtime;
 
-    let _ = SimpleLogger::new()
-        .with_level(log::LevelFilter::Debug)
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .without_time()
         .init();
 
     let rt = runtime::Builder::new_current_thread()
@@ -71,7 +71,6 @@ fn test_connection_through_proxy() {
     use grammers_mtproto::mtp;
     use grammers_mtproto::transport;
     use grammers_mtsender::Sender;
-    use simple_logger::SimpleLogger;
     use socks5_server::{
         Command, Server,
         auth::Password,
@@ -81,8 +80,9 @@ fn test_connection_through_proxy() {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::{runtime, task};
 
-    let _ = SimpleLogger::new()
-        .with_level(log::LevelFilter::Debug)
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .without_time()
         .init();
 
     let rt = runtime::Builder::new_current_thread()

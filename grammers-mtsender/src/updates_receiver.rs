@@ -13,9 +13,9 @@ use grammers_session::storages::ErasedSession;
 use grammers_session::types::{PeerId, PeerInfo, UpdateState, UpdatesState};
 use grammers_session::updates::{MessageBoxes, PrematureEndReason, State, UpdatesLike};
 use grammers_tl_types::{self as tl, Deserializable};
-use log::{trace, warn};
 use tokio::sync::mpsc;
 use tokio::time::timeout_at;
+use tracing::{info, trace, warn};
 
 use crate::{InvocationError, SenderPoolHandle, UpdatesConfiguration};
 
@@ -72,12 +72,12 @@ async fn prepare_channel_difference(
         } else {
             USER_CHANNEL_DIFF_LIMIT
         };
-        trace!("requesting {:?}", request);
+        trace!(?request, "requesting");
         Ok(Some(request))
     } else {
         warn!(
-            "cannot getChannelDifference for {:?} as we're missing its hash",
-            id
+            channel_id = ?id,
+            "cannot getChannelDifference as we're missing its hash",
         );
         message_box.end_channel_difference(PrematureEndReason::Banned);
         Ok(None)
@@ -190,7 +190,7 @@ impl UpdatesReceiver {
                         //
                         // This is a bit hacky because MessageBox doesn't really have a way to "not update" the pts.
                         // Instead we manually extract the previously-known pts and use that.
-                        log::warn!(
+                        warn!(
                             "Getting difference for channel updates caused PersistentTimestampOutdated; ending getting difference prematurely until server issues are resolved"
                         );
                         {
@@ -200,9 +200,9 @@ impl UpdatesReceiver {
                         continue;
                     }
                     Err(e) if e.is("CHANNEL_PRIVATE") => {
-                        log::info!(
-                            "Account is now banned so we can no longer fetch updates with request: {:?}",
-                            request
+                        info!(
+                            ?request,
+                            "Account is now banned so we can no longer fetch updates with request",
                         );
                         {
                             self.message_box
@@ -211,7 +211,7 @@ impl UpdatesReceiver {
                         continue;
                     }
                     Err(InvocationError::Rpc(rpc_error)) if rpc_error.code == 500 => {
-                        log::warn!("Telegram is having internal issues: {:#?}", rpc_error);
+                        warn!("Telegram is having internal issues: {:#?}", rpc_error);
                         {
                             self.message_box
                                 .end_channel_difference(PrematureEndReason::TemporaryServerIssues);

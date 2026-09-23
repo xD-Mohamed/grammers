@@ -83,6 +83,22 @@
 //! [Telegram Bot API]: https://core.telegram.org/bots/api
 //! [obtain a developer API ID]: https://my.telegram.org/auth
 //! [`ClientConfiguration`]: crate::client::ClientConfiguration
+//!
+//! # Feature flags
+//!
+//! Using [feature flags](https://doc.rust-lang.org/cargo/reference/features.html) to enable
+//! you to opt-in to additional functionality.
+//!
+//! ## Default feature flags
+//!
+//! The following features are turned on by default:
+//! - `fs`: Enables `tokio/fs` feature.
+//!
+//! ## Optional feature flags
+//! - `markdown`: Enables Markdown to MessageEntity parsing.
+//! - `html`: Enables HTML to MessageEntity parsing.
+//! - `proxy`: Enables `grammers-mtsender/proxy` feature.
+//! - `parse_invite_link`: Enables invite url parsing.
 
 #![deny(unsafe_code)]
 

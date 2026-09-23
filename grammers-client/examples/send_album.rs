@@ -1,3 +1,15 @@
+//! Example to send medias already on Telegram server as a media group, and add spoiler to them.
+//!
+//! The `TG_ID` and `TG_HASH` environment variables must be set (learn how to do it for
+//! [Windows](https://ss64.com/nt/set.html) or [Linux](https://ss64.com/bash/export.html))
+//! to Telegram's API ID and API hash respectively.
+//!
+//! Then, run it as:
+//!
+//! ```sh
+//! cargo run --example send_album
+//! ```
+
 use std::env;
 use std::io;
 use std::io::{BufRead, Write};
@@ -8,20 +20,20 @@ use grammers_client::SignInError;
 use grammers_client::media::InputMedia;
 use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
-use grammers_session::types::{PeerAuth, PeerId, PeerRef};
+use grammers_session::types::PeerId;
 use grammers_tl_types as tl;
-use simple_logger::SimpleLogger;
 use tokio::runtime;
+use tracing::info;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-const SESSION_FILE: &str = "me.session";
+const SESSION_FILE: &str = "send_album.session";
 
 async fn async_main() -> Result<()> {
-    SimpleLogger::new()
-        .with_level(log::LevelFilter::Info)
-        .init()
-        .unwrap();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .without_time()
+        .init();
 
     let api_id: i32 = env!("TG_ID").parse().expect("TG_ID invalid");
     let api_hash: String = env!("TG_HASH").to_string();
@@ -33,7 +45,7 @@ async fn async_main() -> Result<()> {
     let _ = tokio::spawn(runner.run());
 
     if !client.is_authorized().await? {
-        println!("Signing in...");
+        info!("Signing in...");
         let phone = prompt("Enter your phone number (international format): ")?;
         let token = client.request_login_code(&phone, &api_hash).await?;
         let code = prompt("Enter the code you received: ")?;
@@ -53,9 +65,11 @@ async fn async_main() -> Result<()> {
             Ok(_) => (),
             Err(e) => panic!("{}", e),
         };
-        println!("Signed in!");
+        info!("Signed in!");
     }
 
+    // In a production environment, it may be necessary to cache the peer ID corresponding to the username,
+    // to avoid flood waits.
     let peer = client
         .resolve_username("telegram")
         .await?
@@ -64,6 +78,7 @@ async fn async_main() -> Result<()> {
         .await?
         .unwrap();
 
+    // Both users and bots can use get_messages_by_id.
     let messages = client.get_messages_by_id(peer, &[437, 438]).await?;
     let medias = messages
         .into_iter()
@@ -90,13 +105,9 @@ async fn async_main() -> Result<()> {
         })
         .collect();
 
-    let peer = PeerRef {
-        id: PeerId::self_user(),
-        auth: PeerAuth::default(),
-    };
-
-    let m = client.send_album(peer, medias).await?;
-    println!("{:?}", m);
+    let me = PeerId::self_user().to_ambient_ref();
+    let messages = client.send_album(me, medias).await?;
+    info!(?messages);
 
     // `runner.run()`'s task will be dropped (and disconnect occur) once the runtime exits.
     Ok(())

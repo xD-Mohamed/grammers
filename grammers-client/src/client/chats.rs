@@ -17,6 +17,7 @@ use std::time::Duration;
 use grammers_mtsender::{InvocationError, RpcError};
 use grammers_session::types::{PeerId, PeerKind, PeerRef};
 use grammers_tl_types as tl;
+use tracing::warn;
 
 use super::{Client, IterBuffer};
 use crate::media::Photo;
@@ -926,7 +927,7 @@ impl Client {
                 )
                 .await
             {
-                log::warn!("cache_peer fail: {:?}", e)
+                warn!(?e, "cache_peer fail")
             }
         }
 

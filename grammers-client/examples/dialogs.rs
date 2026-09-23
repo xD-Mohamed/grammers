@@ -17,8 +17,8 @@ use std::sync::Arc;
 use grammers_client::{Client, SignInError};
 use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
-use simple_logger::SimpleLogger;
 use tokio::runtime;
+use tracing::info;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -39,10 +39,10 @@ fn prompt(message: &str) -> Result<String> {
 }
 
 async fn async_main() -> Result<()> {
-    SimpleLogger::new()
-        .with_level(log::LevelFilter::Debug)
-        .init()
-        .unwrap();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .without_time()
+        .init();
 
     let api_id = env!("TG_ID").parse().expect("TG_ID invalid");
 
@@ -53,7 +53,7 @@ async fn async_main() -> Result<()> {
     let _ = tokio::spawn(runner.run());
 
     if !client.is_authorized().await? {
-        println!("Signing in...");
+        info!("Signing in...");
         let phone = prompt("Enter your phone number (international format): ")?;
         let token = client.request_login_code(&phone, env!("TG_HASH")).await?;
         let code = prompt("Enter the code you received: ")?;
@@ -73,15 +73,15 @@ async fn async_main() -> Result<()> {
             Ok(_) => (),
             Err(e) => panic!("{}", e),
         };
-        println!("Signed in!");
+        info!("Signed in!");
     }
 
     let mut dialogs = client.iter_dialogs();
 
-    println!("Showing up to {} dialogs:", dialogs.total().await?);
+    info!("Showing up to {} dialogs:", dialogs.total().await?);
     while let Some(dialog) = dialogs.next().await? {
         let peer = dialog.peer();
-        println!("- {: >10} {}", peer.id(), peer.name().unwrap_or_default());
+        info!("- {: >10} {}", peer.id(), peer.name().unwrap_or_default());
     }
 
     // `runner.run()`'s task will be dropped (and disconnect occur) once the runtime exits.

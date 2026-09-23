@@ -18,12 +18,12 @@ use grammers_mtproto::transport::{self, Transport};
 use grammers_mtproto::{MsgId, authentication};
 use grammers_session::updates::UpdatesLike;
 use grammers_tl_types::{self as tl, Deserializable, RemoteCall};
-use log::{debug, error, info, trace, warn};
 use tl::{Cursor, Identifiable, Serializable};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::TryRecvError;
 use tokio::time::{Instant, sleep_until};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::errors::{InvocationError, ReadError, RpcError};
 use crate::net::{NetStream, ServerAddr};
@@ -297,10 +297,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                     request.body[3],
                 ]);
                 debug!(
-                    "serialized request {:x} ({}) with {:?}",
-                    req_id,
-                    tl::name_for_id(req_id),
-                    msg_id
+                    req_id = format_args!("{:x}", req_id),
+                    req_name = tl::name_for_id(req_id),
+                    ?msg_id,
+                    "serialized request",
                 );
                 // Note how only NotSerialized become Serialized.
                 // Nasty bugs that take ~2h to find occur otherwise!
@@ -388,7 +388,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             match &req.state {
                 RequestState::NotSerialized | RequestState::Sent(_) => {}
                 RequestState::Serialized(pair) => {
-                    debug!("sent request with {:?}", pair);
+                    debug!(?pair, "sent request with");
                     req.state = RequestState::Sent(pair.clone());
                 }
             }
@@ -413,7 +413,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
     /// Handle errors that occured while performing I/O.
     fn on_error(&mut self, error: &ReadError) {
-        log::warn!(
+        warn!(
             "marking all {} request(s) as failed: {}",
             self.requests.len(),
             &error
@@ -522,23 +522,23 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             assert!(x.len() >= 4);
             let res_id = u32::from_le_bytes([x[0], x[1], x[2], x[3]]);
             debug!(
-                "got result {:x} ({}) for request {:?}",
-                res_id,
-                tl::name_for_id(res_id),
-                result.msg_id
+                res_id = format_args!("{:x}", res_id),
+                res_name = tl::name_for_id(res_id),
+                request = ?result.msg_id,
+                "got result",
             );
             drop(req.result.send(Ok(x)));
         } else {
             info!(
-                "got rpc result {:?} but no such request is saved",
-                result.msg_id
+                result = ?result.msg_id,
+                "got rpc result but no such request is saved",
             );
         }
     }
 
     fn process_error(&mut self, error: RpcResultError) {
         if let Some(req) = self.pop_request(error.msg_id) {
-            debug!("got rpc error {:?}", error.error);
+            debug!(error = ?error.error, "got rpc error");
             let x = req.body.as_slice();
             drop(
                 req.result.send(Err(InvocationError::Rpc(
@@ -548,8 +548,8 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             );
         } else {
             info!(
-                "got rpc error {:?} but no such request is saved",
-                error.msg_id
+                error = ?error.msg_id,
+                "got rpc error but no such request is saved",
             );
         }
     }
@@ -572,9 +572,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                     // TODO add a test to make sure we resend the request
                     if bad_msg.retryable() {
                         info!(
-                            "{}; re-sending request {:?}",
+                            request = ?pair.msg_id,
+                            "{}; re-sending request",
                             bad_msg.description(),
-                            pair.msg_id
                         );
 
                         // TODO check if actually retryable first!
@@ -582,15 +582,15 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                     } else {
                         if bad_msg.fatal() {
                             error!(
-                                "{}; canont retry request {:?}",
+                                request = ?pair.msg_id,
+                                "{}; canont retry request",
                                 bad_msg.description(),
-                                pair.msg_id
                             );
                         } else {
                             warn!(
-                                "{}; canont retry request {:?}",
+                                request = ?pair.msg_id,
+                                "{}; canont retry request",
                                 bad_msg.description(),
-                                pair.msg_id
                             );
                         }
                         let req = self.requests.swap_remove(i);
@@ -604,12 +604,12 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
     fn process_deserialize_error(&mut self, failure: DeserializationFailure) {
         if let Some(req) = self.pop_request(failure.msg_id) {
-            debug!("got deserialization failure {:?}", failure.error);
+            debug!(error = ?failure.error, "got deserialization failure");
             drop(req.result.send(Err(InvocationError::from(failure.error))));
         } else {
             info!(
-                "got deserialization failure {:?} but no such request is saved",
-                failure.error
+                error = ?failure.error,
+                "got deserialization failure but no such request is saved",
             );
         }
     }
