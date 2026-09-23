@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use log::info;
+use log::{info, warn};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 pub use tokio::net::tcp::{ReadHalf, WriteHalf};
@@ -30,12 +30,28 @@ impl NetStream {
 
     pub(crate) async fn connect(addr: &ServerAddr) -> Result<Self, std::io::Error> {
         info!("connecting...");
-        match addr {
-            ServerAddr::Tcp { address } => Ok(NetStream::Tcp(TcpStream::connect(address).await?)),
+        let stream = match addr {
+            ServerAddr::Tcp { address } => NetStream::Tcp(TcpStream::connect(address).await?),
             #[cfg(feature = "proxy")]
             ServerAddr::Proxied { address, proxy } => {
-                Self::connect_proxy_stream(address, proxy).await
+                Self::connect_proxy_stream(address, proxy).await?
             }
+        };
+        stream.disable_nagle();
+        Ok(stream)
+    }
+
+    /// Every write is one complete MTProto packet, so Nagle's algorithm can
+    /// only hold a request back until an earlier segment is acknowledged.
+    /// Failing to disable it leaves a working, if slower, connection.
+    fn disable_nagle(&self) {
+        let result = match self {
+            Self::Tcp(stream) => stream.set_nodelay(true),
+            #[cfg(feature = "proxy")]
+            Self::ProxySocks5(stream) => stream.set_nodelay(true),
+        };
+        if let Err(err) = result {
+            warn!("failed to disable Nagle's algorithm: {err}");
         }
     }
 
@@ -109,6 +125,22 @@ impl NetStream {
             Self::Tcp(stream) => stream.shutdown().await,
             #[cfg(feature = "proxy")]
             Self::ProxySocks5(stream) => stream.shutdown().await,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn connections_disable_nagle() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        match NetStream::connect(&ServerAddr::Tcp { address }).await.unwrap() {
+            NetStream::Tcp(stream) => assert!(stream.nodelay().unwrap()),
+            #[cfg(feature = "proxy")]
+            NetStream::ProxySocks5(_) => unreachable!("a direct address connects without a proxy"),
         }
     }
 }
