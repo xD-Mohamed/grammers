@@ -69,6 +69,12 @@ pub struct ConnectionParams {
     /// The updates channel is closed and creating an update stream is an error.
     pub receive_updates: bool,
 
+    /// How many acknowledgements to collect before attaching them to a request.
+    /// Defaults to 1, which attaches them to every request inside a container.
+    /// Larger values send most requests without that container; an
+    /// acknowledgement still waits at most ten seconds once another request goes out.
+    pub ack_batch: usize,
+
     /// Optional deadline for socket connection, key exchange and initialization.
     /// None preserves unlimited establishment; this is not an ordinary RPC timeout.
     pub connection_timeout: Option<Duration>,
@@ -160,6 +166,7 @@ impl Default for ConnectionParams {
             retry_policy: Box::new(super::AutoSleep::default()),
             updates_channel_capacity: NonZeroUsize::new(100).unwrap(),
             receive_updates: true,
+            ack_batch: 1,
             connection_timeout: None,
             __non_exhaustive: (),
         }

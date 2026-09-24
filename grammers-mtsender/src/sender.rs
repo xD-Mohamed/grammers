@@ -579,7 +579,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     }
 
     fn process_result(&mut self, result: RpcResult) {
-        if let Some(req) = self.pop_request(result.msg_id) {
+        if let Some(Request {
+            result: tx, permit, ..
+        }) = self.pop_request(result.msg_id)
+        {
             let x = result.body;
             assert!(x.len() >= 4);
             let res_id = u32::from_le_bytes([x[0], x[1], x[2], x[3]]);
@@ -589,7 +592,11 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 tl::name_for_id(res_id),
                 result.msg_id
             );
-            if let Some(tx) = req.result {
+            // The request is complete. Release its reservation before waking the
+            // caller, so a caller that answers with its next request on this
+            // connection finds the reservation free.
+            drop(permit);
+            if let Some(tx) = tx {
                 let _ = tx.send(Ok(x));
             }
         } else {
@@ -721,6 +728,11 @@ impl<T: Transport> Sender<T, mtp::Encrypted> {
     pub fn set_receive_updates(&mut self, enabled: bool) {
         self.mtp.set_receive_updates(enabled);
     }
+    /// Collect up to `count` acknowledgements before attaching them to a request.
+    /// See [`ConnectionParams::ack_batch`](crate::ConnectionParams::ack_batch).
+    pub fn set_ack_batch(&mut self, count: usize) {
+        self.mtp.set_ack_batch(count);
+    }
     pub fn auth_key(&self) -> [u8; 256] {
         self.mtp.auth_key()
     }
@@ -823,6 +835,34 @@ mod optimization_tests {
             assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
             assert!(tracker.try_acquire().is_some());
         }
+    }
+
+    /// A caller woken by its result may reuse the connection at once: the
+    /// reservation is already free when the result becomes observable.
+    #[tokio::test]
+    async fn result_waiter_finds_the_reservation_already_released() {
+        let (mut sender, _peer) = pair().await;
+        let tracker = crate::InvocationTracker::default();
+        let (tx, rx) = oneshot::channel();
+        sender.enqueue_tracked_body(Bytes::from_static(&[1; 4]), tx, tracker.try_acquire());
+        sender.try_fill_write();
+        sender.on_net_write(sender.write_buffer.len()).unwrap();
+        let RequestState::Sent(pair) = &sender.requests[0].state else {
+            panic!("unsent");
+        };
+        let msg_id = pair.msg_id;
+        let observer = tracker.clone();
+        let waiter = std::thread::spawn(move || {
+            let reply = rx.blocking_recv();
+            (reply.is_ok(), observer.stage())
+        });
+        sender.process_result(RpcResult {
+            msg_id,
+            body: vec![1; 4],
+        });
+        let (replied, stage) = waiter.join().unwrap();
+        assert!(replied);
+        assert_eq!(stage, crate::InvocationStage::Idle);
     }
 
     #[tokio::test]

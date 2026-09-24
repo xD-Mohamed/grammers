@@ -652,11 +652,13 @@ impl SenderPoolRunner {
         };
 
         sender.set_receive_updates(self.connection_params.receive_updates);
+        sender.set_ack_batch(self.connection_params.ack_batch);
         let enums::Config::Config(remote_config) = match sender.invoke(&init_connection).await {
             Ok(config) => config,
             Err(InvocationError::Transport(transport::Error::BadStatus { status: 404 })) => {
                 sender = connect(transport(), addr()).await?;
                 sender.set_receive_updates(self.connection_params.receive_updates);
+                sender.set_ack_batch(self.connection_params.ack_batch);
                 sender.invoke(&init_connection).await?
             }
             Err(e) => return Err(e),

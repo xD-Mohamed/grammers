@@ -30,6 +30,12 @@ const NUM_FUTURE_SALTS: i32 = 64;
 /// Used to prevent small fluctuations in the system clock.
 const SALT_USE_DELAY: i32 = 60;
 
+/// With acknowledgement batching enabled, the longest an acknowledgement may
+/// wait for its batch to fill before it rides on the next outgoing message.
+/// Acknowledgements only ever travel with outgoing messages, so an idle
+/// connection still sends them with its next keepalive ping.
+const ACK_MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(10);
+
 static UPDATE_IDS: [u32; 9] = [
     tl::types::UpdateShortMessage::CONSTRUCTOR_ID,
     tl::types::UpdateShortChatMessage::CONSTRUCTOR_ID,
@@ -51,6 +57,7 @@ pub struct Builder {
     compression_threshold: Option<usize>,
 
     receive_updates: bool,
+    ack_batch: usize,
 }
 
 /// An implementation of the [Mobile Transport Protocol] for ciphertext
@@ -94,6 +101,14 @@ pub struct Encrypted {
     /// [Content-related Message]: https://core.telegram.org/mtproto/description#content-related-message
     pending_ack: Vec<i64>,
 
+    /// When the oldest entry of `pending_ack` was queued. Only tracked while
+    /// acknowledgements are batched.
+    pending_ack_since: Option<Instant>,
+
+    /// Pending acknowledgements needed before they are attached to an
+    /// outgoing message. 1 attaches them to every message.
+    ack_batch: usize,
+
     /// If present, the threshold in bytes at which a message will be
     /// considered large enough to attempt compressing it. Otherwise,
     /// outgoing messages will never be compressed.
@@ -133,6 +148,13 @@ impl Builder {
         self
     }
 
+    /// How many acknowledgements to collect before attaching them to an
+    /// outgoing message. See [`Encrypted::set_ack_batch`].
+    pub fn ack_batch(mut self, count: usize) -> Self {
+        self.ack_batch = count.max(1);
+        self
+    }
+
     /// Finishes the builder and returns the `MTProto` instance with all
     /// the configuration changes applied.
     pub fn finish(self, auth_key: [u8; 256]) -> Encrypted {
@@ -154,6 +176,8 @@ impl Builder {
             sequence: 0,
             last_msg_id: 0,
             pending_ack: vec![],
+            pending_ack_since: None,
+            ack_batch: self.ack_batch,
             compression_threshold: self.compression_threshold,
             receive_updates: self.receive_updates,
             deserialization: Vec::new(),
@@ -169,6 +193,14 @@ impl Encrypted {
         self.receive_updates = enabled;
     }
 
+    /// Collect up to `count` acknowledgements before attaching them to an
+    /// outgoing message, instead of wrapping every message in a container with
+    /// one. An acknowledgement never waits more than ten seconds for its batch
+    /// once another message is sent. 1 (the default) acknowledges on every message.
+    pub fn set_ack_batch(&mut self, count: usize) {
+        self.ack_batch = count.max(1);
+    }
+
     /// Start building a new encrypted MTP.
     pub fn build() -> Builder {
         Builder {
@@ -176,6 +208,7 @@ impl Encrypted {
             compression_threshold: crate::DEFAULT_COMPRESSION_THRESHOLD,
             receive_updates: true,
             first_salt: 0,
+            ack_batch: 1,
         }
     }
 
@@ -252,11 +285,29 @@ impl Encrypted {
         MsgId(msg_id)
     }
 
+    fn queue_ack(&mut self, msg_id: i64) {
+        if self.ack_batch > 1 && self.pending_ack.is_empty() {
+            self.pending_ack_since = Some(Instant::now());
+        }
+        self.pending_ack.push(msg_id);
+    }
+
+    /// Whether the pending acknowledgements go out with the next message.
+    fn ack_due(&self) -> bool {
+        let count = self.pending_ack.len();
+        count != 0
+            && (count >= self.ack_batch
+                || self
+                    .pending_ack_since
+                    .is_none_or(|since| since.elapsed() >= ACK_MAX_DELAY))
+    }
+
     fn serialize_pending_ack(&mut self, buffer: &mut DequeBuffer<u8>) {
         let count = self.pending_ack.len();
         if count == 0 {
             return;
         }
+        self.pending_ack_since = None;
         let ack = tl::enums::MsgsAck::Ack(tl::types::MsgsAck {
             msg_ids: mem::take(&mut self.pending_ack),
         });
@@ -335,7 +386,7 @@ impl Encrypted {
         message: manual_tl::MessageView<'_>,
     ) -> Result<(), DeserializeError> {
         if message.requires_ack() {
-            self.pending_ack.push(message.msg_id);
+            self.queue_ack(message.msg_id);
         }
 
         // Handle all the possible Service Messages:
@@ -865,10 +916,10 @@ impl Encrypted {
         let msg_detailed = tl::enums::MsgDetailedInfo::from_bytes(&message.body)?;
         match msg_detailed {
             tl::enums::MsgDetailedInfo::Info(x) => {
-                self.pending_ack.push(x.answer_msg_id);
+                self.queue_ack(x.answer_msg_id);
             }
             tl::enums::MsgDetailedInfo::MsgNewDetailedInfo(x) => {
-                self.pending_ack.push(x.answer_msg_id);
+                self.queue_ack(x.answer_msg_id);
             }
         }
         Ok(())
@@ -1315,8 +1366,10 @@ impl Mtp for Encrypted {
 
         // If we need to acknowledge messages, this notification goes in with the rest of requests
         // so that we can also include it. It has priority over user requests because these should
-        // be sent out as soon as possible.
-        self.serialize_pending_ack(buffer);
+        // be sent out as soon as possible, unless batching defers it to a later message.
+        if self.ack_due() {
+            self.serialize_pending_ack(buffer);
+        }
 
         // Serialize `MAXIMUM_LENGTH` requests at most.
         if self.msg_count == manual_tl::MessageContainer::MAXIMUM_LENGTH {
@@ -1831,6 +1884,62 @@ mod tests {
             "ACK median: allocate {:.1} ns, reuse {:.1} ns",
             samples[0][4], samples[1][4]
         );
+    }
+
+    /// Receive one content-related reply, then serialize one request after it.
+    /// Returns whether the request went out inside a container (with acknowledgements).
+    fn reply_then_push(mtp: &mut Encrypted, msg_id: i64) -> bool {
+        let reply = test_rpc_body(42, &true.to_bytes());
+        mtp.process_message(manual_tl::MessageView {
+            msg_id,
+            seq_no: 1,
+            body: Cow::Borrowed(&reply),
+        })
+        .unwrap();
+        mtp.deserialization.clear();
+        let mut buffer = DequeBuffer::with_capacity(0, 0);
+        assert!(mtp.push(&mut buffer, REQUEST).is_some());
+        mtp.finalize_plain(&mut buffer);
+        buffer[MESSAGE_PREFIX_LEN + 16..MESSAGE_PREFIX_LEN + 20] == MSG_CONTAINER_HEADER
+    }
+
+    #[test]
+    fn acknowledgements_ride_on_every_message_by_default() {
+        let mut mtp = Encrypted::build()
+            .compression_threshold(None)
+            .finish(auth_key());
+        assert!(reply_then_push(&mut mtp, 3));
+        assert!(mtp.pending_ack.is_empty());
+        assert!(mtp.pending_ack_since.is_none());
+    }
+
+    #[test]
+    fn batched_acknowledgements_wait_for_the_batch_or_the_delay() {
+        let mut mtp = Encrypted::build()
+            .compression_threshold(None)
+            .ack_batch(3)
+            .finish(auth_key());
+        assert!(!reply_then_push(&mut mtp, 3));
+        assert!(!reply_then_push(&mut mtp, 5));
+        assert!(reply_then_push(&mut mtp, 7));
+        assert!(mtp.pending_ack.is_empty());
+        assert!(mtp.pending_ack_since.is_none());
+
+        // A lone acknowledgement still leaves once it has waited long enough.
+        assert!(!reply_then_push(&mut mtp, 9));
+        assert_eq!(mtp.pending_ack, [9]);
+        mtp.pending_ack_since = Instant::now().checked_sub(ACK_MAX_DELAY);
+        let mut buffer = DequeBuffer::with_capacity(0, 0);
+        assert!(mtp.push(&mut buffer, REQUEST).is_some());
+        mtp.finalize_plain(&mut buffer);
+        assert!(mtp.pending_ack.is_empty());
+        assert_eq!(
+            &buffer[MESSAGE_PREFIX_LEN + 16..MESSAGE_PREFIX_LEN + 20],
+            MSG_CONTAINER_HEADER
+        );
+
+        mtp.set_ack_batch(0);
+        assert!(reply_then_push(&mut mtp, 11), "0 behaves as 1");
     }
 
     fn ensure_buffer_is_message(buffer: &[u8], body: &[u8], seq_no: u8) {
