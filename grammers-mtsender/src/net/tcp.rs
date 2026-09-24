@@ -137,7 +137,10 @@ mod tests {
     async fn connections_disable_nagle() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        match NetStream::connect(&ServerAddr::Tcp { address }).await.unwrap() {
+        match NetStream::connect(&ServerAddr::Tcp { address })
+            .await
+            .unwrap()
+        {
             NetStream::Tcp(stream) => assert!(stream.nodelay().unwrap()),
             #[cfg(feature = "proxy")]
             NetStream::ProxySocks5(_) => unreachable!("a direct address connects without a proxy"),
