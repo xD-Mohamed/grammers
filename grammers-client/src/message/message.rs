@@ -23,6 +23,8 @@ use crate::parsers;
 use crate::peer::{Peer, PeerMap};
 use crate::utils;
 
+static NO_PEER_REF_REASON: &str = "cannot invoke request without a peer ref";
+
 /// Represents a Telegram message, which includes text messages, messages with media, and service
 /// messages.
 ///
@@ -538,7 +540,9 @@ impl Message {
     ) -> Result<(), InvocationError> {
         self.client
             .send_reactions(
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
                 self.id(),
                 reactions,
             )
@@ -651,7 +655,9 @@ impl Message {
     ) -> Result<Self, InvocationError> {
         self.client
             .send_message(
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
                 message,
             )
             .await
@@ -667,7 +673,9 @@ impl Message {
     ) -> Result<Vec<Option<Self>>, InvocationError> {
         self.client
             .send_album(
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
                 medias,
             )
             .await
@@ -681,7 +689,9 @@ impl Message {
         let message = message.into();
         self.client
             .send_message(
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
                 message.reply_to(Some(self.id())),
             )
             .await
@@ -698,7 +708,9 @@ impl Message {
         medias.first_mut().unwrap().reply_to = Some(self.id());
         self.client
             .send_album(
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
                 medias,
             )
             .await
@@ -716,7 +728,9 @@ impl Message {
             .forward_messages(
                 chat,
                 &[self.id()],
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
             )
             .await
             .map(|mut msgs| msgs.pop().unwrap().unwrap())
@@ -728,7 +742,9 @@ impl Message {
     pub async fn edit<M: Into<InputMessage>>(&self, new_message: M) -> Result<(), InvocationError> {
         self.client
             .edit_message(
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
                 self.id(),
                 new_message,
             )
@@ -742,7 +758,9 @@ impl Message {
     pub async fn delete(&self) -> Result<(), InvocationError> {
         self.client
             .delete_messages(
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
                 &[self.id()],
             )
             .await
@@ -754,7 +772,10 @@ impl Message {
     /// Unlike `Client::mark_as_read`, this method only will mark the conversation as read up to
     /// this message, not the entire conversation.
     pub async fn mark_as_read(&self) -> Result<(), InvocationError> {
-        let peer = self.peer_ref().await?.ok_or(InvocationError::Dropped)?;
+        let peer = self
+            .peer_ref()
+            .await?
+            .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?;
         if peer.id.kind() == PeerKind::Channel {
             self.client
                 .invoke(&tl::functions::channels::ReadHistory {
@@ -780,7 +801,9 @@ impl Message {
     pub async fn pin(&self) -> Result<(), InvocationError> {
         self.client
             .pin_message(
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
                 self.id(),
             )
             .await
@@ -792,7 +815,9 @@ impl Message {
     pub async fn unpin(&self) -> Result<(), InvocationError> {
         self.client
             .unpin_message(
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
                 self.id(),
             )
             .await
@@ -808,7 +833,9 @@ impl Message {
         // If it succeeds we will have the single message present which we can unwrap.
         self.client
             .get_messages_by_id(
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
                 &[self.id()],
             )
             .await?

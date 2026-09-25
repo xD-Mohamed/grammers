@@ -152,8 +152,9 @@ impl SenderPoolHandle {
         let (tx, rx) = oneshot::channel();
         self.0
             .send(Request::Invoke { dc_id, body, tx })
-            .map_err(|_| InvocationError::Dropped)?;
-        rx.await.map_err(|_| InvocationError::Dropped)?
+            .map_err(|_| InvocationError::Dropped("SenderPoolRunner was dropped at send"))?;
+        rx.await
+            .map_err(|_| InvocationError::Dropped("SenderPoolRunner was dropped during receive"))?
     }
 
     /// Communicate with the running [`SenderPoolRunner`] instance
@@ -221,12 +222,16 @@ impl SenderPoolHandle {
             })
             .is_err()
         {
-            return ControlFlow::Break(InvocationError::Dropped);
+            return ControlFlow::Break(InvocationError::Dropped(
+                "SenderPoolRunner was dropped during retry at send",
+            ));
         }
 
         match rx.await {
             Ok(flow) => flow,
-            Err(_) => ControlFlow::Break(InvocationError::Dropped),
+            Err(_) => ControlFlow::Break(InvocationError::Dropped(
+                "SenderPooLRunner was dropped during retry during receive",
+            )),
         }
     }
 }

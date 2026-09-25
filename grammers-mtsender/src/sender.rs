@@ -594,7 +594,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                             );
                         }
                         let req = self.requests.swap_remove(i);
-                        drop(req.result.send(Err(InvocationError::Dropped)));
+                        drop(req.result.send(Err(InvocationError::Dropped(
+                            "response was non-retryable bad msg",
+                        ))));
                     }
                 }
                 _ => {}

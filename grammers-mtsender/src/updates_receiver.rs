@@ -228,7 +228,7 @@ impl UpdatesReceiver {
 
             match timeout_at(deadline.into(), self.updates.recv()).await {
                 Ok(Some(updates)) => self.process_socket_updates(updates).await,
-                Ok(None) => break Err(InvocationError::Dropped),
+                Ok(None) => break Err(InvocationError::Dropped("updates channel was closed")),
                 Err(_) => {}
             }
         }

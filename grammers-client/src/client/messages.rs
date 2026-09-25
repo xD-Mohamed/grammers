@@ -1018,7 +1018,9 @@ impl Client {
                 id: peer_id,
                 auth: PeerAuth::default(), // unused, so no need to bother fetching it
             },
-            PeerKind::Channel => message.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+            PeerKind::Channel => message.peer_ref().await?.ok_or(InvocationError::Dropped(
+                "could not obtain channel peer ref from message",
+            ))?,
         };
         let reply_to_message_id = match message.reply_to_message_id() {
             Some(id) => id,

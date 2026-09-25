@@ -230,7 +230,10 @@ pub enum InvocationError {
     ///
     /// Higher level APIs may choose to use this variant when a request cannot
     /// even be sent in the first place (for example, when a peer reference is missing).
-    Dropped,
+    ///
+    /// The error contains the reason as a string. The contents of this string should
+    /// not be matched on, and only exists to help debug why the request was dropped.
+    Dropped(&'static str),
 
     /// The request was invoked in a datacenter that does not exist or is not known by the session.
     InvalidDc,
@@ -250,7 +253,7 @@ impl fmt::Display for InvocationError {
             Self::Io(err) => write!(f, "request error: {err}"),
             Self::Deserialize(err) => write!(f, "request error: {err}"),
             Self::Transport(err) => write!(f, "request error: {err}"),
-            Self::Dropped => write!(f, "request error: dropped (cancelled)"),
+            Self::Dropped(err) => write!(f, "request error: dropped: {err}"),
             Self::InvalidDc => write!(f, "request error: invalid dc"),
             Self::Authentication(err) => write!(f, "request error: {err}"),
         }
