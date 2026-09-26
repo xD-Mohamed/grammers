@@ -1,14 +1,30 @@
 //! Optional lifetime tracking for callers that must not overlap requests.
 use std::sync::{
-    Arc,
-    atomic::{AtomicU8, Ordering},
+    Arc, OnceLock,
+    atomic::{AtomicU8, AtomicU64, Ordering},
 };
+use std::time::Instant;
 use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
 use tokio::sync::oneshot;
+
+/// Origin for write timestamps, so they fit in an atomic.
+static ORIGIN: OnceLock<Instant> = OnceLock::new();
+
+fn origin() -> Instant {
+    *ORIGIN.get_or_init(Instant::now)
+}
+
+#[derive(Default)]
+struct TrackerState {
+    stage: AtomicU8,
+    /// Nanoseconds after `ORIGIN` plus one when the request was first fully
+    /// written; 0 while unsent.
+    sent_at: AtomicU64,
+}
 
 /// Lifetime of a tracked RPC in the sender, independent of its waiting caller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,12 +39,12 @@ pub enum InvocationStage {
 
 /// Reusable tracker allocated once for an invocation group. Clones share the same admission.
 #[derive(Clone, Default)]
-pub struct InvocationTracker(Arc<AtomicU8>);
+pub struct InvocationTracker(Arc<TrackerState>);
 
 impl InvocationTracker {
     /// Observe SDK lifetime; dropping a response future does not imply Idle.
     pub fn stage(&self) -> InvocationStage {
-        match self.0.load(Ordering::Acquire) {
+        match self.0.stage.load(Ordering::Acquire) {
             0 => InvocationStage::Idle,
             1 => InvocationStage::Pending,
             _ => InvocationStage::Sent,
@@ -38,25 +54,44 @@ impl InvocationTracker {
     /// Reserve this invocation group until the SDK completes/discards the request.
     pub fn try_acquire(&self) -> Option<InvocationPermit> {
         self.0
+            .stage
             .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Relaxed)
             .ok()
-            .map(|_| InvocationPermit(Arc::clone(&self.0)))
+            .map(|_| {
+                self.0.sent_at.store(0, Ordering::Relaxed);
+                InvocationPermit(Arc::clone(&self.0))
+            })
+    }
+
+    /// When the most recent reservation's request was first fully written to
+    /// the socket. Kept after the request completes, until the next reservation.
+    pub fn sent_at(&self) -> Option<Instant> {
+        match self.0.sent_at.load(Ordering::Acquire) {
+            0 => None,
+            nanos => Some(origin() + std::time::Duration::from_nanos(nanos - 1)),
+        }
     }
 }
 
 /// Exclusive reservation moved into the SDK request, not retained by its caller.
 /// It is released on completion, an unsent cancellation, or connection teardown.
-pub struct InvocationPermit(Arc<AtomicU8>);
+pub struct InvocationPermit(Arc<TrackerState>);
 
 impl InvocationPermit {
     pub(crate) fn mark_sent(&self) {
-        self.0.store(2, Ordering::Release);
+        let nanos = u64::try_from(origin().elapsed().as_nanos()).unwrap_or(u64::MAX - 1);
+        // The first complete write is the one that reached the network.
+        let _ = self
+            .0
+            .sent_at
+            .compare_exchange(0, nanos + 1, Ordering::Release, Ordering::Relaxed);
+        self.0.stage.store(2, Ordering::Release);
     }
 }
 
 impl Drop for InvocationPermit {
     fn drop(&mut self) {
-        self.0.store(0, Ordering::Release);
+        self.0.stage.store(0, Ordering::Release);
     }
 }
 

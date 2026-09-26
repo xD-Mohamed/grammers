@@ -806,6 +806,34 @@ pub async fn connect_with_auth<T: Transport>(
 mod optimization_tests {
     use super::*;
 
+    /// The write time is recorded once, survives the reply and is cleared by
+    /// the next reservation.
+    #[tokio::test]
+    async fn tracked_requests_record_when_they_were_written() {
+        let (mut sender, _peer) = pair().await;
+        let tracker = crate::InvocationTracker::default();
+        let (tx, _rx) = oneshot::channel();
+        sender.enqueue_tracked_body(Bytes::from_static(&[1; 4]), tx, tracker.try_acquire());
+        assert!(tracker.sent_at().is_none());
+        sender.try_fill_write();
+        let before = std::time::Instant::now();
+        sender.on_net_write(sender.write_buffer.len()).unwrap();
+        let after = std::time::Instant::now();
+        let sent = tracker.sent_at().expect("written");
+        assert!(sent >= before && sent <= after);
+        let RequestState::Sent(pair) = &sender.requests[0].state else {
+            panic!("unsent");
+        };
+        let msg_id = pair.msg_id;
+        sender.process_result(RpcResult {
+            msg_id,
+            body: vec![1; 4],
+        });
+        assert_eq!(tracker.sent_at(), Some(sent));
+        let _next = tracker.try_acquire().expect("released");
+        assert!(tracker.sent_at().is_none());
+    }
+
     #[tokio::test]
     async fn cancelled_sent_request_keeps_reservation_until_reply_or_disconnect() {
         for disconnect in [false, true] {
