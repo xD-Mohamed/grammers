@@ -108,7 +108,8 @@ fn calc_key(auth_key: &AuthKey, msg_key: &[u8; 16], side: Side) -> ([u8; 32], [u
 /// > Note that MTProto 2.0 requires from 12 to 1024 bytes of padding
 /// > [...] the resulting message length be divisible by 16 bytes
 fn determine_padding_v2_length(len: usize) -> usize {
-    16 + (16 - (len % 16))
+    // The smallest padding the specification allows: 12 to 27 bytes.
+    12 + (16 - (len + 12) % 16) % 16
 }
 
 // Inner body of `encrypt_data_v2`, separated for testing purposes.
@@ -289,6 +290,15 @@ mod tests {
             ],
         );
         assert_eq!(calc_key(&auth_key, &msg_key, Side::Server), expected);
+    }
+
+    #[test]
+    fn padding_is_the_smallest_the_specification_allows() {
+        for len in 0..256 {
+            let padding = determine_padding_v2_length(len);
+            assert!((12..28).contains(&padding), "{len} -> {padding}");
+            assert_eq!((len + padding) % 16, 0, "{len} -> {padding}");
+        }
     }
 
     #[test]

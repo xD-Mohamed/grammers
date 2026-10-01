@@ -90,7 +90,9 @@ impl Transport for Abridged {
             return Err(Error::MissingBytes);
         }
 
-        if header_len == 1 && len >= 4 {
+        // A transport error is a lone negative int32. A message is longer,
+        // and may begin with any bytes (its auth key id).
+        if header_len == 1 && len == 4 {
             let data = i32::from_le_bytes(buffer[1..5].try_into().unwrap());
             if data < 0 {
                 return Err(Error::BadStatus {
@@ -130,6 +132,23 @@ mod tests {
         assert_eq!(
             Abridged::new().unpack(&mut prefix),
             Err(Error::MissingBytes)
+        );
+    }
+
+    #[test]
+    fn a_message_starting_with_negative_bytes_is_not_a_transport_error() {
+        // An auth key id whose low half reads as a negative int32.
+        let mut packet = vec![6u8];
+        packet.extend((-1_i32).to_le_bytes());
+        packet.extend([7u8; 20]);
+        let offset = Abridged::new().unpack(&mut packet).unwrap();
+        assert_eq!(offset.data_range, 1..25);
+        // A lone negative int32 is still the server's error code.
+        let mut status = vec![1u8];
+        status.extend((-404_i32).to_le_bytes());
+        assert_eq!(
+            Abridged::new().unpack(&mut status),
+            Err(Error::BadStatus { status: 404 })
         );
     }
 

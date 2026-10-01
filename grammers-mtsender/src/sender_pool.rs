@@ -35,7 +35,10 @@ use crate::{Sender, ServerAddr, connect, connect_with_auth};
 /// How long to wait after warning the user that the updates was dropped.
 const UPDATES_DROPPED_LOG_COOLDOWN: Duration = Duration::from_secs(300);
 
-pub(crate) type Transport = transport::Full;
+/// The lightest framing: one length byte for packets under 508 bytes, four
+/// above, and no checksum (TCP already has one). `Full` adds twelve bytes
+/// and a CRC32 to every packet in both directions.
+pub(crate) type Transport = transport::Abridged;
 
 type InvokeResponse = Vec<u8>;
 
@@ -607,8 +610,8 @@ impl SenderPoolRunner {
     async fn connect_sender(
         &mut self,
         dc_option: &DcOption,
-    ) -> Result<Sender<transport::Full, mtp::Encrypted>, InvocationError> {
-        let transport = transport::Full::new;
+    ) -> Result<Sender<Transport, mtp::Encrypted>, InvocationError> {
+        let transport = Transport::new;
 
         let address = if self.connection_params.use_ipv6 {
             dc_option.ipv6.into()
@@ -1049,11 +1052,7 @@ mod optimization_tests {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let (sender, peer) = tokio::join!(
-                connect_with_auth(
-                    transport::Full::new(),
-                    ServerAddr::Tcp { address },
-                    [0; 256]
-                ),
+                connect_with_auth(Transport::new(), ServerAddr::Tcp { address }, [0; 256]),
                 listener.accept(),
             );
             let mut sender = sender.unwrap();
