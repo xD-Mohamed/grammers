@@ -11,6 +11,16 @@ pub const TELEGRAM_TEST_DC_2: &str = "149.154.167.40:443";
 /// The default datacenter to connect to for testing.
 pub const TELEGRAM_DEFAULT_TEST_DC: &str = TELEGRAM_TEST_DC_2;
 
+fn enable_tracing() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .without_time()
+            .init();
+    });
+}
+
 #[test]
 fn test_invoke_encrypted_method() {
     use std::str::FromStr;
@@ -20,10 +30,7 @@ fn test_invoke_encrypted_method() {
     use grammers_tl_types::{LAYER, enums, functions};
     use tokio::runtime;
 
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .without_time()
-        .init();
+    enable_tracing();
 
     let rt = runtime::Builder::new_current_thread()
         .enable_all()
@@ -80,10 +87,7 @@ fn test_connection_through_proxy() {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::{runtime, task};
 
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .without_time()
-        .init();
+    enable_tracing();
 
     let rt = runtime::Builder::new_current_thread()
         .enable_all()
