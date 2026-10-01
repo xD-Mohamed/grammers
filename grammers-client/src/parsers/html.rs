@@ -10,17 +10,18 @@
 
 use std::cell::Cell;
 
-use grammers_tl_types as tl;
-use html5ever::local_name as tag;
-use html5ever::tendril::StrTendril;
-use html5ever::tokenizer::{
-    BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer,
-};
-
 use super::common::{
     MENTION_URL_PREFIX, Segment, after, before, inject_into_message, telegram_string_len,
     update_entity_len,
 };
+use grammers_tl_types as tl;
+use html5ever::tendril::StrTendril;
+use html5ever::tokenizer::{
+    BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer,
+};
+use html5ever::{Attribute, LocalName, local_name as tag};
+use jiff::fmt::temporal::DateTimeParser;
+use jiff::{Timestamp, tz};
 
 const CODE_LANG_PREFIX: &str = "language-";
 
@@ -137,6 +138,11 @@ pub fn parse_html_message(message: &str) -> (String, Vec<tl::enums::MessageEntit
                             );
                         }
                     }
+                    tag!("time") => {
+                        if let Some(entity) = parse_time_tag(offset, length, &attrs) {
+                            entities.push(entity.into());
+                        }
+                    }
                     _ => {}
                 },
                 Token::TagToken(Tag {
@@ -187,6 +193,9 @@ pub fn parse_html_message(message: &str) -> (String, Vec<tl::enums::MessageEntit
                                 update_entity_len!(TextUrl(offset) in entities);
                             }
                         }
+                    }
+                    tag!("time") => {
+                        update_entity_len!(FormattedDate(offset) in entities);
                     }
                     _ => {}
                 },
@@ -250,6 +259,7 @@ pub fn generate_html_message(message: &str, entities: &[tl::enums::MessageEntity
                 ME::Strike(_) => 2,
                 ME::Blockquote(_) => 2,
                 ME::Spoiler(_) => 2,
+                ME::FormattedDate(_) => 5,
                 _ => 0,
             })
             .sum(),
@@ -342,14 +352,183 @@ pub fn generate_html_message(message: &str, entities: &[tl::enums::MessageEntity
                     Segment::Fixed("</details>"),
                 ));
             }
+            ME::FormattedDate(e) => {
+                let mut format: Vec<char> = vec![];
+                if e.relative {
+                    format.push('r');
+                } else {
+                    if e.day_of_week {
+                        format.push('w');
+                    }
+                    if e.short_date {
+                        format.push('d');
+                    } else if e.long_date {
+                        format.push('D');
+                    }
+                    if e.short_time {
+                        format.push('t');
+                    } else if e.long_time {
+                        format.push('T');
+                    }
+                }
+                let format = format.into_iter().collect::<String>();
+                let format = if format.is_empty() {
+                    "".to_string()
+                } else {
+                    format!("\" data-format=\"{format}")
+                };
+
+                if let Ok(timestamp) = Timestamp::from_second(e.date as i64) {
+                    insertions.push((before(i, 0, e.offset), Segment::Fixed("<time datetime=\"")));
+                    insertions.push((
+                        before(i, 1, e.offset),
+                        Segment::Owned(timestamp.to_string()),
+                    ));
+                    insertions.push((before(i, 2, e.offset), Segment::Owned(format)));
+                    insertions.push((before(i, 3, e.offset), Segment::Fixed("\">")));
+                    insertions.push((after(i, 0, e.offset + e.length), Segment::Fixed("</time>")));
+                }
+            }
             ME::CustomEmoji(_) => {}
-            ME::FormattedDate(_) => {}
             ME::DiffInsert(_) => {}
             ME::DiffReplace(_) => {}
             ME::DiffDelete(_) => {}
         });
 
     inject_into_message(message, insertions)
+}
+
+/// Parse a regular `<time>` HTML tag into a Telegram message entity.
+///
+/// Returns `None` if the `datetime` attribute value cannot be parsed for any reason.
+fn parse_time_tag(
+    offset: i32,
+    length: i32,
+    attrs: &[Attribute],
+) -> Option<tl::types::MessageEntityFormattedDate> {
+    let dt_str = attrs
+        .iter()
+        .find(|a| a.name.local == tag!("datetime"))
+        .map(|a| a.value.to_string());
+
+    let format = attrs
+        .iter()
+        .find(|a| a.name.local == *"data-format")
+        .map(|a| a.value.to_string())
+        .unwrap_or_else(|| "".to_string());
+
+    if let Some(dt_str) = dt_str
+        && let Some(timestamp) = parse_timestamp(&dt_str)
+    {
+        let tg_ts: i32 = timestamp.as_second() as i32;
+
+        Some(create_formatted_date(offset, length, tg_ts, &format))
+    } else {
+        None
+    }
+}
+
+/// Create a message entity for a given Unix timestamp (`date`) and format string.
+///
+/// The format string will be parsed and set the relevant flags on the message entity.
+/// Flags will be adjusted during parsing to avoid invalid format configurations.
+///
+/// The order of the format parsing is significant.
+/// As an example, given the format string `"rDt"`, the following steps take place:
+/// 1. All flags start out disabled.
+/// 2. `r` enables `relative` and disables all other flags.
+/// 3. `D` disables `relative` and `short_date`, and enables `long_date`.
+/// 4. `t` disables `relative`, enables `short_time`, and disables `long_time`.
+fn create_formatted_date(
+    offset: i32,
+    length: i32,
+    date: i32,
+    format: &str,
+) -> tl::types::MessageEntityFormattedDate {
+    let mut relative = false;
+    let mut short_time = false;
+    let mut long_time = false;
+    let mut short_date = false;
+    let mut long_date = false;
+    let mut day_of_week = false;
+
+    for char in format.chars() {
+        match char {
+            'r' => {
+                relative = true;
+                short_time = false;
+                long_time = false;
+                short_date = false;
+                long_date = false;
+                day_of_week = false;
+            }
+            't' => {
+                relative = false;
+                short_time = true;
+                long_time = false;
+            }
+            'T' => {
+                relative = false;
+                short_time = false;
+                long_time = true;
+            }
+            'd' => {
+                relative = false;
+                short_date = true;
+                long_date = false;
+            }
+            'D' => {
+                relative = false;
+                short_date = false;
+                long_date = true;
+            }
+            'w' => {
+                relative = false;
+                day_of_week = true;
+            }
+            _ => {}
+        }
+    }
+
+    tl::types::MessageEntityFormattedDate {
+        offset,
+        length,
+        date,
+        relative,
+        short_time,
+        long_time,
+        short_date,
+        long_date,
+        day_of_week,
+    }
+}
+
+/// Parses a string into a `Timestamp`.
+///
+/// If the string does not have a time zone or offset, an attempt will be made to parse it as
+/// a "civil" datetime and treat it as UTC.
+///
+/// If parsing fails, `None` is returned.
+fn parse_timestamp(s: &str) -> Option<Timestamp> {
+    static PARSER: DateTimeParser = DateTimeParser::new()
+        .offset_conflict(tz::OffsetConflict::AlwaysTimeZone)
+        .disambiguation(tz::Disambiguation::Compatible);
+
+    if let Ok(zdt) = PARSER.parse_zoned(s) {
+        return Some(zdt.timestamp());
+    }
+
+    if let Ok(ts) = PARSER.parse_timestamp(s) {
+        return Some(ts);
+    }
+
+    if let Ok(cdt) = PARSER.parse_datetime(s)
+        && let Ok(cdt_utc) = cdt.in_tz("UTC")
+    {
+        return Some(cdt_utc.timestamp());
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -548,6 +727,91 @@ mod tests {
     }
 
     #[test]
+    fn parse_time_with_zone() {
+        let (text, entities) = parse_html_message(
+            "A <time datetime=\"2026-09-27 12:13:14[Europe/Stockholm]\">time</time>",
+        );
+
+        assert_eq!(text, "A time");
+        assert_eq!(
+            entities,
+            vec![
+                tl::types::MessageEntityFormattedDate {
+                    offset: 2,
+                    length: 4,
+                    date: 1790503994,
+                    relative: false,
+                    short_time: false,
+                    long_time: false,
+                    short_date: false,
+                    long_date: false,
+                    day_of_week: false,
+                }
+                .into(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_time_with_timestamp() {
+        let (text, entities) =
+            parse_html_message("A <time datetime=\"2026-09-27T12:13:14+02:00\">time</time>");
+
+        assert_eq!(text, "A time");
+        assert_eq!(
+            entities,
+            vec![
+                tl::types::MessageEntityFormattedDate {
+                    offset: 2,
+                    length: 4,
+                    date: 1790503994,
+                    relative: false,
+                    short_time: false,
+                    long_time: false,
+                    short_date: false,
+                    long_date: false,
+                    day_of_week: false,
+                }
+                .into(),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_time_with_invalid_date() {
+        let (text, entities) = parse_html_message("A <time datetime=\"invalid\">time</time>");
+
+        assert_eq!(text, "A time");
+        assert_eq!(entities, vec![]);
+    }
+
+    #[test]
+    fn parse_time_with_both_valid_and_invalid_date() {
+        let (text, entities) = parse_html_message(
+            "A <time datetime=\"2026-09-27T12:13:14+02:00\">valid</time> and <time datetime=\"invalid\">invalid</time>",
+        );
+
+        assert_eq!(text, "A valid and invalid");
+        assert_eq!(
+            entities,
+            vec![
+                tl::types::MessageEntityFormattedDate {
+                    offset: 2,
+                    length: 5,
+                    date: 1790503994,
+                    relative: false,
+                    short_time: false,
+                    long_time: false,
+                    short_date: false,
+                    long_date: false,
+                    day_of_week: false,
+                }
+                .into(),
+            ]
+        );
+    }
+
+    #[test]
     fn parse_nested_entities() {
         let (text, entities) = parse_html_message("Some <b>bold <i>both</b> italics</i>");
         assert_eq!(text, "Some bold both italics");
@@ -585,5 +849,25 @@ mod tests {
         let (text, entities) = parse_html_message(markdown);
         let generated = generate_html_message(&text, &entities);
         assert_eq!(generated, markdown);
+    }
+
+    #[test]
+    fn parse_then_unparse_time() {
+        let html = "Some <time datetime=\"2026-09-27T12:13:14+02:00\">time</time>";
+        let (text, entities) = parse_html_message(html);
+        let generated = generate_html_message(&text, &entities);
+        let expected = "Some <time datetime=\"2026-09-27T10:13:14Z\">time</time>";
+        assert_eq!(generated, expected);
+    }
+
+    #[test]
+    fn parse_then_unparse_time_with_format() {
+        let html =
+            "Some <time datetime=\"2026-09-27T12:13:14+02:00\" data-format=\"wDt\">time</time>";
+        let (text, entities) = parse_html_message(html);
+        let generated = generate_html_message(&text, &entities);
+        let expected =
+            "Some <time datetime=\"2026-09-27T10:13:14Z\" data-format=\"wDt\">time</time>";
+        assert_eq!(generated, expected);
     }
 }

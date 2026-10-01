@@ -36,7 +36,9 @@ macro_rules! update_entity_len {
         let end_offset = $end_offset;
         let pos = $vector.iter_mut().rposition(|e| match e {
             tl::enums::MessageEntity::$ty(e) => {
-                e.length = end_offset - e.offset;
+                if e.length == 0 {
+                    e.length = end_offset - e.offset;
+                }
                 remove = e.length == 0;
                 true
             }
@@ -91,6 +93,7 @@ impl PartialOrd for Position {
 pub enum Segment<'a> {
     Fixed(&'static str),
     String(&'a str),
+    Owned(String),
     Number(i64),
 }
 
@@ -99,6 +102,7 @@ impl<'a> Segment<'a> {
         match self {
             Self::Fixed(s) => s.len(),
             Self::String(s) => s.len(),
+            Self::Owned(s) => s.len(),
             Self::Number(n) => {
                 let minus_sign = if *n < 0 { 1 } else { 0 };
                 let digits = n.abs().ilog10() as usize + 1;
@@ -113,6 +117,7 @@ impl<'a> fmt::Display for Segment<'a> {
         match self {
             Self::Fixed(s) => f.write_str(s),
             Self::String(s) => f.write_str(s),
+            Self::Owned(s) => f.write_str(s),
             Self::Number(s) => write!(f, "{}", s),
         }
     }
