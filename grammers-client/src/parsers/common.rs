@@ -8,9 +8,10 @@
 
 #![cfg(any(feature = "markdown", feature = "html"))]
 
-use jiff::Timestamp;
 use std::cmp::Ordering;
 use std::fmt::{self, Write as _};
+
+use jiff::Timestamp;
 
 pub const MENTION_URL_PREFIX: &str = "tg://user?id=";
 

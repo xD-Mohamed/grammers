@@ -10,10 +10,6 @@
 
 use std::cell::Cell;
 
-use super::common::{
-    MENTION_URL_PREFIX, Segment, after, before, inject_into_message, telegram_string_len,
-    update_entity_len,
-};
 use grammers_tl_types as tl;
 use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::{
@@ -22,6 +18,11 @@ use html5ever::tokenizer::{
 use html5ever::{Attribute, local_name as tag};
 use jiff::fmt::temporal::DateTimeParser;
 use jiff::{Timestamp, tz};
+
+use super::common::{
+    MENTION_URL_PREFIX, Segment, after, before, inject_into_message, telegram_string_len,
+    update_entity_len,
+};
 
 const CODE_LANG_PREFIX: &str = "language-";
 
