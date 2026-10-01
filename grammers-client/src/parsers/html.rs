@@ -19,7 +19,7 @@ use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::{
     BufferQueue, Tag, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer,
 };
-use html5ever::{Attribute, LocalName, local_name as tag};
+use html5ever::{Attribute, local_name as tag};
 use jiff::fmt::temporal::DateTimeParser;
 use jiff::{Timestamp, tz};
 
@@ -259,7 +259,7 @@ pub fn generate_html_message(message: &str, entities: &[tl::enums::MessageEntity
                 ME::Strike(_) => 2,
                 ME::Blockquote(_) => 2,
                 ME::Spoiler(_) => 2,
-                ME::FormattedDate(_) => 5,
+                ME::FormattedDate(_) => 8,
                 _ => 0,
             })
             .sum(),
@@ -353,39 +353,39 @@ pub fn generate_html_message(message: &str, entities: &[tl::enums::MessageEntity
                 ));
             }
             ME::FormattedDate(e) => {
-                let mut format: Vec<char> = vec![];
-                if e.relative {
-                    format.push('r');
-                } else {
-                    if e.day_of_week {
-                        format.push('w');
-                    }
-                    if e.short_date {
-                        format.push('d');
-                    } else if e.long_date {
-                        format.push('D');
-                    }
-                    if e.short_time {
-                        format.push('t');
-                    } else if e.long_time {
-                        format.push('T');
-                    }
-                }
-                let format = format.into_iter().collect::<String>();
-                let format = if format.is_empty() {
-                    "".to_string()
-                } else {
-                    format!("\" data-format=\"{format}")
-                };
-
                 if let Ok(timestamp) = Timestamp::from_second(e.date as i64) {
                     insertions.push((before(i, 0, e.offset), Segment::Fixed("<time datetime=\"")));
-                    insertions.push((
-                        before(i, 1, e.offset),
-                        Segment::Owned(timestamp.to_string()),
-                    ));
-                    insertions.push((before(i, 2, e.offset), Segment::Owned(format)));
-                    insertions.push((before(i, 3, e.offset), Segment::Fixed("\">")));
+                    insertions.push((before(i, 1, e.offset), Segment::Timestamp(timestamp)));
+
+                    let any_format = e.relative
+                        || e.day_of_week
+                        || e.short_date
+                        || e.long_date
+                        || e.short_time
+                        || e.long_time;
+                    if any_format {
+                        insertions
+                            .push((before(i, 2, e.offset), Segment::Fixed("\" data-format=\"")));
+                        if e.relative {
+                            insertions.push((before(i, 3, e.offset), Segment::Fixed("r")));
+                        } else {
+                            if e.day_of_week {
+                                insertions.push((before(i, 3, e.offset), Segment::Fixed("w")));
+                            }
+                            if e.short_date {
+                                insertions.push((before(i, 4, e.offset), Segment::Fixed("d")));
+                            } else if e.long_date {
+                                insertions.push((before(i, 4, e.offset), Segment::Fixed("D")));
+                            }
+                            if e.short_time {
+                                insertions.push((before(i, 5, e.offset), Segment::Fixed("t")));
+                            } else if e.long_time {
+                                insertions.push((before(i, 5, e.offset), Segment::Fixed("T")));
+                            }
+                        }
+                    }
+
+                    insertions.push((before(i, 6, e.offset), Segment::Fixed("\">")));
                     insertions.push((after(i, 0, e.offset + e.length), Segment::Fixed("</time>")));
                 }
             }

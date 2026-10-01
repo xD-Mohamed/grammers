@@ -8,6 +8,7 @@
 
 #![cfg(any(feature = "markdown", feature = "html"))]
 
+use jiff::Timestamp;
 use std::cmp::Ordering;
 use std::fmt::{self, Write as _};
 
@@ -93,8 +94,8 @@ impl PartialOrd for Position {
 pub enum Segment<'a> {
     Fixed(&'static str),
     String(&'a str),
-    Owned(String),
     Number(i64),
+    Timestamp(Timestamp),
 }
 
 impl<'a> Segment<'a> {
@@ -102,12 +103,12 @@ impl<'a> Segment<'a> {
         match self {
             Self::Fixed(s) => s.len(),
             Self::String(s) => s.len(),
-            Self::Owned(s) => s.len(),
             Self::Number(n) => {
                 let minus_sign = if *n < 0 { 1 } else { 0 };
                 let digits = n.abs().ilog10() as usize + 1;
                 minus_sign + digits
             }
+            Self::Timestamp(_) => 25, // "2000-01-01T00:00:00+00:00".len()
         }
     }
 }
@@ -117,8 +118,8 @@ impl<'a> fmt::Display for Segment<'a> {
         match self {
             Self::Fixed(s) => f.write_str(s),
             Self::String(s) => f.write_str(s),
-            Self::Owned(s) => f.write_str(s),
             Self::Number(s) => write!(f, "{}", s),
+            Self::Timestamp(t) => write!(f, "{}", t),
         }
     }
 }
