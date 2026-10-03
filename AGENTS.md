@@ -112,3 +112,25 @@ length/status conversions must not wrap into out-of-bounds ranges.
 Verification: 319 all-feature tests/doctests passed (22 ignored), strict
 all-target/all-feature Clippy passed. See PERFORMANCE.md for scope and rejected
 micro-optimizations. No production performance benefit has been measured.
+
+## Reused gzip state and retirement ordering (2026-10-04)
+
+Gzip replies reuse one decoder per runtime thread, not one per connection.
+Compressed input is copied into owned scratch storage; no transport borrow may
+escape the call. Cache only scratch whose input capacity is at most 64 KiB and
+discard larger scratch. Return independently owned output. The gzip footer is
+only a capped allocation hint: preserve CRC, length, header and trailing-data
+validation, including recovery after malformed streams and nested gzip envelopes.
+
+Release invocation permits before notifying receivers on terminal success/error
+paths and failed connection setup. Queued Rpc/Request and sender Request fields
+deliberately place the permit before the response sender, so drop also retires
+the reservation before waking a closed-channel receiver. Preserve that declaration
+order. Cancellation must still retain serialized/sent requests until protocol
+completion, definitive rejection or connection teardown; no replay policy changed.
+
+Verification: 330 release all-feature workspace tests/doctests passed, 24 ignored;
+all-target/all-feature check and strict Clippy passed. An isolated consumer passed
+219 release tests, 9 ignored, plus strict Windows and Linux-target Clippy. See
+PERFORMANCE.md for component benchmarks and their limits. No live deployment or
+authenticated API call was used for this verification.

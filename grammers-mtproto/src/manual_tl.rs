@@ -8,10 +8,15 @@
 
 //! This module contains additional, manual structures for some TL types.
 
-use std::{borrow::Cow, io::Write};
+use std::{
+    borrow::Cow,
+    cell::RefCell,
+    io::{Cursor as IoCursor, Read, Write},
+};
 
 use flate2::Compression;
-use flate2::write::{GzDecoder, GzEncoder};
+use flate2::bufread::GzDecoder;
+use flate2::write::GzEncoder;
 use grammers_tl_types::{self as tl, Cursor, Deserializable, Identifiable, Serializable};
 
 use crate::mtp;
@@ -277,6 +282,55 @@ pub(crate) struct GzipPacked {
     pub packed_data: Vec<u8>,
 }
 
+/// Reuse the inflate state across independent replies on a runtime thread,
+/// rather than retaining a decoder on every connection. Inputs stay owned so
+/// no borrowed transport buffer can escape a call or survive a reset.
+struct GzipScratch {
+    decoder: GzDecoder<IoCursor<Vec<u8>>>,
+}
+
+const GZIP_SCRATCH_LIMIT: usize = 64 * 1024;
+
+thread_local! {
+    static GZIP_SCRATCH: RefCell<Option<GzipScratch>> = const { RefCell::new(None) };
+}
+
+impl GzipScratch {
+    fn new() -> Self {
+        Self {
+            decoder: GzDecoder::new(IoCursor::new(Vec::new())),
+        }
+    }
+
+    fn decode(&mut self, packed: &[u8]) -> Result<Vec<u8>, mtp::DeserializeError> {
+        let mut input = std::mem::take(self.decoder.get_mut());
+        input.set_position(0);
+        input.get_mut().clear();
+        input.get_mut().extend_from_slice(packed);
+        self.decoder.reset(input);
+
+        // ISIZE is only a bounded allocation hint, never a validation result
+        // or an output limit. The decoder still checks the full CRC and size.
+        let hint = packed
+            .last_chunk::<4>()
+            .map_or(0, |bytes| u32::from_le_bytes(*bytes) as usize);
+        let mut output = Vec::with_capacity(hint.min(GZIP_SCRATCH_LIMIT));
+        self.decoder
+            .read_to_end(&mut output)
+            .map_err(|_| mtp::DeserializeError::DecompressionFailed)?;
+        // A single-member decoder stops at its footer. Preserve write_all's
+        // rejection of trailing data instead of silently accepting a prefix.
+        if self.decoder.get_ref().position() != packed.len() as u64 {
+            return Err(mtp::DeserializeError::DecompressionFailed);
+        }
+        Ok(output)
+    }
+
+    fn retainable(&self) -> bool {
+        self.decoder.get_ref().get_ref().capacity() <= GZIP_SCRATCH_LIMIT
+    }
+}
+
 impl GzipPacked {
     #[cfg(test)]
     pub fn new(unpacked_data: &[u8]) -> Self {
@@ -308,13 +362,19 @@ impl GzipPacked {
     }
 
     fn decompress_payload(packed: &[u8]) -> Result<Vec<u8>, mtp::DeserializeError> {
-        let mut decoder = GzDecoder::new(Vec::new());
-        decoder
-            .write_all(packed)
-            .map_err(|_| mtp::DeserializeError::DecompressionFailed)?;
-        decoder
-            .finish()
-            .map_err(|_| mtp::DeserializeError::DecompressionFailed)
+        GZIP_SCRATCH
+            .try_with(|slot| {
+                // Release the RefCell borrow before decoding. A nested call can
+                // use its own scratch without poisoning or borrowing this decoder.
+                let mut scratch = slot.borrow_mut().take().unwrap_or_else(GzipScratch::new);
+                let result = scratch.decode(packed);
+                if scratch.retainable() {
+                    scratch.decoder.get_mut().get_mut().clear();
+                    slot.borrow_mut().get_or_insert(scratch);
+                }
+                result
+            })
+            .unwrap_or_else(|_| GzipScratch::new().decode(packed))
     }
 }
 
@@ -527,6 +587,136 @@ mod optimization_tests {
                     .to_bytes()
                 )
                 .is_err()
+            );
+        }
+    }
+
+    fn legacy_gzip_decode(packed: &[u8]) -> Result<Vec<u8>, mtp::DeserializeError> {
+        let mut decoder = flate2::write::GzDecoder::new(Vec::new());
+        decoder
+            .write_all(packed)
+            .map_err(|_| mtp::DeserializeError::DecompressionFailed)?;
+        decoder
+            .finish()
+            .map_err(|_| mtp::DeserializeError::DecompressionFailed)
+    }
+
+    #[test]
+    fn reused_gzip_preserves_validation_and_recovers_after_corruption() {
+        let original: Vec<u8> = (0..2048).map(|n| (n * 37) as u8).collect();
+        let packed = GzipPacked::new(&original).packed_data;
+        let mut invalid = vec![Vec::new(), vec![0; 24]];
+        for end in 0..packed.len() {
+            invalid.push(packed[..end].to_vec());
+        }
+        for footer_offset in [4, 8] {
+            let mut bad = packed.clone();
+            let at = bad.len() - footer_offset;
+            bad[at] ^= 1;
+            invalid.push(bad);
+        }
+        let mut trailing = packed.clone();
+        trailing.push(0);
+        invalid.push(trailing);
+        let mut concatenated = packed.clone();
+        concatenated.extend_from_slice(&packed);
+        invalid.push(concatenated);
+        for bad in invalid {
+            assert!(legacy_gzip_decode(&bad).is_err(), "fixture was valid");
+            assert!(GzipPacked::decompress_payload(&bad).is_err());
+            assert_eq!(GzipPacked::decompress_payload(&packed).unwrap(), original);
+        }
+        let retained = GzipPacked::decompress_payload(&packed).unwrap();
+        let other = GzipPacked::new(b"another independent member");
+        assert_eq!(other.decompress().unwrap(), b"another independent member");
+        assert_eq!(
+            retained, original,
+            "a later decode modified an owned earlier result"
+        );
+    }
+
+    fn random_bytes(count: usize) -> Vec<u8> {
+        let mut seed = 0x517c_c1b7_2722_0a95u64;
+        (0..count)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn gzip_scratch_is_bounded_and_handles_optional_headers() {
+        let mut encoder = flate2::GzBuilder::new()
+            .filename("fixture.bin")
+            .comment("independent stream")
+            .extra([1, 2, 3, 4])
+            .write(Vec::new(), Compression::fast());
+        encoder.write_all(b"with optional header fields").unwrap();
+        let packed = encoder.finish().unwrap();
+        assert_eq!(
+            GzipPacked::decompress_payload(&packed).unwrap(),
+            legacy_gzip_decode(&packed).unwrap()
+        );
+        let original = random_bytes(GZIP_SCRATCH_LIMIT * 2);
+        let packed = GzipPacked::new(&original).packed_data;
+        assert!(packed.len() > GZIP_SCRATCH_LIMIT);
+        assert_eq!(GzipPacked::decompress_payload(&packed).unwrap(), original);
+        GZIP_SCRATCH.with(|slot| assert!(slot.borrow().is_none(), "retained oversized input"));
+        assert_eq!(
+            GzipPacked::new(b"small again").decompress().unwrap(),
+            b"small again"
+        );
+        GZIP_SCRATCH.with(|slot| assert!(slot.borrow().as_ref().unwrap().retainable()));
+    }
+
+    #[test]
+    #[ignore = "local gzip decoder comparison; no sockets or server traffic"]
+    fn benchmark_reused_gzip_decoder() {
+        use std::{hint::black_box, time::Instant};
+        for (size, random) in [
+            (512, false),
+            (2048, false),
+            (8192, false),
+            (65536, false),
+            (2048, true),
+        ] {
+            let original = if random {
+                random_bytes(size)
+            } else {
+                (0..size)
+                    .map(|i| (i.wrapping_mul(37) % 251) as u8)
+                    .collect()
+            };
+            let packed = GzipPacked::new(&original).packed_data;
+            assert_eq!(legacy_gzip_decode(&packed).unwrap(), original);
+            assert_eq!(GzipPacked::decompress_payload(&packed).unwrap(), original);
+            let count = (8 * 1024 * 1024 / size).clamp(1000, 20000);
+            let mut samples = [Vec::new(), Vec::new()];
+            for round in 0..8 {
+                for reused in [round % 2 == 0, round % 2 != 0] {
+                    let began = Instant::now();
+                    for _ in 0..count {
+                        if reused {
+                            black_box(GzipPacked::decompress_payload(black_box(&packed)).unwrap());
+                        } else {
+                            black_box(legacy_gzip_decode(black_box(&packed)).unwrap());
+                        }
+                    }
+                    samples[usize::from(reused)]
+                        .push(began.elapsed().as_nanos() as f64 / count as f64);
+                }
+            }
+            for sample in &mut samples {
+                sample.sort_by(f64::total_cmp);
+            }
+            println!(
+                "gzip plain={size} packed={} random={random}: fresh {:.1} ns; reused {:.1} ns",
+                packed.len(),
+                samples[0][4],
+                samples[1][4]
             );
         }
     }

@@ -59,9 +59,8 @@ impl AnsweredMessage {
         &self,
         input_message: impl Into<InputMessage>,
     ) -> Result<bool, InvocationError> {
-        Ok(self
-            .client
+        self.client
             .edit_inline_message(self.raw.clone(), input_message.into())
-            .await?)
+            .await
     }
 }

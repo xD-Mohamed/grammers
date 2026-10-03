@@ -46,8 +46,9 @@ enum Request {
     Invoke {
         dc_id: i32,
         body: Bytes,
-        tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
+        // Retire before a queued request's dropped response sender can wake it.
         permit: Option<crate::InvocationPermit>,
+        tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
     },
     CheckRetry {
         error: InvocationError,
@@ -63,8 +64,9 @@ enum Request {
 
 struct Rpc {
     body: Bytes,
-    tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
+    // Preserve this field order for requests discarded with a closed queue.
     permit: Option<crate::InvocationPermit>,
+    tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
 }
 
 struct ConnectionInfo {
@@ -507,6 +509,7 @@ impl SenderPoolRunner {
                     } {
                         Ok(x) => x,
                         Err(e) => {
+                            drop(permit);
                             let _ = tx.send(Err(e));
                             return ControlFlow::Continue(());
                         }
@@ -1019,6 +1022,62 @@ mod optimization_tests {
     fn fake_handle() -> (SenderPoolHandle, mpsc::UnboundedReceiver<Request>) {
         let (tx, rx) = mpsc::unbounded_channel();
         (SenderPoolHandle(tx, Routes::default(), true), rx)
+    }
+
+    #[test]
+    fn dropped_queued_requests_release_reservations_before_waking_waiters() {
+        use std::{
+            future::Future,
+            sync::atomic::{AtomicU8, Ordering},
+            task::{Context, Wake, Waker},
+        };
+        struct ObserveWake(crate::InvocationTracker, AtomicU8);
+        impl Wake for ObserveWake {
+            fn wake(self: Arc<Self>) {
+                self.wake_by_ref();
+            }
+            fn wake_by_ref(self: &Arc<Self>) {
+                self.1.store(
+                    if self.0.stage() == crate::InvocationStage::Idle {
+                        1
+                    } else {
+                        2
+                    },
+                    Ordering::SeqCst,
+                );
+            }
+        }
+        for pooled in [false, true] {
+            let tracker = crate::InvocationTracker::default();
+            let permit = tracker.try_acquire();
+            let (tx, rx) = oneshot::channel();
+            let wake = Arc::new(ObserveWake(tracker.clone(), AtomicU8::new(0)));
+            let waker = Waker::from(Arc::clone(&wake));
+            let mut cx = Context::from_waker(&waker);
+            let mut rx = Box::pin(rx);
+            assert!(rx.as_mut().poll(&mut cx).is_pending());
+            if pooled {
+                drop(Request::Invoke {
+                    dc_id: 4,
+                    body: Bytes::from_static(&[1; 4]),
+                    tx,
+                    permit,
+                });
+            } else {
+                drop(Rpc {
+                    body: Bytes::from_static(&[1; 4]),
+                    tx,
+                    permit,
+                });
+            }
+            assert_eq!(
+                wake.1.load(Ordering::SeqCst),
+                1,
+                "queued receiver woke before retirement"
+            );
+            assert!(rx.as_mut().poll(&mut cx).is_ready());
+            assert!(tracker.try_acquire().is_some());
+        }
     }
 
     #[tokio::test]

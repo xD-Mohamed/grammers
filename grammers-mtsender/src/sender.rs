@@ -134,9 +134,23 @@ pub struct Sender<T: Transport, M: Mtp> {
 struct Request {
     body: Bytes,
     state: RequestState,
+    // Fields drop in declaration order, including when a connection is dropped.
+    // Release admission before dropping the response sender wakes its receiver.
+    permit: Option<crate::InvocationPermit>,
     // None is a protocol-owned keepalive, which must survive caller cancellation.
     result: Option<oneshot::Sender<Result<Vec<u8>, InvocationError>>>,
-    permit: Option<crate::InvocationPermit>,
+}
+
+impl Request {
+    /// Retirement precedes notification on every terminal path. A receiver's
+    /// waker may run immediately inside send and reserve its next invocation.
+    fn complete(self, outcome: Result<Vec<u8>, InvocationError>) {
+        let Self { result, permit, .. } = self;
+        drop(permit);
+        if let Some(tx) = result {
+            let _ = tx.send(outcome);
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -481,8 +495,8 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         );
 
         self.requests.drain(..).for_each(|r| {
-            if let Some(tx) = r.result {
-                let _ = tx.send(Err(InvocationError::from(error.clone())));
+            if r.result.is_some() {
+                r.complete(Err(InvocationError::from(error.clone())));
             }
         });
     }
@@ -579,10 +593,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     }
 
     fn process_result(&mut self, result: RpcResult) {
-        if let Some(Request {
-            result: tx, permit, ..
-        }) = self.pop_request(result.msg_id)
-        {
+        if let Some(request) = self.pop_request(result.msg_id) {
             let x = result.body;
             assert!(x.len() >= 4);
             let res_id = u32::from_le_bytes([x[0], x[1], x[2], x[3]]);
@@ -592,13 +603,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 tl::name_for_id(res_id),
                 result.msg_id
             );
-            // The request is complete. Release its reservation before waking the
-            // caller, so a caller that answers with its next request on this
-            // connection finds the reservation free.
-            drop(permit);
-            if let Some(tx) = tx {
-                let _ = tx.send(Ok(x));
-            }
+            request.complete(Ok(x));
         } else {
             info!(
                 "got rpc result {:?} but no such request is saved",
@@ -611,14 +616,11 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         if let Some(req) = self.pop_request(error.msg_id) {
             debug!("got rpc error {:?}", error.error);
             let x = req.body.as_ref();
-            if let Some(tx) = req.result {
-                drop(
-                    tx.send(Err(InvocationError::Rpc(
-                        RpcError::from(error.error)
-                            .with_caused_by(u32::from_le_bytes([x[0], x[1], x[2], x[3]])),
-                    ))),
-                );
-            }
+            let outcome = InvocationError::Rpc(
+                RpcError::from(error.error)
+                    .with_caused_by(u32::from_le_bytes([x[0], x[1], x[2], x[3]])),
+            );
+            req.complete(Err(outcome));
         } else {
             info!(
                 "got rpc error {:?} but no such request is saved",
@@ -673,9 +675,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                             );
                         }
                         let req = self.requests.swap_remove(i);
-                        if let Some(tx) = req.result {
-                            let _ = tx.send(Err(InvocationError::Dropped));
-                        }
+                        req.complete(Err(InvocationError::Dropped));
                     }
                 }
                 _ => {}
@@ -686,9 +686,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     fn process_deserialize_error(&mut self, failure: DeserializationFailure) {
         if let Some(req) = self.pop_request(failure.msg_id) {
             debug!("got deserialization failure {:?}", failure.error);
-            if let Some(tx) = req.result {
-                let _ = tx.send(Err(InvocationError::from(failure.error)));
-            }
+            req.complete(Err(InvocationError::from(failure.error)));
         } else {
             info!(
                 "got deserialization failure {:?} but no such request is saved",
@@ -891,6 +889,89 @@ mod optimization_tests {
         let (replied, stage) = waiter.join().unwrap();
         assert!(replied);
         assert_eq!(stage, crate::InvocationStage::Idle);
+    }
+
+    #[tokio::test]
+    async fn terminal_error_waiters_observe_released_reservations_during_wake() {
+        use std::{
+            future::Future,
+            sync::{Arc, atomic::AtomicU8},
+            task::{Context, Wake, Waker},
+        };
+        struct ObserveWake {
+            tracker: crate::InvocationTracker,
+            seen: AtomicU8,
+        }
+        impl Wake for ObserveWake {
+            fn wake(self: Arc<Self>) {
+                self.wake_by_ref();
+            }
+            fn wake_by_ref(self: &Arc<Self>) {
+                self.seen.store(
+                    match self.tracker.stage() {
+                        crate::InvocationStage::Idle => 0,
+                        crate::InvocationStage::Pending => 1,
+                        crate::InvocationStage::Sent => 2,
+                    },
+                    Ordering::SeqCst,
+                );
+            }
+        }
+        for kind in 0..5 {
+            let (mut sender, _peer) = pair().await;
+            let tracker = crate::InvocationTracker::default();
+            let (tx, rx) = oneshot::channel();
+            sender.enqueue_tracked_body(Bytes::from_static(&[1; 4]), tx, tracker.try_acquire());
+            sender.try_fill_write();
+            sender.on_net_write(sender.write_buffer.len()).unwrap();
+            let RequestState::Sent(pair) = &sender.requests[0].state else {
+                panic!("unsent")
+            };
+            let msg_id = pair.msg_id;
+            let wake = Arc::new(ObserveWake {
+                tracker: tracker.clone(),
+                seen: AtomicU8::new(255),
+            });
+            let waker = Waker::from(Arc::clone(&wake));
+            let mut context = Context::from_waker(&waker);
+            let mut rx = Box::pin(rx);
+            assert!(rx.as_mut().poll(&mut context).is_pending());
+            if kind == 4 {
+                drop(sender);
+            } else {
+                match kind {
+                    0 => sender.process_error(RpcResultError {
+                        msg_id,
+                        error: tl::types::RpcError {
+                            error_code: 420,
+                            error_message: "FLOOD_WAIT_7".into(),
+                        },
+                    }),
+                    1 => sender.process_deserialize_error(DeserializationFailure {
+                        msg_id,
+                        error: mtp::DeserializeError::DecompressionFailed,
+                    }),
+                    2 => sender.on_error(&ReadError::Io(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "fixture",
+                    ))),
+                    _ => sender.process_bad_message(BadMessage { msg_id, code: 32 }),
+                }
+                assert!(sender.requests.is_empty());
+            }
+            assert_eq!(
+                wake.seen.load(Ordering::SeqCst),
+                0,
+                "terminal error path {kind} woke a busy reservation"
+            );
+            let outcome = rx.await;
+            if kind == 4 {
+                assert!(outcome.is_err());
+            } else {
+                assert!(outcome.unwrap().is_err());
+            }
+            assert!(tracker.try_acquire().is_some());
+        }
     }
 
     #[tokio::test]

@@ -111,3 +111,42 @@ impl Future for PendingInvocation {
         }
     }
 }
+
+#[cfg(test)]
+mod benchmarks {
+    use super::*;
+
+    #[test]
+    #[ignore = "local tracker cost comparison; no routing, sockets or requests"]
+    fn benchmark_invocation_tracking_cost() {
+        use std::hint::black_box;
+        const SAMPLES: usize = 200_000;
+        let tracker = InvocationTracker::default();
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..8 {
+            for timestamps in [round % 2 == 0, round % 2 != 0] {
+                let began = Instant::now();
+                for _ in 0..SAMPLES {
+                    let permit = tracker.try_acquire().unwrap();
+                    if timestamps {
+                        permit.mark_sent();
+                    } else {
+                        // Comparison only: keep production timestamp semantics.
+                        permit.0.stage.store(2, Ordering::Release);
+                    }
+                    black_box(&permit);
+                    drop(permit);
+                }
+                samples[usize::from(timestamps)]
+                    .push(began.elapsed().as_nanos() as f64 / SAMPLES as f64);
+            }
+        }
+        for sample in &mut samples {
+            sample.sort_by(f64::total_cmp);
+        }
+        println!(
+            "invocation lifetime cycle: state-only {:.1} ns; with socket timestamp {:.1} ns (local only)",
+            samples[0][4], samples[1][4]
+        );
+    }
+}

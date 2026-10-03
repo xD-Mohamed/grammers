@@ -4,6 +4,77 @@ Baseline: Codeberg `82eba650098b54e4c2cb9de83fdab7ea2d21a957`.
 These changes reduce specific allocations and fix failure paths. They do not
 establish a whole-application CPU reduction or eliminate Telegram rate limits.
 
+## Gzip reuse and request retirement (2026-10-04)
+
+The shared/raw RPC path was inspected through warm routing, socket reads/writes,
+framing, crypto, gzip, result delivery and invocation tracking. Two changes were
+retained after focused validation:
+
+- Gzip decompression reuses flate2's resettable bufread decoder per OS thread.
+  This removes repeated inflate-state construction without allocating a decoder
+  for every connection. Input scratch owns its bytes and retains at most 64 KiB
+  of compressed-input capacity; larger scratch is discarded. Output is separately
+  owned by the caller. The footer provides a capped capacity hint, never proof of
+  validity or a maximum output size. Normal gzip header/CRC/length validation and
+  rejection of trailing bytes/extra members remain. Failed decodes cannot poison
+  later streams. No unsafe borrow extension, new dependency or wire change is used.
+- Request retirement now precedes receiver notification on RPC errors, decode
+  failures, connection failures and terminal protocol rejections, matching the
+  successful-result path. Cold-setup errors explicitly release the reservation.
+  Queued request fields drop the permit before the response sender. A deterministic
+  receiver-waker test reproduced the previous behavior: the callback observed
+  `Sent` instead of `Idle` while being told the request had completed. Tests now
+  cover both explicit completion and queue/connection drops. Sent cancellation
+  ownership and rules against replaying accepted requests are unchanged.
+
+A redundant `Ok(...await?)` wrapper in guest-chat editing was also removed to
+restore warning-free workspace Clippy with the current compiler.
+
+Windows x86-64, rustc 1.94.1, flate2 1.1.10 with zlib-rs/runtime detection,
+release with `-C target-cpu=native`; medians of eight alternating samples using
+deterministic synthetic payloads:
+
+| Plain bytes | Packed bytes | Data | Fresh decoder | Reused decoder |
+|---:|---:|---|---:|---:|
+| 512 | 289 | Repeated byte pattern | 1.356 us | 0.664 us |
+| 2,048 | 302 | Repeated byte pattern | 2.019 us | 1.311 us |
+| 8,192 | 359 | Repeated byte pattern | 5.091 us | 4.464 us |
+| 65,536 | 591 | Repeated byte pattern | 36.478 us | 34.168 us |
+| 2,048 | 2,071 | Pseudorandom bytes | 0.918 us | 0.279 us |
+
+These measure complete gzip-to-owned-Vec decoding for these fixtures, including
+the reused path's input copy and output allocation. They omit socket scheduling,
+framing, crypto and server work, and apply only to gzip-packed replies. They do
+not establish a whole-application CPU saving or an end-to-end latency improvement.
+Reuse exchanges small retained per-thread working storage for less allocation
+churn; this is not evidence of lower process RSS.
+
+The tracker benchmark measured 39.6 ns for reserve/write-stamp/release versus
+11.6 ns for a comparison loop omitting the timestamp. Timestamp behavior remains
+unchanged: this small component cost does not justify losing write diagnostics.
+Warm routing, shared request bodies, borrowed envelopes, reusable result vectors,
+keepalive timers, hardware crypto and acknowledgement batching were already in
+place. No runtime/allocator/crypto replacement was supported by these measurements.
+
+Reproduce without account credentials or remote traffic. On a fresh checkout,
+create the local ignored lockfile first with `cargo generate-lockfile`, then use:
+
+```sh
+cargo test --locked --release -p grammers-mtproto benchmark_reused_gzip_decoder -- --ignored --nocapture --test-threads=1
+cargo test --locked --release -p grammers-mtsender benchmark_invocation_tracking_cost -- --ignored --nocapture --test-threads=1
+cargo test --locked --release --workspace --all-features -- --test-threads=1
+cargo check --locked --workspace --all-targets --all-features
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+```
+
+Use the native CPU flag above when comparing with the table. Default/ignored test
+separation remains: the selected benchmarks are local, and live network probes
+remain ignored. Verification passed 330 release all-feature workspace tests and
+doctests (24 ignored), workspace all-target/all-feature checks and strict Clippy.
+An isolated consuming application passed 219 release tests (9 ignored) and strict
+Windows/Linux-target Clippy with all eight SDK packages overridden to this source;
+its production manifest and lockfile were not changed by that compatibility check.
+
 ## Request and reply ownership
 
 - `SenderPoolHandle::raw_invoke_shared_in_dc` accepts a reusable `RequestBody`
