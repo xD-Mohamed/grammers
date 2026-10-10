@@ -220,6 +220,7 @@ pub fn generate_markdown_message(message: &str, entities: &[tl::enums::MessageEn
             ME::DiffInsert(_) => {}
             ME::DiffReplace(_) => {}
             ME::DiffDelete(_) => {}
+            ME::TonAddress(_) => {}
         });
 
     inject_into_message(message, insertions)
