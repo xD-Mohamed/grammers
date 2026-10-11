@@ -467,18 +467,14 @@ impl Session for SqliteSession {
                 };
                 let mut params = vec![];
                 let peer_id = peer.id().bot_api_dialog_id_unchecked();
-                params.push((":peer_id".to_owned(), peer_id));
-                let hash = peer.auth().unwrap_or_default().hash();
-                if peer.auth().is_some() {
-                    params.push((":hash".to_owned(), hash));
-                }
-                let subtype = subtype.map(|s| s as i64);
-                if subtype.is_some() {
-                    params.push((":subtype".to_owned(), subtype.unwrap()));
-                }
+                params.push((":peer_id".to_owned(), Some(peer_id)));
+                // `None` means `NotChange`
+                params.push((":hash".to_owned(), peer.auth().map(|a| a.hash())));
+                params.push((":subtype".to_owned(), subtype.map(|s| s as i64)));
                 if let Err(err) = stmt.execute(params).await {
                     result = Err(err.into());
                 }
+                stmt.reset();
             }
             tx.commit().await?;
             result
@@ -711,6 +707,42 @@ mod tests {
             session.peer(PeerId::channel_unchecked(1)).await.unwrap(),
             Some(peer)
         );
+
+        let peers = vec![
+            PeerInfo::Channel {
+                id: 2,
+                auth: Some(PeerAuth::from_hash(-2)),
+                kind: Some(ChannelKind::Megagroup),
+            },
+            PeerInfo::Channel {
+                id: 3,
+                auth: Some(PeerAuth::from_hash(-3)),
+                kind: None,
+            },
+        ];
+        session.cache_peers(peers.clone()).await.unwrap();
+        for peer in peers.iter() {
+            assert_eq!(session.peer(peer.id()).await.unwrap().as_ref(), Some(peer));
+        }
+
+        // If the inserted peer is going to be updated with some fields changed
+        // from `Some` to `None`, the old `Some` is expected to be kept.
+        let new_inserted_peers = vec![
+            PeerInfo::Channel {
+                id: 2,
+                auth: None,
+                kind: None,
+            },
+            PeerInfo::Channel {
+                id: 3,
+                auth: None,
+                kind: None,
+            },
+        ];
+        session.cache_peers(new_inserted_peers).await.unwrap();
+        for peer in peers.iter() {
+            assert_eq!(session.peer(peer.id()).await.unwrap().as_ref(), Some(peer));
+        }
 
         assert_eq!(
             session.updates_state().await.unwrap(),
