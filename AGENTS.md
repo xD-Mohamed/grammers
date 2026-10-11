@@ -1,5 +1,19 @@
 # grammers fork
 
+Raw-RPC audit (2026-10-11): raw request bodies must have a constructor,
+word-aligned length and fit the existing uncompressed MTProto limit, including
+any automatic update-suppression wrapper. Reject malformed lengths before
+queueing; a bad caller must not panic a shared sender or retain an invocation
+reservation. An exact-limit request must be frameable, not indefinitely deferred.
+Tests cover boundary lengths, compression, wrapper modes, and owned/shared plus
+synchronous/asynchronous tracked entry points on cold/cached routes.
+The canonical upstream was fetched through layer 230 but not merged;
+UPSTREAM.md records the compatibility scope. No new hot-path optimization was
+retained without a measured gain; PERFORMANCE.md records the rejected experiment.
+Verified locally: 334 release all-feature workspace tests/doctests passed,
+24 ignored; all-target/all-feature check and strict Clippy passed. No live RPC,
+deployment or public push ran.
+
 This is a public library fork. Canonical upstream is Codeberg; see UPSTREAM.md
 for remotes, branch roles and the update procedure. Keep upstream history and
 Apache-2.0/MIT licenses intact. This is a cross-host Git fork with no native GitHub

@@ -187,6 +187,42 @@ impl Builder {
 }
 
 impl Encrypted {
+    /// Whether a serialized request can be framed on this type of connection.
+    /// Requests need a constructor, complete TL words, and room for any automatic
+    /// `invokeWithoutUpdates` prefix. Compression does not relax the input limit.
+    /// This allows higher layers to reject invalid input before queueing it.
+    pub fn request_fits(request: &[u8], receive_updates: bool) -> bool {
+        let len = request.len();
+        if len < 4 || !len.is_multiple_of(4) {
+            return false;
+        }
+        let limit = manual_tl::MessageContainer::MAXIMUM_SIZE - manual_tl::Message::SIZE_OVERHEAD;
+        // Ordinary requests fit even with the four-byte wrapper; only the last
+        // word below the limit needs constructor-specific classification.
+        len <= limit - 4
+            || len <= limit - Self::without_updates_prefix_len(request, receive_updates)
+    }
+
+    fn without_updates_prefix_len(request: &[u8], receive_updates: bool) -> usize {
+        if receive_updates {
+            return 0;
+        }
+        let constructor = u32::from_bytes(request).unwrap_or(0);
+        if matches!(
+            constructor,
+            tl::functions::Ping::CONSTRUCTOR_ID
+                | tl::functions::PingDelayDisconnect::CONSTRUCTOR_ID
+                | tl::functions::GetFutureSalts::CONSTRUCTOR_ID
+                | tl::functions::RpcDropAnswer::CONSTRUCTOR_ID
+                | tl::functions::DestroySession::CONSTRUCTOR_ID
+                | tl::functions::InvokeWithoutUpdates::<tl::functions::help::GetConfig>::CONSTRUCTOR_ID
+        ) {
+            0
+        } else {
+            4
+        }
+    }
+
     /// Control unsolicited API updates; configure before initializing a connection.
     /// RPC results and protocol service messages are always processed normally.
     pub fn set_receive_updates(&mut self, enabled: bool) {
@@ -1376,24 +1412,11 @@ impl Mtp for Encrypted {
             return None;
         }
 
-        let without_updates =
-            tl::functions::InvokeWithoutUpdates::<tl::functions::help::GetConfig>::CONSTRUCTOR_ID;
-        let constructor = u32::from_bytes(request).unwrap_or(0);
-        let is_service = matches!(
-            constructor,
-            tl::functions::Ping::CONSTRUCTOR_ID
-                | tl::functions::PingDelayDisconnect::CONSTRUCTOR_ID
-                | tl::functions::GetFutureSalts::CONSTRUCTOR_ID
-                | tl::functions::RpcDropAnswer::CONSTRUCTOR_ID
-                | tl::functions::DestroySession::CONSTRUCTOR_ID
-        );
-        let wrapper = without_updates.to_le_bytes();
+        let wrapper =
+            tl::functions::InvokeWithoutUpdates::<tl::functions::help::GetConfig>::CONSTRUCTOR_ID
+                .to_le_bytes();
         let mut prefix: &[u8] =
-            if !self.receive_updates && !is_service && constructor != without_updates {
-                &wrapper
-            } else {
-                &[]
-            };
+            &wrapper[..Self::without_updates_prefix_len(request, self.receive_updates)];
 
         // Requests that are too large would cause Telegram to close the
         // connection but are so uncommon it's not worth returning `Err`.
@@ -1401,9 +1424,7 @@ impl Mtp for Encrypted {
             prefix.len() + request.len() + manual_tl::Message::SIZE_OVERHEAD
                 <= manual_tl::MessageContainer::MAXIMUM_SIZE
         );
-
-        // Serialized requests will always be correctly padded.
-        assert!(request.len().is_multiple_of(4));
+        assert!(request.len() >= 4 && request.len().is_multiple_of(4));
 
         // Payload provided by the user is always considered to be
         // content-related, which means we can apply compression.
@@ -1421,7 +1442,7 @@ impl Mtp for Encrypted {
         }
 
         let new_size = buffer.len() + prefix.len() + body.len() + manual_tl::Message::SIZE_OVERHEAD;
-        if new_size >= manual_tl::MessageContainer::MAXIMUM_SIZE {
+        if new_size > manual_tl::MessageContainer::MAXIMUM_SIZE {
             // No more messages fit in this container.
             return None;
         }
@@ -2028,6 +2049,50 @@ mod tests {
 
         let buffer = &buffer[MESSAGE_PREFIX_LEN..];
         assert_eq!(buffer.len(), 16 + data.len());
+    }
+
+    #[test]
+    fn maximum_request_fits_without_compression_or_indefinite_deferral() {
+        for receive_updates in [false, true] {
+            for constructor in [
+                tl::functions::help::GetConfig::CONSTRUCTOR_ID,
+                tl::functions::Ping::CONSTRUCTOR_ID,
+                tl::functions::InvokeWithoutUpdates::<tl::functions::help::GetConfig>::CONSTRUCTOR_ID,
+            ] {
+                let wrapped = !receive_updates && constructor == tl::functions::help::GetConfig::CONSTRUCTOR_ID;
+                let limit = 1_044_432 - if wrapped { 4 } else { 0 };
+                let mut data = vec![0; limit];
+                data[..4].copy_from_slice(&constructor.to_le_bytes());
+                assert!(Encrypted::request_fits(&data, receive_updates));
+                let mut mtproto = Encrypted::build()
+                    .receive_updates(receive_updates)
+                    .compression_threshold(None)
+                    .finish(auth_key());
+                let mut buffer = DequeBuffer::with_capacity(0, 0);
+                assert!(mtproto.push(&mut buffer, &data).is_some());
+                assert_eq!(buffer.len(), manual_tl::MessageContainer::MAXIMUM_SIZE);
+                data.extend_from_slice(&[0; 4]);
+                assert!(!Encrypted::request_fits(&data, receive_updates));
+            }
+        }
+    }
+
+    #[test]
+    fn maximum_compressible_request_preserves_existing_input_limit() {
+        for receive_updates in [false, true] {
+            let limit = 1_044_432 - if receive_updates { 0 } else { 4 };
+            let mut data = vec![0; limit];
+            data[..4]
+                .copy_from_slice(&tl::functions::help::GetConfig::CONSTRUCTOR_ID.to_le_bytes());
+            let mut mtproto = Encrypted::build()
+                .receive_updates(receive_updates)
+                .finish(auth_key());
+            let mut buffer = DequeBuffer::with_capacity(0, 0);
+            assert!(mtproto.push(&mut buffer, &data).is_some());
+            assert!(buffer.len() < data.len());
+            data.extend_from_slice(&[0; 4]);
+            assert!(!Encrypted::request_fits(&data, receive_updates));
+        }
     }
 
     #[test]

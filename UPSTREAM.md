@@ -2,6 +2,16 @@
 
 Canonical upstream: https://codeberg.org/Lonami/grammers
 
+Read-only update audit, 2026-10-11: fetched `upstream/master` at
+`16261666dfa49e9749c2716bc1b3011f7ece270f` (layer 230), seven commits after
+the merged `eb5eece` baseline. These add the `log` to `tracing` migration,
+change `InvocationError::Dropped` to carry a reason, add HTML date formatting,
+and update the API schema. They were not merged during the raw-RPC audit:
+none establishes a raw-RPC performance gain, and the error/schema changes
+need a coordinated public API and downstream compatibility review. The
+current schema remains layer 229; this is an explicit deferral, not a claim
+that the fork is fully current with upstream.
+
 Initial Codeberg baseline: `82eba650098b54e4c2cb9de83fdab7ea2d21a957`.
 
 The working `main` branch comes directly from Codeberg, with its full history

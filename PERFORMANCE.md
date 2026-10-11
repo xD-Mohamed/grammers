@@ -4,6 +4,42 @@ Baseline: Codeberg `82eba650098b54e4c2cb9de83fdab7ea2d21a957`.
 These changes reduce specific allocations and fix failure paths. They do not
 establish a whole-application CPU reduction or eliminate Telegram rate limits.
 
+## Raw-input robustness audit (2026-10-11)
+
+The owned/shared and tracked/untracked raw invocation paths now reject unaligned
+or oversized request bodies before allocating a response channel or routing them.
+Previously these reached the encrypted framer's assertions and could panic the
+shared sender task. Validation shares the framer's size limit and automatic
+`invokeWithoutUpdates` classification through `Encrypted::request_fits`; service
+requests and already wrapped requests retain their full capacity. The existing
+limit applies before compression, so compressible input support is unchanged.
+The error is `InvocationError::Io` with `InvalidInput`; bodies shorter than a
+constructor retain their existing error.
+
+The framer also now accepts an exact-limit uncompressed request. Its previous
+`>=` capacity check returned `None` indefinitely although its preceding assertion
+permitted equality. Regressions cover exact limits and four bytes over them with
+updates on/off, API/service/already-wrapped bodies, compressible maximum input,
+cold/cached routes, all four entry points, empty queues after rejection, and
+release of rejected tracked permits. Sent-request ownership, keepalives, crypto
+validation and retries are unchanged.
+
+The established routing, framing, crypto, gzip and delivery paths were also
+reviewed. An in-place TLS gzip-decoder prototype was rejected after a native-CPU
+Windows release comparison with eight samples and rotating execution order: 512-byte replies took
+621.9 ns versus the current 620.0 ns, repeated-pattern 2 KiB replies 1243.1 versus
+1242.6 ns, and pseudorandom 2 KiB replies regressed to 278.6 from 261.2 ns.
+The prototype and its benchmark edits were removed. Existing decoder reuse,
+shared request bodies and result storage remain. This audit claims no reduction
+in whole-process CPU, RSS, or end-to-end RPC latency.
+
+See UPSTREAM.md for the canonical upstream fetch and explicitly deferred changes.
+
+Validation on the final source: 334 release all-feature workspace tests/doctests
+passed (24 ignored), all-target/all-feature `cargo check` and strict Clippy
+passed. Commands used `--offline --locked` and the native CPU release flag for
+tests. No authenticated RPC, deployment or public push ran.
+
 ## Gzip reuse and request retirement (2026-10-04)
 
 The shared/raw RPC path was inspected through warm routing, socket reads/writes,

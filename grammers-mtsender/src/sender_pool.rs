@@ -211,6 +211,9 @@ impl SenderPoolHandle {
     /// Established connections receive calls directly, bypassing the pool queue.
     /// Only a call rejected before queueing may fall back to connection routing;
     /// a lost reply is returned as an error and never replayed here.
+    /// Raw bodies must contain a constructor, have a length divisible by four,
+    /// and fit the encrypted message limit before compression, including any
+    /// automatic wrapper. Invalid lengths fail before routing or connecting.
     pub async fn raw_invoke_shared_in_dc(
         &self,
         dc_id: i32,
@@ -258,6 +261,15 @@ impl SenderPoolHandle {
     ) -> Result<crate::PendingInvocation, InvocationError> {
         if body.len() < 4 {
             return Err(tl::deserialize::Error::UnexpectedEof.into());
+        }
+        // Apply the framer's uncompressed limit, including automatic wrappers,
+        // before malformed input can panic or stall a shared sender task.
+        if !mtp::Encrypted::request_fits(&body, self.2) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "serialized request is unaligned or exceeds the encrypted message size limit",
+            )
+            .into());
         }
         let (tx, rx) = oneshot::channel();
         let rpc = Rpc { body, tx, permit };
@@ -1391,6 +1403,125 @@ mod optimization_tests {
             rx.try_recv(),
             Err(mpsc::error::TryRecvError::Empty)
         ));
+    }
+
+    #[tokio::test]
+    async fn unaligned_raw_bodies_do_not_reach_cold_or_warm_senders() {
+        for warm in [false, true] {
+            let (handle, mut pool_rx) = fake_handle();
+            let (tx, mut direct_rx) = mpsc::unbounded_channel();
+            if warm {
+                handle.1.write().unwrap().publish(4, &tx);
+            }
+            for len in [5, 6, 7, 513, 514, 515] {
+                let is_invalid = |outcome: Result<_, InvocationError>| {
+                    assert!(matches!(
+                        outcome,
+                        Err(InvocationError::Io(error))
+                            if error.kind() == std::io::ErrorKind::InvalidInput
+                    ));
+                };
+                let tracker = crate::InvocationTracker::default();
+                let result = handle.start_raw_invoke_shared_in_dc_tracked(
+                    4,
+                    Bytes::from(vec![0; len]),
+                    tracker.try_acquire().unwrap(),
+                );
+                assert!(matches!(
+                    result,
+                    Err(InvocationError::Io(error))
+                        if error.kind() == std::io::ErrorKind::InvalidInput
+                ));
+                assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+                is_invalid(handle.raw_invoke_in_dc(4, vec![0; len]).await);
+                is_invalid(
+                    handle
+                        .raw_invoke_shared_in_dc(4, Bytes::from(vec![0; len]))
+                        .await,
+                );
+                is_invalid(
+                    handle
+                        .raw_invoke_shared_in_dc_tracked(
+                            4,
+                            Bytes::from(vec![0; len]),
+                            tracker.try_acquire().unwrap(),
+                        )
+                        .await,
+                );
+                assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+            }
+            assert!(matches!(
+                pool_rx.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+            assert!(matches!(
+                direct_rx.try_recv(),
+                Err(mpsc::error::TryRecvError::Empty)
+            ));
+            assert!(!handle.0.is_closed());
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_raw_bodies_fail_before_routing_and_exact_limits_are_accepted() {
+        use tl::Identifiable;
+        for receive_updates in [false, true] {
+            for warm in [false, true] {
+                let (mut handle, mut pool_rx) = fake_handle();
+                handle.2 = receive_updates;
+                let (tx, mut direct_rx) = mpsc::unbounded_channel();
+                if warm {
+                    handle.1.write().unwrap().publish(4, &tx);
+                }
+                for constructor in [
+                    tl::functions::help::GetConfig::CONSTRUCTOR_ID,
+                    tl::functions::Ping::CONSTRUCTOR_ID,
+                    tl::functions::InvokeWithoutUpdates::<tl::functions::help::GetConfig>::CONSTRUCTOR_ID,
+                ] {
+                    let wrapped = !receive_updates && constructor == tl::functions::help::GetConfig::CONSTRUCTOR_ID;
+                    let limit = 1_044_432 - if wrapped { 4 } else { 0 };
+                    let mut body = vec![0; limit];
+                    body[..4].copy_from_slice(&constructor.to_le_bytes());
+                    let tracker = crate::InvocationTracker::default();
+                    let pending = handle.start_raw_invoke_shared_in_dc_tracked(
+                        4, Bytes::copy_from_slice(&body), tracker.try_acquire().unwrap(),
+                    ).expect("exact maximum must enter the queue");
+                    if warm {
+                        let rpc = direct_rx.try_recv().unwrap();
+                        assert_eq!(rpc.body.len(), limit);
+                        drop(rpc);
+                    } else {
+                        let request = pool_rx.try_recv().unwrap();
+                        assert!(matches!(&request, Request::Invoke { body, .. } if body.len() == limit));
+                        drop(request);
+                    }
+                    assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+                    drop(pending);
+                    body.extend_from_slice(&[0; 4]);
+                    let result = handle.start_raw_invoke_shared_in_dc_tracked(
+                        4, Bytes::copy_from_slice(&body), tracker.try_acquire().unwrap(),
+                    );
+                    assert!(matches!(result, Err(InvocationError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidInput));
+                    assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+                    for result in [
+                        handle.raw_invoke_in_dc(4, body.clone()).await,
+                        handle.raw_invoke_shared_in_dc(4, Bytes::copy_from_slice(&body)).await,
+                        handle.raw_invoke_shared_in_dc_tracked(4, Bytes::from(body), tracker.try_acquire().unwrap()).await,
+                    ] {
+                        assert!(matches!(result, Err(InvocationError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidInput));
+                    }
+                    assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+                }
+                assert!(matches!(
+                    pool_rx.try_recv(),
+                    Err(mpsc::error::TryRecvError::Empty)
+                ));
+                assert!(matches!(
+                    direct_rx.try_recv(),
+                    Err(mpsc::error::TryRecvError::Empty)
+                ));
+            }
+        }
     }
 
     #[tokio::test]
