@@ -468,7 +468,6 @@ impl Session for SqliteSession {
                 let mut params = vec![];
                 let peer_id = peer.id().bot_api_dialog_id_unchecked();
                 params.push((":peer_id".to_owned(), Some(peer_id)));
-                // `None` means `NotChange`
                 params.push((":hash".to_owned(), peer.auth().map(|a| a.hash())));
                 params.push((":subtype".to_owned(), subtype.map(|s| s as i64)));
                 if let Err(err) = stmt.execute(params).await {
@@ -731,18 +730,31 @@ mod tests {
             PeerInfo::Channel {
                 id: 2,
                 auth: None,
-                kind: None,
+                kind: Some(ChannelKind::Broadcast),
             },
             PeerInfo::Channel {
                 id: 3,
-                auth: None,
+                auth: Some(PeerAuth::from_hash(-30)),
                 kind: None,
             },
         ];
         session.cache_peers(new_inserted_peers).await.unwrap();
-        for peer in peers.iter() {
-            assert_eq!(session.peer(peer.id()).await.unwrap().as_ref(), Some(peer));
-        }
+        assert_eq!(
+            session.peer(PeerId::channel_unchecked(2)).await.unwrap(),
+            Some(PeerInfo::Channel {
+                id: 2,
+                auth: Some(PeerAuth::from_hash(-2)),
+                kind: Some(ChannelKind::Broadcast),
+            })
+        );
+        assert_eq!(
+            session.peer(PeerId::channel_unchecked(3)).await.unwrap(),
+            Some(PeerInfo::Channel {
+                id: 3,
+                auth: Some(PeerAuth::from_hash(-30)),
+                kind: None
+            })
+        );
 
         assert_eq!(
             session.updates_state().await.unwrap(),

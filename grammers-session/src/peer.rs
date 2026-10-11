@@ -370,9 +370,9 @@ impl PeerInfo {
                     is_self: new_self,
                 },
             ) if id == new_id => {
-                *auth = auth.or(*new_auth);
-                *bot = bot.or(*new_bot);
-                *is_self = is_self.or(*new_self);
+                *auth = new_auth.or(*auth);
+                *bot = new_bot.or(*bot);
+                *is_self = new_self.or(*is_self);
                 true
             }
             (PeerInfo::Chat { id }, PeerInfo::Chat { id: new_id }) if id == new_id => true,
@@ -384,8 +384,8 @@ impl PeerInfo {
                     kind: new_kind,
                 },
             ) if id == new_id => {
-                *auth = auth.or(*new_auth);
-                *kind = kind.or(*new_kind);
+                *auth = new_auth.or(*auth);
+                *kind = new_kind.or(*kind);
                 true
             }
             _ => false,
