@@ -11,7 +11,7 @@ use std::{borrow::Cow, mem};
 
 use grammers_crypto::{AuthKey, DequeBuffer, decrypt_data_v2, encrypt_data_v2};
 use grammers_tl_types::{self as tl, Cursor, Deserializable, Identifiable, Serializable};
-use log::info;
+use tracing::info;
 
 use super::{
     Deserialization, DeserializationFailure, DeserializeError, Mtp, RpcResult, RpcResultError,

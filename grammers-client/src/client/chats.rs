@@ -17,6 +17,7 @@ use std::time::Duration;
 use grammers_mtsender::{InvocationError, RpcError};
 use grammers_session::types::{PeerId, PeerKind, PeerRef};
 use grammers_tl_types as tl;
+use tracing::warn;
 
 use super::{Client, IterBuffer};
 use crate::media::Photo;
@@ -666,7 +667,9 @@ impl Client {
                 self.build_peer_map(Vec::new(), res).await
             }
         };
-        peers.take(peer.id).ok_or(InvocationError::Dropped)
+        peers.take(peer.id).ok_or(InvocationError::Dropped(
+            "response did not contain peer matching the input id",
+        ))
     }
 
     /// Get permissions of participant `user` from chat `chat`.
@@ -699,7 +702,11 @@ impl Client {
                     let me = self.get_me().await?;
                     me.id().bare_id_unchecked()
                 }
-                tl::enums::InputUser::Empty => return Err(InvocationError::Dropped),
+                tl::enums::InputUser::Empty => {
+                    return Err(InvocationError::Dropped(
+                        "user ref did not actually belong to a user",
+                    ));
+                }
             };
 
             // Get chat and find user
@@ -930,7 +937,7 @@ impl Client {
             Ok(())
         };
         if let Err(e) = cache_result {
-            log::warn!("cache_peer fail: {:?}", e);
+            warn!(?e, "cache_peer fail");
         }
 
         PeerMap {

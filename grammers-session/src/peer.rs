@@ -350,7 +350,8 @@ impl PeerInfo {
 
     /// Updates self with any new information contained in the other info.
     ///
-    /// This is equivalent to performing an "or-assign" operation on all the fields.
+    /// New `Some` values replace existing values; missing (`None`) fields retain
+    /// the cached information, including an existing access hash.
     ///
     /// Returns `true` if the other info matches in type and identifier.
     /// If they do not match, no fields will be updated, and `false` is returned instead.
@@ -370,9 +371,9 @@ impl PeerInfo {
                     is_self: new_self,
                 },
             ) if id == new_id => {
-                *auth = auth.or(*new_auth);
-                *bot = bot.or(*new_bot);
-                *is_self = is_self.or(*new_self);
+                *auth = new_auth.or(*auth);
+                *bot = new_bot.or(*bot);
+                *is_self = new_self.or(*is_self);
                 true
             }
             (PeerInfo::Chat { id }, PeerInfo::Chat { id: new_id }) if id == new_id => true,
@@ -384,8 +385,8 @@ impl PeerInfo {
                     kind: new_kind,
                 },
             ) if id == new_id => {
-                *auth = auth.or(*new_auth);
-                *kind = kind.or(*new_kind);
+                *auth = new_auth.or(*auth);
+                *kind = new_kind.or(*kind);
                 true
             }
             _ => false,
@@ -1073,5 +1074,78 @@ impl<'a> TryFrom<&'a tl::types::ChannelForbidden> for ChannelKind {
             channel if channel.megagroup => Ok(Self::Megagroup),
             _channel => Err(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_merge_tests {
+    use super::*;
+
+    #[test]
+    fn new_user_information_replaces_cached_values_without_erasing_missing_fields() {
+        let mut peer = PeerInfo::User {
+            id: 7,
+            auth: Some(PeerAuth::from_hash(10)),
+            bot: Some(true),
+            is_self: Some(true),
+        };
+        assert!(peer.extend_info(&PeerInfo::User {
+            id: 7,
+            auth: Some(PeerAuth::from_hash(20)),
+            bot: Some(false),
+            is_self: None
+        }));
+        assert_eq!(
+            peer,
+            PeerInfo::User {
+                id: 7,
+                auth: Some(PeerAuth::from_hash(20)),
+                bot: Some(false),
+                is_self: Some(true)
+            }
+        );
+        let saved = peer.clone();
+        assert!(peer.extend_info(&PeerInfo::User {
+            id: 7,
+            auth: None,
+            bot: None,
+            is_self: None
+        }));
+        assert_eq!(peer, saved);
+    }
+
+    #[test]
+    fn channel_refresh_keeps_missing_hash_and_replaces_kind() {
+        let mut peer = PeerInfo::Channel {
+            id: 7,
+            auth: Some(PeerAuth::from_hash(10)),
+            kind: Some(ChannelKind::Megagroup),
+        };
+        assert!(peer.extend_info(&PeerInfo::Channel {
+            id: 7,
+            auth: None,
+            kind: Some(ChannelKind::Broadcast)
+        }));
+        assert_eq!(
+            peer,
+            PeerInfo::Channel {
+                id: 7,
+                auth: Some(PeerAuth::from_hash(10)),
+                kind: Some(ChannelKind::Broadcast)
+            }
+        );
+        let saved = peer.clone();
+        assert!(!peer.extend_info(&PeerInfo::Channel {
+            id: 8,
+            auth: Some(PeerAuth::from_hash(20)),
+            kind: None
+        }));
+        assert!(!peer.extend_info(&PeerInfo::User {
+            id: 7,
+            auth: None,
+            bot: None,
+            is_self: None
+        }));
+        assert_eq!(peer, saved);
     }
 }

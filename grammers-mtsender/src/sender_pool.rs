@@ -20,13 +20,13 @@ use grammers_session::storages::{ErasedSession, erase};
 use grammers_session::types::DcOption;
 use grammers_session::updates::UpdatesLike;
 use grammers_tl_types::{self as tl, Deserializable, enums};
-use log::{debug, info, warn};
 use tokio::task::AbortHandle;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
     time::sleep,
 };
+use tracing::{debug, info, warn};
 
 use crate::configuration::{ConnectionParams, RetryContext};
 use crate::errors::{InvocationError, ReadError};
@@ -284,18 +284,22 @@ impl SenderPoolHandle {
                 tx: rpc.tx,
                 permit: rpc.permit,
             })
-            .map_err(|_| InvocationError::Dropped)?;
+            .map_err(|_| InvocationError::Dropped("SenderPoolRunner was dropped at send"))?;
         Ok(crate::PendingInvocation { receiver: rx })
     }
 
     fn try_route(&self, dc_id: i32, rpc: Rpc) -> Result<Option<Rpc>, InvocationError> {
         if self.0.is_closed() {
-            return Err(InvocationError::Dropped);
+            return Err(InvocationError::Dropped(
+                "SenderPoolRunner is closed or stopping",
+            ));
         }
         let route = {
             let cache = self.1.read().unwrap_or_else(|e| e.into_inner());
             if cache.stopping {
-                return Err(InvocationError::Dropped);
+                return Err(InvocationError::Dropped(
+                    "SenderPoolRunner is closed or stopping",
+                ));
             }
             cache
                 .entries
@@ -391,12 +395,16 @@ impl SenderPoolHandle {
             })
             .is_err()
         {
-            return ControlFlow::Break(InvocationError::Dropped);
+            return ControlFlow::Break(InvocationError::Dropped(
+                "SenderPoolRunner was dropped during retry at send",
+            ));
         }
 
         match rx.await {
             Ok(flow) => flow,
-            Err(_) => ControlFlow::Break(InvocationError::Dropped),
+            Err(_) => ControlFlow::Break(InvocationError::Dropped(
+                "SenderPooLRunner was dropped during retry during receive",
+            )),
         }
     }
 }
@@ -516,7 +524,7 @@ impl SenderPoolRunner {
                     None => match tokio::select! {
                         biased;
                         _ = tx.closed() => return ControlFlow::Continue(()),
-                        _ = wait_for_connection_cancel(Arc::clone(&self.routes), dc_id) => Err(InvocationError::Dropped),
+                        _ = wait_for_connection_cancel(Arc::clone(&self.routes), dc_id) => Err(InvocationError::Dropped("connection initialization was cancelled")),
                         result = self.create_connection(dc_id) => result,
                     } {
                         Ok(x) => x,
@@ -785,8 +793,10 @@ async fn run_sender(
                                     dropped += 1;
                                     if last_update_limit_warn.elapsed() >= UPDATES_DROPPED_LOG_COOLDOWN {
                                         warn!(
-                                          "updates channel full (cap {}), dropped {} updates in the last {:?}",
-                                          updates.max_capacity(), dropped, last_update_limit_warn.elapsed()
+                                            capacity = updates.max_capacity(),
+                                            dropped_count = dropped,
+                                            last_time = ?last_update_limit_warn.elapsed(),
+                                            "updates channel full",
                                         );
                                         dropped = 0;
                                         last_update_limit_warn = Instant::now();
@@ -943,7 +953,7 @@ mod optimization_tests {
             stopped.is_ok(),
             "cancelled initialization kept the pool blocked"
         );
-        assert!(matches!(call.await, Err(InvocationError::Dropped)));
+        assert!(matches!(call.await, Err(InvocationError::Dropped(_))));
         assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
     }
 
@@ -1200,7 +1210,10 @@ mod optimization_tests {
         });
         let accepted = new_rx.recv().await.unwrap();
         drop(accepted.tx);
-        assert!(matches!(call.await.unwrap(), Err(InvocationError::Dropped)));
+        assert!(matches!(
+            call.await.unwrap(),
+            Err(InvocationError::Dropped(_))
+        ));
         assert!(matches!(
             pool_rx.try_recv(),
             Err(mpsc::error::TryRecvError::Empty)
@@ -1283,7 +1296,7 @@ mod optimization_tests {
             handle
                 .raw_invoke_shared_in_dc(4, Bytes::from_static(&[1; 4]))
                 .await,
-            Err(InvocationError::Dropped)
+            Err(InvocationError::Dropped(_))
         ));
         tokio::time::timeout(Duration::from_secs(1), task)
             .await
@@ -1301,7 +1314,7 @@ mod optimization_tests {
             handle
                 .raw_invoke_shared_in_dc(4, Bytes::from_static(&[1; 4]))
                 .await,
-            Err(InvocationError::Dropped)
+            Err(InvocationError::Dropped(_))
         ));
         assert!(matches!(
             rx.try_recv(),
@@ -1592,7 +1605,8 @@ mod optimization_tests {
         else {
             panic!("invoke");
         };
-        tx.send(Err(InvocationError::Dropped)).unwrap();
+        tx.send(Err(InvocationError::Dropped("test cancellation")))
+            .unwrap();
         let Request::CheckRetry { tx, fail_count, .. } = rx.recv().await.unwrap() else {
             panic!("policy");
         };

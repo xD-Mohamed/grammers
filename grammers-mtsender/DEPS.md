@@ -41,11 +41,11 @@ communicate with the sender.
 
 Used for input and output buffers.
 
-## log
+## tracing
 
 Used to log what's going on during the lifetime of the sender.
 
-## simple_logger
+## tracing-subscriber
 
 Used in the tests in order to debug with more information when things go wrong.
 

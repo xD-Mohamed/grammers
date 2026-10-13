@@ -107,7 +107,9 @@ impl Future for PendingInvocation {
         match Pin::new(&mut self.receiver).poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(result)) => Poll::Ready(result),
-            Poll::Ready(Err(_)) => Poll::Ready(Err(crate::InvocationError::Dropped)),
+            Poll::Ready(Err(_)) => Poll::Ready(Err(crate::InvocationError::Dropped(
+                "request response channel was closed",
+            ))),
         }
     }
 }

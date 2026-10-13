@@ -11,6 +11,16 @@ pub const TELEGRAM_TEST_DC_2: &str = "149.154.167.40:443";
 /// The default datacenter to connect to for testing.
 pub const TELEGRAM_DEFAULT_TEST_DC: &str = TELEGRAM_TEST_DC_2;
 
+fn enable_tracing() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .without_time()
+            .init();
+    });
+}
+
 #[test]
 #[ignore = "read-only unauthenticated query to Telegram's public test DC"]
 fn test_no_updates_initialization_on_public_test_dc() {
@@ -71,12 +81,9 @@ fn test_invoke_encrypted_method() {
     use grammers_mtproto::transport;
     use grammers_mtsender::connect;
     use grammers_tl_types::{LAYER, enums, functions};
-    use simple_logger::SimpleLogger;
     use tokio::runtime;
 
-    let _ = SimpleLogger::new()
-        .with_level(log::LevelFilter::Debug)
-        .init();
+    enable_tracing();
 
     let rt = runtime::Builder::new_current_thread()
         .enable_all()
@@ -125,7 +132,6 @@ fn test_connection_through_proxy() {
     use grammers_mtproto::mtp;
     use grammers_mtproto::transport;
     use grammers_mtsender::Sender;
-    use simple_logger::SimpleLogger;
     use socks5_server::{
         Command, Server,
         auth::Password,
@@ -135,9 +141,7 @@ fn test_connection_through_proxy() {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::{runtime, task};
 
-    let _ = SimpleLogger::new()
-        .with_level(log::LevelFilter::Debug)
-        .init();
+    enable_tracing();
 
     let rt = runtime::Builder::new_current_thread()
         .enable_all()

@@ -1,5 +1,15 @@
 # grammers fork
 
+Current integration (2026-10-13): canonical upstream through
+`49019a579121c9025c728231bdd9bb9b7113c0b5`, including layer 230, is merged.
+See UPSTREAM.md for source compatibility (`Dropped(_)`, new Username flags,
+tracing), retained fork invariants and validation. New upstream peer metadata
+must take precedence while absent fields preserve known data. Tests cover both
+user/channel refreshes and cross-identity rejection. 342 release all-feature
+workspace tests/doctests passed, 24 ignored; strict all-target/all-feature Clippy
+and nine local component benchmarks passed. Consumer code and credentials stay
+outside this public checkout; local tests do not prove deployment performance.
+
 Raw-RPC audit (2026-10-11): raw request bodies must have a constructor,
 word-aligned length and fit the existing uncompressed MTProto limit, including
 any automatic update-suppression wrapper. Reject malformed lengths before
@@ -7,7 +17,7 @@ queueing; a bad caller must not panic a shared sender or retain an invocation
 reservation. An exact-limit request must be frameable, not indefinitely deferred.
 Tests cover boundary lengths, compression, wrapper modes, and owned/shared plus
 synchronous/asynchronous tracked entry points on cold/cached routes.
-The canonical upstream was fetched through layer 230 but not merged;
+At that earlier audit, upstream was fetched through layer 230 but not merged;
 UPSTREAM.md records the compatibility scope. No new hot-path optimization was
 retained without a measured gain; PERFORMANCE.md records the rejected experiment.
 Verified locally: 334 release all-feature workspace tests/doctests passed,

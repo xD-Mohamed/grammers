@@ -14,7 +14,7 @@ use grammers_mtsender::InvocationError;
 use grammers_session::types::{PeerAuth, PeerId, PeerKind, PeerRef};
 use grammers_tl_types::{self as tl, enums::InputPeer};
 use jiff::Timestamp;
-use log::{Level, log_enabled, warn};
+use tracing::{Level, enabled, warn};
 
 use super::{Client, IterBuffer};
 use crate::media::{InputMedia, Media};
@@ -663,7 +663,7 @@ impl Client {
                 Message::from_raw_short_updates(self, updates, message, peer)
             }
             updates => {
-                let updates_debug = if log_enabled!(Level::Warn) {
+                let updates_debug = if enabled!(Level::WARN) {
                     Some(updates.clone())
                 } else {
                     None
@@ -1016,7 +1016,9 @@ impl Client {
                 id: peer_id,
                 auth: PeerAuth::default(), // unused, so no need to bother fetching it
             },
-            PeerKind::Channel => message.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+            PeerKind::Channel => message.peer_ref().await?.ok_or(InvocationError::Dropped(
+                "could not obtain channel peer ref from message",
+            ))?,
         };
         let reply_to_message_id = match message.reply_to_message_id() {
             Some(id) => id,

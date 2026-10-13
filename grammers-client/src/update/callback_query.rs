@@ -19,6 +19,8 @@ use crate::Client;
 use crate::message::{InputMessage, Message};
 use crate::peer::{Peer, PeerMap};
 
+static NO_PEER_REF_REASON: &str = "cannot invoke request without a peer ref";
+
 /// Update that bots receive when a user presses one of the bot's inline callback buttons.
 ///
 /// You should always [`CallbackQuery::answer`] these queries, even if you have no data to display
@@ -112,12 +114,18 @@ impl CallbackQuery {
     pub async fn load_message(&self) -> Result<Message, InvocationError> {
         let msg_id = match &self.raw {
             tl::enums::Update::BotCallbackQuery(update) => update.msg_id,
-            _ => return Err(InvocationError::Dropped),
+            _ => {
+                return Err(InvocationError::Dropped(
+                    "cannot load message from inline callback queries",
+                ));
+            }
         };
         Ok(self
             .client
             .get_messages_by_id(
-                self.peer_ref().await?.ok_or(InvocationError::Dropped)?,
+                self.peer_ref()
+                    .await?
+                    .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?,
                 &[msg_id],
             )
             .await?
@@ -189,7 +197,7 @@ impl<'a> Answer<'a> {
             .query
             .peer_ref()
             .await?
-            .ok_or(InvocationError::Dropped)?;
+            .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?;
         match &self.query.raw {
             tl::enums::Update::BotCallbackQuery(update) => {
                 self.query
@@ -217,7 +225,7 @@ impl<'a> Answer<'a> {
             .query
             .peer_ref()
             .await?
-            .ok_or(InvocationError::Dropped)?;
+            .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?;
         self.query.client.send_message(peer, message).await
     }
 
@@ -228,14 +236,18 @@ impl<'a> Answer<'a> {
     ) -> Result<Message, InvocationError> {
         let msg_id = match &self.query.raw {
             tl::enums::Update::BotCallbackQuery(update) => update.msg_id,
-            _ => return Err(InvocationError::Dropped),
+            _ => {
+                return Err(InvocationError::Dropped(
+                    "cannot reply to inline callback query",
+                ));
+            }
         };
         self.query.client.invoke(&self.request).await?;
         let peer = self
             .query
             .peer_ref()
             .await?
-            .ok_or(InvocationError::Dropped)?;
+            .ok_or(InvocationError::Dropped(NO_PEER_REF_REASON))?;
         let message = message.into();
         self.query
             .client

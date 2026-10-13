@@ -1,5 +1,21 @@
 # Polling-oriented fork changes
 
+## Upstream integration (2026-10-13)
+
+Merged Codeberg through 49019a5 (layer 230). The existing shared-body, borrowed
+reply, gzip, ACK, keepalive and tracked-routing optimizations remain. Conflict
+resolution retains retirement-before-wakeup and does not restore eager error
+formatting when retry is rejected. The schema/logging changes do not establish
+an end-to-end latency improvement.
+
+342 release all-feature tests/doctests passed (24 ignored), strict workspace
+Clippy passed, and the nine existing local `benchmark_` cases passed separately.
+These exercises include synthetic buffer allocation, result/gzip/ACK/timer reuse,
+request clones, invocation tracking and routing. They are preservation checks,
+not a controlled before/after production benchmark; concurrent builds can affect
+absolute timings. No further send-path optimization was justified by this audit.
+
+
 Baseline: Codeberg `82eba650098b54e4c2cb9de83fdab7ea2d21a957`.
 These changes reduce specific allocations and fix failure paths. They do not
 establish a whole-application CPU reduction or eliminate Telegram rate limits.

@@ -24,18 +24,18 @@ use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
 use mime::Mime;
 use mime_guess::mime;
-use simple_logger::SimpleLogger;
 use tokio::runtime;
+use tracing::info;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const SESSION_FILE: &str = "downloader.session";
 
 async fn async_main() -> Result<()> {
-    SimpleLogger::new()
-        .with_level(log::LevelFilter::Info)
-        .init()
-        .unwrap();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .without_time()
+        .init();
 
     let api_id = env!("TG_ID").parse().expect("TG_ID invalid");
     let peer_name = env::args().nth(1).expect("peer name missing");
@@ -47,7 +47,7 @@ async fn async_main() -> Result<()> {
     drop(tokio::spawn(runner.run()));
 
     if !client.is_authorized().await? {
-        println!("Signing in...");
+        info!("Signing in...");
         let phone = prompt("Enter your phone number (international format): ")?;
         let token = client.request_login_code(&phone, env!("TG_HASH")).await?;
         let code = prompt("Enter the code you received: ")?;
@@ -67,7 +67,7 @@ async fn async_main() -> Result<()> {
             Ok(_) => (),
             Err(e) => panic!("{}", e),
         };
-        println!("Signed in!");
+        info!("Signed in!");
     }
 
     let maybe_peer = client
@@ -81,7 +81,7 @@ async fn async_main() -> Result<()> {
 
     let mut messages = client.iter_messages(peer);
 
-    println!(
+    info!(
         "Peer {} has {} total messages.",
         peer_name,
         messages.total().await.unwrap()
@@ -91,7 +91,7 @@ async fn async_main() -> Result<()> {
 
     while let Some(msg) = messages.next().await? {
         counter += 1;
-        println!("Message {}:{}", msg.id(), msg.text());
+        info!("Message {}:{}", msg.id(), msg.text());
         if let Some(media) = msg.media() {
             let dest = format!(
                 "target/message-{}{}",
@@ -105,7 +105,7 @@ async fn async_main() -> Result<()> {
         }
     }
 
-    println!("Downloaded {counter} messages");
+    info!("Downloaded {counter} messages");
 
     // `runner.run()`'s task will be dropped (and disconnect occur) once the runtime exits.
     Ok(())

@@ -7,7 +7,7 @@ Used for dealing with correct update processing.
 The serialization and deserialization traits are also used for storing and loading the session
 into and from bytes.
 
-## log
+## tracing
 
 Used to log messages during update processing.
 

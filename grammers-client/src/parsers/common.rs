@@ -11,6 +11,8 @@
 use std::cmp::Ordering;
 use std::fmt::{self, Write as _};
 
+use jiff::Timestamp;
+
 pub const MENTION_URL_PREFIX: &str = "tg://user?id=";
 
 /// The length of a string, according to Telegram.
@@ -36,7 +38,9 @@ macro_rules! update_entity_len {
         let end_offset = $end_offset;
         let pos = $vector.iter_mut().rposition(|e| match e {
             tl::enums::MessageEntity::$ty(e) => {
-                e.length = end_offset - e.offset;
+                if e.length == 0 {
+                    e.length = end_offset - e.offset;
+                }
                 remove = e.length == 0;
                 true
             }
@@ -92,6 +96,7 @@ pub enum Segment<'a> {
     Fixed(&'static str),
     String(&'a str),
     Number(i64),
+    Timestamp(Timestamp),
 }
 
 impl<'a> Segment<'a> {
@@ -104,6 +109,7 @@ impl<'a> Segment<'a> {
                 let digits = n.abs().ilog10() as usize + 1;
                 minus_sign + digits
             }
+            Self::Timestamp(_) => 25, // "2000-01-01T00:00:00+00:00".len()
         }
     }
 }
@@ -114,6 +120,7 @@ impl<'a> fmt::Display for Segment<'a> {
             Self::Fixed(s) => f.write_str(s),
             Self::String(s) => f.write_str(s),
             Self::Number(s) => write!(f, "{}", s),
+            Self::Timestamp(t) => write!(f, "{}", t),
         }
     }
 }

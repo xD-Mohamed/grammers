@@ -17,9 +17,9 @@ use grammers_client::Client;
 use grammers_client::update::Update;
 use grammers_mtsender::{SenderPool, UpdatesConfiguration};
 use grammers_session::storages::SqliteSession;
-use simple_logger::SimpleLogger;
 use tokio::task::JoinSet;
 use tokio::{runtime, time::sleep};
+use tracing::{error, info};
 
 type Result = std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
@@ -29,7 +29,7 @@ async fn handle_update(client: Client, update: Update) {
     match update {
         Update::NewMessage(message) if !message.outgoing() => {
             let peer = message.peer().unwrap();
-            println!(
+            info!(
                 "Responding to {}",
                 peer.name().unwrap_or(&format!("id {}", message.peer_id()))
             );
@@ -40,7 +40,7 @@ async fn handle_update(client: Client, update: Update) {
                 .send_message(peer.to_ref().await.unwrap().unwrap(), message.text())
                 .await
             {
-                println!("Failed to respond! {e}");
+                info!("Failed to respond! {e}");
             };
         }
         _ => {}
@@ -48,10 +48,10 @@ async fn handle_update(client: Client, update: Update) {
 }
 
 async fn async_main() -> Result {
-    SimpleLogger::new()
-        .with_level(log::LevelFilter::Debug)
-        .init()
-        .unwrap();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .without_time()
+        .init();
 
     let api_id = env!("TG_ID").parse().expect("TG_ID invalid");
     let token = env::args().nth(1).expect("token missing");
@@ -67,12 +67,12 @@ async fn async_main() -> Result {
     let pool_task = tokio::spawn(runner.run());
 
     if !client.is_authorized().await? {
-        println!("Signing in...");
+        info!("Signing in...");
         client.bot_sign_in(&token, env!("TG_HASH")).await?;
-        println!("Signed in!");
+        info!("Signed in!");
     }
 
-    println!("Waiting for messages...");
+    info!("Waiting for messages...");
 
     // This example spawns a task to handle each update.
     // To guarantee that all handlers run to completion, they're stored in this set.
@@ -95,13 +95,13 @@ async fn async_main() -> Result {
             }
             Some(res) = handler_tasks.join_next(), if !handler_tasks.is_empty() => {
                 if let Err(e) = res {
-                    log::error!("handler task panicked: {e}");
+                    error!("handler task panicked: {e}");
                 }
             }
         }
     }
 
-    println!("Saving session file...");
+    info!("Saving session file...");
     updates.sync_update_state().await?; // you usually want this before closing the session
 
     // Pool's `run()` won't finish until all handles are dropped or quit is called.
@@ -114,12 +114,12 @@ async fn async_main() -> Result {
     // error from any pending method calls (RPC invocations).
     //
     // You can try this graceful shutdown by sending a message saying "slow" and then pressing Ctrl+C.
-    println!("Gracefully closing connection to notify all pending handlers...");
+    info!("Gracefully closing connection to notify all pending handlers...");
     handle.quit();
     let _ = pool_task.await;
 
     // Give a chance to all on-going handlers to finish.
-    println!("Waiting for any slow handlers to finish...");
+    info!("Waiting for any slow handlers to finish...");
     while handler_tasks.join_next().await.is_some() {}
 
     Ok(())

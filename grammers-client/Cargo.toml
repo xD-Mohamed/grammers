@@ -14,10 +14,10 @@ categories = ["api-bindings"]
 edition = "2024"
 
 [features]
-markdown = ["pulldown-cmark"]
-html = ["html5ever"]
+markdown = ["dep:pulldown-cmark"]
+html = ["dep:html5ever"]
 proxy = ["grammers-mtsender/proxy"]
-parse_invite_link = ["url"]
+parse_invite_link = ["dep:url"]
 fs = ["tokio/fs"]
 default = ["fs"]
 
@@ -33,7 +33,6 @@ grammers-tl-types = { path = "../grammers-tl-types", version = "0.10.0", feature
 ] }
 html5ever = { version = "0.39.0", optional = true }
 jiff = "0.2.35"
-log = "0.4.33"
 md5 = "0.8.0"
 mime_guess = "2.0.5"
 pin-project-lite = "0.2"
@@ -41,13 +40,36 @@ pulldown-cmark = { version = "0.13.4", default-features = false, optional = true
 tokio = { version = "1.52.3", default-features = false, features = [
     "rt", "macros"
 ] }
+tracing.workspace = true
 url = { version = "2.5.8", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.52.3", default-features = false, features = [
     "signal",
 ] }
-simple_logger = { version = "5.2.0", default-features = false, features = [
-    "colors",
-] }
+tracing-subscriber.workspace = true
 toml = "1.1.2"
+
+[[example]]
+name = "ping"
+required-features = ["grammers-session/sqlite-storage"]
+
+[[example]]
+name = "echo"
+required-features = ["grammers-session/sqlite-storage"]
+
+[[example]]
+name = "downloader"
+required-features = ["grammers-session/sqlite-storage"]
+
+[[example]]
+name = "dialogs"
+required-features = ["grammers-session/sqlite-storage"]
+
+[[example]]
+name = "inline-pagination"
+required-features = ["grammers-session/sqlite-storage"]
+
+[[example]]
+name = "send_album"
+required-features = ["grammers-session/sqlite-storage"]

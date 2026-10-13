@@ -30,8 +30,8 @@ use grammers_client::message::{Button, InputMessage, ReplyMarkup};
 use grammers_client::update::Update;
 use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
-use simple_logger::SimpleLogger;
 use tokio::{runtime, task};
+use tracing::{error, info};
 
 type Result = std::result::Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
@@ -79,7 +79,7 @@ async fn handle_update(_client: Client, update: Update) -> Result {
         }
         Update::CallbackQuery(query) => {
             let data = std::str::from_utf8(query.data()).unwrap();
-            println!("Got callback query for {data}");
+            info!("Got callback query for {data}");
 
             // First check special-case.
             if data == "done" {
@@ -113,10 +113,10 @@ async fn handle_update(_client: Client, update: Update) -> Result {
 }
 
 async fn async_main() -> Result {
-    SimpleLogger::new()
-        .with_level(log::LevelFilter::Debug)
-        .init()
-        .unwrap();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .without_time()
+        .init();
 
     let api_id = env!("TG_ID").parse().expect("TG_ID invalid");
     let token = env::args().nth(1).expect("token missing");
@@ -132,12 +132,12 @@ async fn async_main() -> Result {
     drop(tokio::spawn(runner.run()));
 
     if !client.is_authorized().await? {
-        println!("Signing in...");
+        info!("Signing in...");
         client.bot_sign_in(&token, env!("TG_HASH")).await?;
-        println!("Signed in!");
+        info!("Signed in!");
     }
 
-    println!("Waiting for messages...");
+    info!("Waiting for messages...");
     let mut updates = client.stream_updates(updates, Default::default()).await?;
     loop {
         tokio::select! {
@@ -148,7 +148,7 @@ async fn async_main() -> Result {
                 task::spawn(async move {
                     match handle_update(handle, update).await {
                         Ok(_) => {}
-                        Err(e) => eprintln!("Error handling updates!: {e}"),
+                        Err(e) => error!(e, "Error handling updates!"),
                     }
                 });
             }

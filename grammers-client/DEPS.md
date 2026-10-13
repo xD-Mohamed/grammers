@@ -31,9 +31,13 @@ Enables the user to use HTML text to send formatted messages.
 
 Used to coordinate the asynchronous methods of the client.
 
-## log
+## tracing
 
 Used to log the execution of the client to help debug issues.
+
+## tracing-subscriber
+
+Used by the examples to showcase how one may configure logging for more information.
 
 ## md5
 
@@ -47,10 +51,6 @@ the mime-type themselves. The mime-type is required by Telegram.
 ## jiff
 
 Used for defining date types (for example, accessing the date of when a message was sent).
-
-## simple_logger
-
-Used by the examples to showcase how one may configure logging for more information.
 
 ## toml
 

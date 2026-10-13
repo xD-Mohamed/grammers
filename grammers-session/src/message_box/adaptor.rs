@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use grammers_tl_types as tl;
-use log::info;
+use tracing::info;
 
 use super::defs::{Gap, Key, NO_PTS, NO_SEQ, PtsInfo, UpdatesLike};
 
