@@ -6,6 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::num::TryFromIntError;
 use std::time::Duration;
 
 use grammers_tl_types as tl;
@@ -87,7 +88,7 @@ pub struct InputVideo {
     thumb: Option<Uploaded>,
     video_cover: Option<tl::enums::InputPhoto>,
     video_timestamp: Option<i32>,
-    ttl_seconds: Option<i32>,
+    ttl: Option<i32>,
     stickers: Option<Vec<tl::enums::InputDocument>>,
     round_message: bool,
     supports_streaming: bool,
@@ -97,6 +98,32 @@ pub struct InputVideo {
     preload_prefix_size: Option<i32>,
     video_start_ts: Option<f64>,
     video_codec: Option<String>,
+}
+
+/// Media's Time To Live (TTL).
+#[derive(Clone, Debug)]
+pub enum TimeToLive {
+    /// Never self-destruct.
+    Unlimited,
+    /// Immediately self-destruct after it's played.
+    ViewableOnce,
+    /// Live the specified duration.
+    ///
+    /// Note: `Duration::ZERO` is equivalent to [`Self::Unlimited`],
+    /// and `Duration::from_secs(i32::MAX)` is equivalent to [`Self::ViewableOnce`].
+    Duration(Duration),
+}
+
+impl TryFrom<TimeToLive> for i32 {
+    type Error = TryFromIntError;
+
+    fn try_from(x: TimeToLive) -> Result<Self, Self::Error> {
+        match x {
+            TimeToLive::Unlimited => Ok(0),
+            TimeToLive::ViewableOnce => Ok(i32::MAX),
+            TimeToLive::Duration(d) => d.as_secs().try_into(),
+        }
+    }
 }
 
 impl InputMedia {
@@ -351,8 +378,12 @@ impl InputMedia {
     /// Not all media supports this feature.
     ///
     /// This method should be called before setting any media, else it won't have any effect.
-    pub fn media_ttl(mut self, seconds: i32) -> Self {
-        self.media_ttl = if seconds < 0 { None } else { Some(seconds) };
+    ///
+    /// # Panics
+    ///
+    /// Panics if the given [`TimeToLive::Duration`] is longer than [`i32::MAX`] seconds.
+    pub fn media_ttl(mut self, ttl: Option<TimeToLive>) -> Self {
+        self.media_ttl = ttl.map(|t| t.try_into().unwrap());
         self
     }
 
@@ -501,7 +532,7 @@ impl InputVideo {
             thumb: None,
             video_cover: None,
             video_timestamp: None,
-            ttl_seconds: None,
+            ttl: None,
             stickers: None,
             round_message: false,
             supports_streaming: true,
@@ -576,13 +607,16 @@ impl InputVideo {
         self
     }
 
-    /// Sets the time to live of self-destructing.
+    /// Change the video's Time To Live (TTL).
     ///
-    /// If `None` or `Some(0)`, it disable self-destruction.
-    /// If `Some(0x7FFFFFFF)`, it self-destruct the video immediately after it's played.
-    /// If `Some(ttl_seconds)` else self-destructs `ttl_seconds` after it's played.
-    pub fn ttl_seconds(mut self, ttl_seconds: Option<Duration>) -> Self {
-        self.ttl_seconds = ttl_seconds.map(|t| t.as_secs().try_into().unwrap());
+    /// This enables you to send a `video` that can only be viewed for a certain
+    /// amount of seconds before it expires.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the given [`TimeToLive::Duration`] is longer than [`i32::MAX`] seconds.
+    pub fn ttl(mut self, ttl: Option<TimeToLive>) -> Self {
+        self.ttl = ttl.map(|t| t.try_into().unwrap());
         self
     }
 
@@ -650,7 +684,7 @@ impl From<InputVideo> for tl::enums::InputMedia {
             thumb,
             video_cover,
             video_timestamp,
-            ttl_seconds,
+            ttl,
             stickers,
             round_message,
             supports_streaming,
@@ -690,7 +724,7 @@ impl From<InputVideo> for tl::enums::InputMedia {
             mime_type,
             attributes,
             stickers,
-            ttl_seconds,
+            ttl_seconds: ttl,
             video_cover,
             video_timestamp,
         }
