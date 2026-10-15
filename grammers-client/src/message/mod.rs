@@ -14,6 +14,7 @@
 mod button;
 mod input_message;
 mod input_rich_message;
+#[allow(clippy::module_inception)]
 mod message;
 mod reactions;
 mod reply_markup;

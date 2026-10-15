@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use grammers_session::storages::ErasedSession;
 use grammers_session::types::{PeerId, PeerInfo, UpdateState, UpdatesState};
-use grammers_session::updates::{MessageBoxes, PrematureEndReason, State, UpdatesLike};
+use grammers_session::updates::{
+    MessageBoxes, PrematureEndReason, State, UpdateAndPeers, UpdatesLike,
+};
 use grammers_tl_types::{self as tl, Deserializable};
 use tokio::sync::mpsc;
 use tokio::time::timeout_at;
@@ -28,11 +30,7 @@ pub struct UpdatesReceiver {
     session: Arc<ErasedSession>,
     message_box: MessageBoxes,
     updates: mpsc::Receiver<UpdatesLike>,
-    buffer: VecDeque<(
-        Vec<(tl::enums::Update, State)>,
-        Vec<tl::enums::User>,
-        Vec<tl::enums::Chat>,
-    )>,
+    buffer: VecDeque<UpdateAndPeers>,
     should_get_state: bool,
 }
 
@@ -257,11 +255,8 @@ impl UpdatesReceiver {
     }
 
     async fn process_socket_updates(&mut self, updates: UpdatesLike) {
-        match self.message_box.process_updates(updates) {
-            Ok((updates, users, chats)) => {
-                self.extend_update_queue(updates, users, chats);
-            }
-            Err(_) => {}
+        if let Ok((updates, users, chats)) = self.message_box.process_updates(updates) {
+            self.extend_update_queue(updates, users, chats);
         }
     }
 

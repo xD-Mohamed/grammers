@@ -51,7 +51,7 @@ pub struct Contact {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Poll {
     pub raw: tl::types::Poll,
-    pub raw_results: tl::types::PollResults,
+    pub raw_results: Box<tl::types::PollResults>,
 }
 
 /// Geo point with latitude and longitude coordinates on the globe.
@@ -86,7 +86,7 @@ pub struct GeoLive {
 /// Instant View web-page previews.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WebPage {
-    pub raw: tl::types::MessageMediaWebPage,
+    pub raw: Box<tl::types::MessageMediaWebPage>,
 }
 
 /// Profile picture of a group.
@@ -572,7 +572,7 @@ impl Poll {
                 tl::enums::Poll::Poll(poll) => poll,
             },
             raw_results: match poll.results {
-                tl::enums::PollResults::Results(results) => *results,
+                tl::enums::PollResults::Results(results) => results,
             },
         }
     }
@@ -793,7 +793,9 @@ impl GeoLive {
 
 impl WebPage {
     pub fn from_raw_media(webpage: tl::types::MessageMediaWebPage) -> Self {
-        Self { raw: webpage }
+        Self {
+            raw: Box::new(webpage),
+        }
     }
 }
 

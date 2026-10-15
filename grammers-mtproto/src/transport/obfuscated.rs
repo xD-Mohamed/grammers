@@ -32,10 +32,10 @@ pub struct Obfuscated<T: Transport + Tagged> {
 }
 
 const FORBIDDEN_FIRST_INTS: [[u8; 4]; 7] = [
-    [b'H', b'E', b'A', b'D'], // HTTP HEAD
-    [b'P', b'O', b'S', b'T'], // HTTP POST
-    [b'G', b'E', b'T', b' '], // HTTP GET
-    [b'O', b'P', b'T', b'I'], // HTTP OPTIONS
+    *b"HEAD",                 // HTTP HEAD
+    *b"POST",                 // HTTP POST
+    *b"GET ",                 // HTTP GET
+    *b"OPTI",                 // HTTP OPTIONS
     [0x16, 0x03, 0x01, 0x02], // TLS handshake
     [0xdd, 0xdd, 0xdd, 0xdd], // Padded Intermediate
     [0xee, 0xee, 0xee, 0xee], // Intermediate

@@ -68,10 +68,10 @@ impl ReplyMarkup {
         Self {
             raw: tl::enums::ReplyMarkup::ReplyInlineMarkup(tl::types::ReplyInlineMarkup {
                 rows: buttons
-                    .into_iter()
+                    .iter()
                     .map(|row| {
                         tl::types::KeyboardInlineButtonRow {
-                            buttons: row.into_iter().map(|button| button.raw.clone()).collect(),
+                            buttons: row.iter().map(|button| button.raw.clone()).collect(),
                         }
                         .into()
                     })
@@ -87,10 +87,7 @@ impl ReplyMarkup {
             raw: tl::enums::ReplyMarkup::ReplyInlineMarkup(tl::types::ReplyInlineMarkup {
                 rows: vec![tl::enums::KeyboardInlineButtonRow::Row(
                     tl::types::KeyboardInlineButtonRow {
-                        buttons: buttons
-                            .into_iter()
-                            .map(|button| button.raw.clone())
-                            .collect(),
+                        buttons: buttons.iter().map(|button| button.raw.clone()).collect(),
                     },
                 )],
                 force_reply: false,
@@ -103,7 +100,7 @@ impl ReplyMarkup {
         Self {
             raw: tl::enums::ReplyMarkup::ReplyInlineMarkup(tl::types::ReplyInlineMarkup {
                 rows: buttons
-                    .into_iter()
+                    .iter()
                     .map(|button| {
                         tl::enums::KeyboardInlineButtonRow::Row(
                             tl::types::KeyboardInlineButtonRow {
@@ -148,10 +145,10 @@ impl ReplyMarkup {
         Self {
             raw: tl::enums::ReplyMarkup::ReplyKeyboardMarkup(tl::types::ReplyKeyboardMarkup {
                 rows: keys
-                    .into_iter()
+                    .iter()
                     .map(|row| {
                         tl::types::KeyboardButtonRow {
-                            buttons: row.into_iter().map(|key| key.raw.clone()).collect(),
+                            buttons: row.iter().map(|key| key.raw.clone()).collect(),
                         }
                         .into()
                     })
@@ -167,7 +164,7 @@ impl ReplyMarkup {
             raw: tl::enums::ReplyMarkup::ReplyKeyboardMarkup(tl::types::ReplyKeyboardMarkup {
                 rows: vec![tl::enums::KeyboardButtonRow::Row(
                     tl::types::KeyboardButtonRow {
-                        buttons: keys.into_iter().map(|key| key.raw.clone()).collect(),
+                        buttons: keys.iter().map(|key| key.raw.clone()).collect(),
                     },
                 )],
                 ..EMPTY_KEYBOARD_MARKUP
@@ -180,7 +177,7 @@ impl ReplyMarkup {
         Self {
             raw: tl::enums::ReplyMarkup::ReplyKeyboardMarkup(tl::types::ReplyKeyboardMarkup {
                 rows: keys
-                    .into_iter()
+                    .iter()
                     .map(|key| {
                         tl::enums::KeyboardButtonRow::Row(tl::types::KeyboardButtonRow {
                             buttons: vec![key.raw.clone()],

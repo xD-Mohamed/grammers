@@ -444,7 +444,7 @@ impl InputAudio {
 
     /// Sets the thumbnail of the audio.
     pub fn thumb(mut self, thumb: Option<Uploaded>) -> Self {
-        self.thumb = thumb.into();
+        self.thumb = thumb;
         self
     }
 

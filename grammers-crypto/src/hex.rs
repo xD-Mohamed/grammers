@@ -30,12 +30,14 @@ pub fn opt_from_hex(hex: &str) -> Option<Vec<u8>> {
         })
     }
 
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
 
     hex.as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(
             |slice| match (hex_to_decimal(slice[0]), hex_to_decimal(slice[1])) {
                 (Some(h), Some(l)) => Some(h * 0x10 + l),

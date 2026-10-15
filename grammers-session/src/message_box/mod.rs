@@ -43,7 +43,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use defs::Key;
-pub use defs::{Gap, MessageBox, MessageBoxes, State, UpdatesLike};
+pub use defs::{Gap, MessageBox, MessageBoxes, State, UpdateAndPeers, UpdatesLike};
 use defs::{LiveEntry, NO_DATE, NO_PTS, NO_SEQ, POSSIBLE_GAP_TIMEOUT, PossibleGap, PtsInfo};
 use grammers_tl_types as tl;
 #[cfg(test)]
@@ -195,8 +195,8 @@ impl MessageBoxes {
     fn set_pts(&mut self, key: Key, pts: i32) {
         if !self.update_entry(key, |entry| entry.pts = pts) {
             self.set_entry(LiveEntry {
-                key: key,
-                pts: pts,
+                key,
+                pts,
                 deadline: next_updates_deadline(),
                 possible_gap: None,
             });
@@ -223,7 +223,7 @@ impl MessageBoxes {
                 .entries
                 .iter()
                 .filter_map(|entry| match entry.key {
-                    Key::Channel(id) => Some(ChannelState { id, pts: entry.pts }.into()),
+                    Key::Channel(id) => Some(ChannelState { id, pts: entry.pts }),
                     _ => None,
                 })
                 .collect(),
@@ -337,7 +337,7 @@ impl MessageBoxes {
         if self.entry(Key::Channel(id)).is_none() {
             self.set_entry(LiveEntry {
                 key: Key::Channel(id),
-                pts: pts,
+                pts,
                 deadline: next_updates_deadline(),
                 possible_gap: None,
             });
@@ -393,7 +393,7 @@ impl MessageBoxes {
     /// In practice, these updates should have also been retrieved through getting difference.
     ///
     /// [updates' documentation]: https://core.telegram.org/api/updates
-    pub fn process_updates(&mut self, updates: UpdatesLike) -> Result<defs::UpdateAndPeers, Gap> {
+    pub fn process_updates(&mut self, updates: UpdatesLike) -> Result<UpdateAndPeers, Gap> {
         trace!(?updates, "processing updates");
 
         let deadline = next_updates_deadline();
@@ -627,7 +627,7 @@ impl MessageBoxes {
     pub fn apply_difference(
         &mut self,
         difference: tl::enums::updates::Difference,
-    ) -> defs::UpdateAndPeers {
+    ) -> UpdateAndPeers {
         trace!(?difference, "applying account difference");
         debug_assert!(
             self.getting_diff_for.contains(&Key::Common)
@@ -702,7 +702,7 @@ impl MessageBoxes {
             users,
             state: tl::enums::updates::State::State(state),
         }: tl::types::updates::Difference,
-    ) -> defs::UpdateAndPeers {
+    ) -> UpdateAndPeers {
         self.date = state.date;
         self.seq = state.seq;
         self.set_pts(Key::Common, state.pts);
@@ -717,7 +717,7 @@ impl MessageBoxes {
         // We need to process those as if they were socket updates to discard any we have already handled.
         // If the channel's difference is planned to be handled, skip its updates
         updates.retain(|update| {
-            let Some(info) = PtsInfo::from_update(&update) else {
+            let Some(info) = PtsInfo::from_update(update) else {
                 return true;
             };
             if let Key::Channel(_) = info.key {
@@ -810,7 +810,7 @@ impl MessageBoxes {
     pub fn apply_channel_difference(
         &mut self,
         difference: tl::enums::updates::ChannelDifference,
-    ) -> defs::UpdateAndPeers {
+    ) -> UpdateAndPeers {
         let (key, channel_id) = self
             .channel_in_diff()
             .expect("applying channel difference to have a channel in getting_diff_for");

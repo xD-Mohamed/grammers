@@ -297,10 +297,10 @@ impl SenderPoolRunner {
             tokio::select! {
                 biased;
                 completion = self.connection_pool.join_next(), if !self.connection_pool.is_empty() => {
-                    if let Err(err) = completion.unwrap() {
-                        if let Ok(reason) = err.try_into_panic() {
-                            panic::resume_unwind(reason);
-                        }
+                    if let Err(err) = completion.unwrap()
+                        && let Ok(reason) = err.try_into_panic()
+                    {
+                        panic::resume_unwind(reason);
                     }
                     self.connections
                         .retain(|connection| !connection.abort_handle.is_finished());

@@ -131,11 +131,8 @@ impl User {
 
     /// Return the last name of this user, if any.
     pub fn last_name(&self) -> Option<&str> {
-        self.user().and_then(|u| {
-            u.last_name
-                .as_deref()
-                .and_then(|name| if name.is_empty() { None } else { Some(name) })
-        })
+        self.user()
+            .and_then(|u| u.last_name.as_deref().filter(|&name| !name.is_empty()))
     }
 
     /// Return the full name of this user.

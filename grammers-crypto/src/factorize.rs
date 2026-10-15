@@ -58,7 +58,7 @@ pub fn factorize(pq: u64) -> (u64, u64) {
 }
 
 fn factorize_with_param(pq: u64, c: u64) -> (u64, u64) {
-    if pq % 2 == 0 {
+    if pq.is_multiple_of(2) {
         return (2, pq / 2);
     }
 

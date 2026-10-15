@@ -525,7 +525,7 @@ impl Encrypted {
     fn store_own_updates(&mut self, msg_id: MsgId, body: &[u8]) {
         match u32::from_bytes(body) {
             Ok(body_id) => {
-                if UPDATE_IDS.iter().any(|&id| body_id == id) {
+                if UPDATE_IDS.contains(&body_id) {
                     self.deserialization.push(Deserialization::OwnUpdate {
                         msg_id,
                         update: body.to_vec(),
@@ -1216,13 +1216,13 @@ impl Mtp for Encrypted {
 
         // Check to see if the next salt can be used already. If it can, drop the current one and,
         // if the next salt is the last one, fetch more.
-        if let Some((start_secs, start_instant)) = self.start_salt_time {
-            if self.salts.len() > 1 {
-                let salt = &self.salts[self.salts.len() - 2];
-                let now = start_secs + start_instant.elapsed().as_secs() as i32;
-                if now >= salt.valid_since + SALT_USE_DELAY {
-                    self.salts.pop();
-                }
+        if let Some((start_secs, start_instant)) = self.start_salt_time
+            && self.salts.len() > 1
+        {
+            let salt = &self.salts[self.salts.len() - 2];
+            let now = start_secs + start_instant.elapsed().as_secs() as i32;
+            if now >= salt.valid_since + SALT_USE_DELAY {
+                self.salts.pop();
             }
         }
 
@@ -1257,18 +1257,18 @@ impl Mtp for Encrypted {
         );
 
         // Serialized requests will always be correctly padded.
-        assert!(request.len() % 4 == 0);
+        assert!(request.len().is_multiple_of(4));
 
         // Payload provided by the user is always considered to be
         // content-related, which means we can apply compression.
         let mut body = request;
         let compressed;
-        if let Some(threshold) = self.compression_threshold {
-            if request.len() >= threshold {
-                compressed = manual_tl::GzipPacked::new(request).to_bytes();
-                if compressed.len() < request.len() {
-                    body = &compressed;
-                }
+        if let Some(threshold) = self.compression_threshold
+            && request.len() >= threshold
+        {
+            compressed = manual_tl::GzipPacked::new(request).to_bytes();
+            if compressed.len() < request.len() {
+                body = &compressed;
             }
         }
 

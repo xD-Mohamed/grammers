@@ -16,6 +16,7 @@ const fn ipv4(a: u8, b: u8, c: u8, d: u8) -> SocketAddrV4 {
     SocketAddrV4::new(Ipv4Addr::new(a, b, c, d), 443)
 }
 
+#[allow(clippy::too_many_arguments)]
 const fn ipv6(a: u16, b: u16, c: u16, d: u16, e: u16, f: u16, g: u16, h: u16) -> SocketAddrV6 {
     SocketAddrV6::new(Ipv6Addr::new(a, b, c, d, e, f, g, h), 443, 0, 0)
 }

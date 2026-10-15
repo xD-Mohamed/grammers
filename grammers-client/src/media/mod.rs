@@ -14,6 +14,7 @@
 mod attributes;
 mod downloadable;
 mod input_media;
+#[allow(clippy::module_inception)]
 mod media;
 mod photo_sizes;
 

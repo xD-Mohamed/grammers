@@ -716,14 +716,14 @@ impl Client {
                 })
                 .await?;
             let tl::enums::messages::ChatFull::Full(chat) = chat;
-            if let tl::enums::ChatFull::Full(chat) = chat.full_chat {
-                if let tl::enums::ChatParticipants::Participants(participants) = chat.participants {
-                    for participant in participants.participants {
-                        if participant.user_id() == user_id {
-                            return Ok(ParticipantPermissions(ParticipantPermissionsInner::Chat(
-                                participant,
-                            )));
-                        }
+            if let tl::enums::ChatFull::Full(chat) = chat.full_chat
+                && let tl::enums::ChatParticipants::Participants(participants) = chat.participants
+            {
+                for participant in participants.participants {
+                    if participant.user_id() == user_id {
+                        return Ok(ParticipantPermissions(ParticipantPermissionsInner::Chat(
+                            participant,
+                        )));
                     }
                 }
             }
@@ -921,8 +921,8 @@ impl Client {
             .map(|peer| (peer.id(), peer))
             .collect::<HashMap<_, _>>();
 
-        if self.0.configuration.auto_cache_peers {
-            if let Err(e) = self
+        if self.0.configuration.auto_cache_peers
+            && let Err(e) = self
                 .0
                 .session
                 .cache_peers(
@@ -932,9 +932,8 @@ impl Client {
                         .collect(),
                 )
                 .await
-            {
-                warn!(?e, "cache_peer fail")
-            }
+        {
+            warn!(?e, "cache_peer fail")
         }
 
         PeerMap {

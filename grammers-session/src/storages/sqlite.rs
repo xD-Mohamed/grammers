@@ -213,7 +213,7 @@ impl SqliteSession {
 
         let home_dc = db
             .fetch_one("SELECT * FROM dc_home LIMIT 1", named_params![], |row| {
-                Ok(row.get::<i32>(0)?)
+                row.get::<i32>(0)
             })
             .await?
             .unwrap_or(DEFAULT_DC);
@@ -414,9 +414,8 @@ impl Session for SqliteSession {
             if peer.auth().is_some() {
                 params.push((":hash".to_owned(), hash));
             }
-            let subtype = subtype.map(|s| s as i64);
-            if subtype.is_some() {
-                params.push((":subtype".to_owned(), subtype.unwrap()));
+            if let Some(subtype) = subtype.map(|s| s as i64) {
+                params.push((":subtype".to_owned(), subtype));
             }
             stmt.execute(params).await?;
             Ok(())

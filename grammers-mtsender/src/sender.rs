@@ -487,13 +487,11 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 } else {
                     updates.push(UpdatesLike::AffectedMessages(affected));
                 }
-                return;
             }
             (Ok(u), _) => {
                 // In the future, we might want to flag "updates produced by the client" somehow.
                 // This would be the starting place to do it.
                 updates.push(u);
-                return;
             }
             (Err(e), _) => {
                 // This shouldn't happen. We just made the request, so they shouldn't be stale.

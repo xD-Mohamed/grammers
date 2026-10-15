@@ -18,6 +18,7 @@ mod inline_send;
 mod message;
 mod message_deletion;
 mod raw;
+#[allow(clippy::module_inception)]
 mod update;
 
 pub use callback_query::CallbackQuery;
