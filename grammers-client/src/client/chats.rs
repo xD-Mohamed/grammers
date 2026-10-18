@@ -1030,3 +1030,52 @@ impl ParticipantPermissions {
         }
     }
 }
+
+#[cfg(test)]
+mod peer_cache_tests {
+    use super::*;
+    use crate::client::ClientConfiguration;
+    use grammers_mtsender::SenderPool;
+    use grammers_session::{Session, storages::MemorySession};
+
+    #[test]
+    fn memory_client_can_disable_peer_cache_without_losing_reply_peers() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                for cache in [false, true] {
+                    let session = Arc::new(MemorySession::default());
+                    let pool = SenderPool::new(Arc::clone(&session), 12345);
+                    // The runner is deliberately never started: this is an offline test.
+                    let client = Client::with_configuration(
+                        pool.handle,
+                        ClientConfiguration {
+                            auto_cache_peers: cache,
+                        },
+                    );
+                    let peers = client
+                        .build_peer_map(
+                            Vec::new(),
+                            vec![
+                                tl::types::ChannelForbidden {
+                                    broadcast: true,
+                                    megagroup: false,
+                                    monoforum: false,
+                                    id: 73,
+                                    access_hash: 123,
+                                    title: "fixture".into(),
+                                    until_date: None,
+                                }
+                                .into(),
+                            ],
+                        )
+                        .await;
+                    let id = PeerId::channel(73).unwrap();
+                    assert!(peers.map.contains_key(&id));
+                    assert_eq!(session.peer(id).await.unwrap().is_some(), cache);
+                }
+            });
+    }
+}

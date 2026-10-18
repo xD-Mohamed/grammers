@@ -1,14 +1,44 @@
 # grammers fork
 
-Current integration (2026-10-13): canonical upstream through
-`49019a579121c9025c728231bdd9bb9b7113c0b5`, including layer 230, is merged.
-See UPSTREAM.md for source compatibility (`Dropped(_)`, new Username flags,
-tracing), retained fork invariants and validation. New upstream peer metadata
-must take precedence while absent fields preserve known data. Tests cover both
-user/channel refreshes and cross-identity rejection. 342 release all-feature
-workspace tests/doctests passed, 24 ignored; strict all-target/all-feature Clippy
-and nine local component benchmarks passed. Consumer code and credentials stay
-outside this public checkout; local tests do not prove deployment performance.
+Current integration (2026-10-18): canonical Codeberg through `633d7fe` is
+merged (layer 230 unchanged). Keep new InputAudio/InputVideo/TimeToLive support,
+including the upstream `media_ttl(Option<TimeToLive>)` API; UPSTREAM.md records
+compatibility and retained fork behavior. Public media fields remain inline.
+No consuming application is modified or deployed by updating this checkout.
+Verified locally:402 release all-feature tests/doctests,15 explicit local
+benchmarks, all-target/all-feature check and strict Clippy. Memory-only importer
+tests also pass without SQLite. No live authorization or deployment was tested.
+
+General efficiency: vector initial reservation follows one valid item and is
+bounded to about 4 KiB with a power-of-two growth base. Preserve generic ZST and
+zero-byte decoders, constructors, error cleanup and normal growth. Full own
+updates skip unneeded request decoding; short-sent/channel outcomes still decode
+needed context before retirement. Obfuscation scratch is stack-backed but wire,
+keys and stream position are unchanged. PERFORMANCE.md includes measured gains
+and small-input tradeoffs; do not claim every input becomes faster.
+
+Session bulk overrides must survive type erasure. Memory batches acquire one
+lock, and self-user lookup follows actual cached self flags. SQLite reads/merges/
+writes each peer in order under the same lock and transaction; duplicate IDs
+must not inherit fields from a rejected earlier write. Preserve per-row error
+reporting/continued writes and return transaction/preparation errors, never panic.
+
+`grammers-session/session-import` is opt-in: exported Pyrogram current/legacy
+strings, Telethon v1 IPv4/IPv6, and gotd Loader v1 JSON. Keep strict bounded format
+validation, home-DC-only keys, test routing, exact saved endpoints, redacted
+errors/Debug, and optional dependency isolation. No files/network/authorization
+are performed while importing. Unknown Telethon endpoints keep only their own
+route; IPv6 imports require the supplied preference. Do not add speculative
+support for SQLite sessions, tdata or custom JSON without explicit format tests.
+
+For memory-only use: `ImportedSession::into_memory_session()` and
+`ClientConfiguration { auto_cache_peers: false }`; MemorySession itself is not a
+cache-disable switch. Self login/explicit cache calls are distinct. The compiled
+`grammers-client/examples/import_session.rs` demonstrates setup and teardown;
+do not run it with real credentials as part of ordinary verification.
+Check optional builds with `cargo test --locked --release -p grammers-session
+--no-default-features --features session-import -- --test-threads=1` and the
+same command without `--features session-import` for the memory-only library.
 
 Raw-RPC audit (2026-10-11): raw request bodies must have a constructor,
 word-aligned length and fit the existing uncompressed MTProto limit, including

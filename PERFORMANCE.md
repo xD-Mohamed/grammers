@@ -1,4 +1,94 @@
-# Polling-oriented fork changes
+# Library efficiency and fork changes
+
+## General library audit (2026-10-18)
+
+Merged canonical Codeberg through `633d7fe` before applying general library
+changes. Reviewed sender/routing/transports, MTProto/crypto, TL types/parser/gen,
+client/session storage, and the CLI integration. Existing crypto, gzip integrity,
+constructor/bounds validation, request lifetime and no-replay rules remain.
+
+Retained changes:
+- TL vectors decode their first item before reserving. Initial capacity is bounded
+  to roughly 4 KiB, rounded down to a power of two; valid larger vectors still
+  grow. Empty vectors allocate nothing; singleton capacity is one rather than
+  the old collector's minimum four. Malformed counts cannot request unbounded
+  initial storage. Custom zero-byte/ZST elements remain supported.
+- Full own-update responses no longer search pending requests and deserialize a
+  discarded SendMessage. Short-sent and affected-channel responses still decode
+  the original request when required, before its retirement. This has no benefit
+  for callers that already disable update delivery.
+- Obfuscation initialization uses two fixed 64-byte array scratch buffers rather
+  than temporary Vecs. Keys, wire header, and cipher position are unchanged.
+  Proxy success paths no longer eagerly format errors. Both concern setup only.
+- Erased sessions forward bulk caching to the actual backend and borrow their Arc
+  instead of incrementing it for each call. Memory batches acquire one lock;
+  SQLite batches reuse SELECT/INSERT statements in one transaction. Reads and
+  writes stay ordered, including duplicate IDs and failed intermediate writes.
+  Setup errors return normally; accepted rows still commit after per-row errors.
+- MemorySession resolves the self-user sentinel from actual cached self metadata.
+  Normal ID lookup stays a direct map lookup. Disabling the client's automatic
+  peer cache is tested independently and does not discard peers in returned data.
+- Schema comment removal now supports Unicode without slicing at invalid UTF-8
+  boundaries. This is a build-time correctness fix, not faster response decoding.
+
+Windows x86-64, rustc 1.94.1, release `-C target-cpu=native`, locked dependencies;
+local synthetic medians with alternating execution order (eight samples unless
+noted). No concurrent build was started during the benchmark run.
+
+| Component fixture | Previous equivalent | Current |
+|---|---:|---:|
+| Decode vector of 8 i32 | 56.7 ns | 30.3 ns |
+| Decode vector of 32 i64 | 113.9 ns | 47.4 ns |
+| Decode vector of 32 generated Peer | 140.9 ns | 74.7 ns |
+| Decode vector of 128 strings | 3.811 us | 3.526 us |
+| Full own update, 32-byte sent message, one pending request | 390.5 ns | 318.5 ns |
+| Full own update, 4 KiB sent message, one pending request | 1.219 us | 0.318 us |
+| Memory batch, 8 peers (seven samples) | 337.4 ns | 126.4 ns |
+| Erased memory batch, 100 peers (seven samples) | 6.211 us | 1.107 us |
+| SQLite batch, 100 existing peers (five samples) | 380.85 us | 129.78 us |
+| Obfuscation cipher setup | 62.0 ns | 53.6 ns |
+| Obfuscation header setup (same current cipher in both) | 232.3 ns | 217.6 ns |
+
+Tradeoffs: empty vector fixtures cost about 3-7 ns more; singleton i64/string/Peer
+fixtures cost about 2-6 ns more, while i32 was slightly faster. Bulk forwarding
+has fixed overhead: an empty erased batch measured 62.3 ns versus 30.6 ns, and
+one-peer SQLite measured 4.53 us versus 3.98 us. These paths preserve backend
+semantics, including empty bulk overrides. The retained improvements target
+nontrivial vectors/batches and reduced copying; this is not a claim that every
+input becomes faster. A first reservation prototype retained 1,360 slots for
+1,024 strings; rounding the bound down removes that regression (1,024 slots).
+
+Vector tests cover constructors, truncation, huge short counts, zero-sized and
+large elements, and drops on errors. Obfuscation fixtures compare exact ciphertext
+and stream advancement. Storage tests cover ordered merges, identities, poisoned
+empty memory storage, transaction/preparation errors, row failures and duplicate
+IDs after a rejected write. Import fixtures use synthetic keys only.
+
+The vector baseline reproduces the former Result-based collector. Own-update
+figures include input cloning and real decoding. Memory baselines reproduce
+sequential calls; the erased baseline is a local legacy-equivalent helper, not
+an old dynamic trait object. SQLite uses an in-memory database with fixtures
+prepared outside timing. These are component measurements, not whole-process
+allocation counts, RSS, CPU savings, network latency or production throughput.
+
+Reproduce (first generate the ignored local lockfile on a fresh clone):
+
+```sh
+cargo test --locked --release --workspace --all-features -- --test-threads=1
+cargo test --locked --release -p grammers-tl-types -p grammers-session -p grammers-mtsender -p grammers-mtproto -p grammers-crypto --all-features benchmark_ -- --ignored --nocapture --test-threads=1
+cargo check --locked --release --workspace --all-targets --all-features
+cargo clippy --locked --release --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --release -p grammers-session --no-default-features --features session-import -- --test-threads=1
+```
+
+Validation: 402 release all-feature tests/doctests passed (30 ignored), all-target/
+all-feature check and strict Clippy passed. Without SQLite, importer tests passed
+51 tests/doctests (one benchmark ignored); the minimal memory library passed 28
+tests (one ignored). All 15 selected local benchmarks passed, including the nine
+existing preservation checks.
+No authenticated Telegram test, consumer change, VPS deployment or live speed
+measurement was performed. Session import is optional and has no request-path
+cost when disabled; see [session documentation](grammers-session/README.md).
 
 ## Upstream integration (2026-10-13)
 

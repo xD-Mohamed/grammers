@@ -73,3 +73,7 @@ required-features = ["grammers-session/sqlite-storage"]
 [[example]]
 name = "send_album"
 required-features = ["grammers-session/sqlite-storage"]
+
+[[example]]
+name = "import_session"
+required-features = ["grammers-session/session-import"]

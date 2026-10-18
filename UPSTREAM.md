@@ -2,34 +2,47 @@
 
 Canonical upstream: https://codeberg.org/Lonami/grammers
 
-Current upstream integration (2026-10-13): merged all nine pending commits through
-`49019a579121c9025c728231bdd9bb9b7113c0b5` from `upstream/master` (layer 230).
-This includes structured tracing, diagnostic dropped-request reasons, HTML date
-formatting without intermediate date allocations, and peer-cache fixes for bulk
-SQLite inserts and fresh metadata replacing older known values.
+Current upstream integration (2026-10-18): merged all three pending commits
+through `633d7fe` from `upstream/master`; the TL schema remains layer 230.
+This adds `InputAudio`, `InputVideo`, typed media lifetime controls, and upstream
+Clippy cleanup. Fork history and licenses are preserved.
 
-Compatibility changes inherited from upstream:
-- `InvocationError::Dropped` is now `Dropped(&'static str)`. Match `Dropped(_)`
-  by variant; the reason is diagnostic text, never a retry/replay decision.
-- Generated `Username` gains `deletable` and `expired` flag booleans. Applications
-  constructing struct literals must initialize them; handwritten TL scanners
-  must revalidate the schema and full-consumption behavior.
-- SDK diagnostics use `tracing`; existing subscribers should filter SDK targets
-  and retain an appropriate global level hint for disabled hot-path diagnostics.
+Compatibility changes inherited from this update:
+- `InputMedia::media_ttl` now accepts `Option<TimeToLive>`, replacing `i32`.
+  Use `None` instead of a negative unset value, `Some(TimeToLive::Unlimited)`
+  for zero, or `Some(TimeToLive::Duration(Duration::from_secs(n)))` for seconds.
+- New audio/video builders and `TimeToLive` are exported from `media`.
+- `UpdateAndPeers` is now a public alias in `grammers_session::updates`.
+- The previous integration's `InvocationError::Dropped(_)`, layer-230 Username
+  flags and structured tracing still apply.
+
+Merge resolutions retain public inline `Poll.raw_results` and `WebPage.raw`
+fields and the targeted Media lint expectation instead of adding public boxing.
+The upstream private `PasswordToken` boxing is retained. Existing module aliases,
+raw-input validation and update-suppression-aware compression are preserved;
+new Clippy syntax was adapted where needed rather than removing fork safeguards.
 
 The merge retains shared raw bodies, synchronous tracked calls, warm routing,
 pre-queue raw validation, opt-in update suppression/ACK batching, TCP_NODELAY,
 abridged framing, bounded growable buffers, minimal valid padding, reused gzip
-state, and permit release before result/error/drop wakeups. It does not add
-consumer-specific behavior to the library. Previously sent work retains its
-reservation until completion or teardown; a missing reply never permits replay.
+state, and permit release before result/error/drop wakeups. Sent work retains
+its reservation until completion or teardown; missing replies never allow replay.
 
-Verification: 342 release all-feature workspace tests/doctests passed (24 ignored),
-all-target/all-feature check and strict Clippy passed. All nine opt-in local
-component benchmarks also ran successfully; none is a live-network speed claim.
-Additional peer-merge regressions cover new values, retained missing values and
-mismatched identities. Isolated downstream validation is kept outside this public
-checkout. No authenticated RPC, application deployment or live speed claim.
+The optional `grammers-session/session-import` feature adds library-level imports
+for exported Pyrogram/Telethon strings and standard gotd Loader JSON. See
+[session usage](grammers-session/README.md) and the compiled
+[in-memory example](grammers-client/examples/import_session.rs).
+Applications may adopt it instead of manual conversion; nothing changes their
+session or peer-cache configuration automatically. Importing does not prove
+that Telegram will accept the key. SQLite files and tdata are outside this API.
+
+No consuming application's manifest, lockfile, source, sessions or deployment
+was changed. In the read-only downstream check, no use of `media_ttl` was found;
+adopting the importer still requires enabling its feature and updating the
+consumer's conversion call sites. Do that as a separate change.
+
+See [PERFORMANCE.md](PERFORMANCE.md) for local measurements, tradeoffs and
+validation scope. No authenticated RPC or application deployment ran.
 
 Initial Codeberg baseline: `82eba650098b54e4c2cb9de83fdab7ea2d21a957`.
 

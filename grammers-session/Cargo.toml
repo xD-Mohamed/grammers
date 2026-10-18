@@ -17,6 +17,7 @@ edition = "2024"
 default = ["sqlite-storage"]
 sqlite-storage = ["dep:libsql"]
 serde = ["dep:serde", "dep:serde_with"]
+session-import = ["dep:base64", "dep:serde", "dep:serde_json", "dep:sha1"]
 
 [dependencies]
 grammers-tl-types = { path = "../grammers-tl-types", version = "0.10.0" }
@@ -27,6 +28,9 @@ tracing.workspace = true
 
 serde = { version = "1", features = ["derive"], optional = true }
 serde_with = { version = "3", features = ["hex"], optional = true }
+base64 = { version = "0.22", optional = true }
+serde_json = { version = "1", optional = true }
+sha1 = { version = "0.10", optional = true }
 
 [dev-dependencies]
 toml = "1.1.2"

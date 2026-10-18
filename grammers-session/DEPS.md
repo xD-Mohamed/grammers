@@ -30,3 +30,16 @@ _Optional._ Provides custom serialization helpers
 ## tokio
 
 Asynchronous locks and runtime for testing asynchronous `Session` implementations.
+
+## base64
+
+_Optional._ Decodes exported Pyrogram, Telethon, and gotd session credentials
+when `session-import` is enabled.
+
+## serde_json
+
+_Optional._ Parses versioned gotd session documents when `session-import` is enabled.
+
+## sha1
+
+_Optional._ Validates gotd's authentication-key fingerprint when `session-import` is enabled.

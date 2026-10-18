@@ -28,6 +28,8 @@
 #![deny(unsafe_code)]
 
 mod dc_options;
+#[cfg(feature = "session-import")]
+pub mod import;
 mod message_box;
 mod peer;
 mod session;
