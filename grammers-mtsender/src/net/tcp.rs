@@ -71,24 +71,30 @@ impl NetStream {
         let proxy = url::Url::parse(proxy_url)
             .map_err(|err| io::Error::new(ErrorKind::InvalidData, err))?;
         let scheme = proxy.scheme();
-        let host = proxy.host().ok_or(io::Error::new(
-            ErrorKind::NotFound,
-            format!("proxy host is missing from url: {}", proxy_url),
-        ))?;
-        let port = proxy.port().ok_or(io::Error::new(
-            ErrorKind::NotFound,
-            format!("proxy port is missing from url: {}", proxy_url),
-        ))?;
+        let host = proxy.host().ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::NotFound,
+                format!("proxy host is missing from url: {}", proxy_url),
+            )
+        })?;
+        let port = proxy.port().ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::NotFound,
+                format!("proxy port is missing from url: {}", proxy_url),
+            )
+        })?;
         let username = proxy.username();
         let password = proxy.password().unwrap_or("");
         let socks_addr = match host {
             Host::Domain(domain) => {
                 let resolver = Resolver::builder_tokio().unwrap().build().unwrap();
                 let response = resolver.lookup_ip(domain).await.map_err(io::Error::other)?;
-                let socks_ip_addr = response.iter().next().ok_or(io::Error::new(
-                    ErrorKind::NotFound,
-                    format!("proxy host did not return any ip address: {}", domain),
-                ))?;
+                let socks_ip_addr = response.iter().next().ok_or_else(|| {
+                    io::Error::new(
+                        ErrorKind::NotFound,
+                        format!("proxy host did not return any ip address: {}", domain),
+                    )
+                })?;
                 SocketAddr::new(socks_ip_addr, port)
             }
             Host::Ipv4(v4) => SocketAddr::new(IpAddr::from(v4), port),
@@ -132,6 +138,35 @@ impl NetStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "proxy")]
+    #[tokio::test]
+    async fn invalid_proxy_urls_preserve_error_kind_and_context_without_connecting() {
+        let address = "127.0.0.1:9".parse().unwrap();
+        for (url, kind, message) in [
+            (
+                "socks5:path",
+                std::io::ErrorKind::NotFound,
+                "proxy host is missing from url: socks5:path",
+            ),
+            (
+                "socks5://127.0.0.1",
+                std::io::ErrorKind::NotFound,
+                "proxy port is missing from url: socks5://127.0.0.1",
+            ),
+            (
+                "unsupported://127.0.0.1:1080",
+                std::io::ErrorKind::ConnectionAborted,
+                "proxy scheme not supported: unsupported",
+            ),
+        ] {
+            let Err(error) = NetStream::connect_proxy_stream(&address, url).await else {
+                panic!("invalid proxy unexpectedly connected");
+            };
+            assert_eq!(error.kind(), kind);
+            assert_eq!(error.to_string(), message);
+        }
+    }
 
     #[tokio::test]
     async fn connections_disable_nagle() {

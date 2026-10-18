@@ -81,7 +81,23 @@ impl Session for MemorySession {
     }
 
     fn peer(&self, peer: PeerId) -> BoxFuture<'_, Result<Option<PeerInfo>, MemorySessionError>> {
-        Box::pin(async move { Ok(self.data()?.peer_infos.get(&peer).cloned()) })
+        Box::pin(async move {
+            let data = self.data()?;
+            Ok(if peer == PeerId::self_user() {
+                data.peer_infos.values().find(|info| {
+                    matches!(
+                        info,
+                        PeerInfo::User {
+                            is_self: Some(true),
+                            ..
+                        }
+                    )
+                })
+            } else {
+                data.peer_infos.get(&peer)
+            }
+            .cloned())
+        })
     }
 
     fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), MemorySessionError>> {
@@ -91,6 +107,24 @@ impl Session for MemorySession {
                 .entry(peer.id())
                 .or_insert_with(|| peer.clone())
                 .extend_info(&peer);
+            Ok(())
+        })
+    }
+
+    fn cache_peers(&self, peers: Vec<PeerInfo>) -> BoxFuture<'_, Result<(), MemorySessionError>> {
+        Box::pin(async move {
+            if peers.is_empty() {
+                return Ok(());
+            }
+            let mut data = self.data()?;
+            for peer in peers {
+                data.peer_infos
+                    .entry(peer.id())
+                    .and_modify(|existing| {
+                        existing.extend_info(&peer);
+                    })
+                    .or_insert(peer);
+            }
             Ok(())
         })
     }
@@ -126,5 +160,98 @@ impl Session for MemorySession {
 
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::PeerAuth;
+
+    #[test]
+    fn self_user_lookup_uses_cached_identity_and_tracks_flag_changes() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let session = MemorySession::default();
+                let identity = PeerInfo::User {
+                    id: 7,
+                    auth: Some(PeerAuth::from_hash(100)),
+                    bot: Some(false),
+                    is_self: Some(true),
+                };
+                session.cache_peer(identity.clone()).await.unwrap();
+                assert_eq!(
+                    session.peer(PeerId::self_user()).await.unwrap(),
+                    Some(identity.clone())
+                );
+                assert_eq!(
+                    session.peer(PeerId::user_unchecked(7)).await.unwrap(),
+                    Some(identity)
+                );
+                session
+                    .cache_peer(PeerInfo::User {
+                        id: 7,
+                        auth: None,
+                        bot: None,
+                        is_self: Some(false),
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(session.peer(PeerId::self_user()).await.unwrap(), None);
+                assert_eq!(
+                    session.peer(PeerId::user_unchecked(7)).await.unwrap(),
+                    Some(PeerInfo::User {
+                        id: 7,
+                        auth: Some(PeerAuth::from_hash(100)),
+                        bot: Some(false),
+                        is_self: Some(false),
+                    })
+                );
+            });
+    }
+
+    #[test]
+    fn self_user_lookup_recognizes_bulk_cached_identity() {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let session = MemorySession::default();
+                let identity = PeerInfo::User {
+                    id: 9,
+                    auth: Some(PeerAuth::from_hash(200)),
+                    bot: Some(true),
+                    is_self: Some(true),
+                };
+                session
+                    .cache_peers(vec![PeerInfo::Chat { id: 9 }, identity.clone()])
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    session.peer(PeerId::self_user()).await.unwrap(),
+                    Some(identity)
+                );
+            });
+    }
+
+    #[test]
+    fn cache_peers_empty_input_succeeds_with_poisoned_storage() {
+        let session = MemorySession::default();
+        let _ = std::panic::catch_unwind(|| {
+            let _data = session.0.lock().unwrap();
+            panic!("poison storage for error-path test");
+        });
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                session.cache_peers(Vec::new()).await.unwrap();
+                assert!(matches!(
+                    session.cache_peers(vec![PeerInfo::Chat { id: 1 }]).await,
+                    Err(MemorySessionError::Poisoned)
+                ));
+            });
     }
 }

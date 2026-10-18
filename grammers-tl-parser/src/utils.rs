@@ -13,19 +13,16 @@ use crc32fast::Hasher;
 /// Removes all single-line comments from the contents.
 pub(crate) fn remove_tl_comments(contents: &str) -> String {
     let mut result = String::with_capacity(contents.len());
-    let mut in_comment = false;
-
-    contents.chars().enumerate().for_each(|(i, c)| {
-        if contents[i..contents.len().min(i + 2)] == *"//" {
-            in_comment = true;
-        } else if in_comment && c == '\n' {
-            in_comment = false;
+    for line in contents.split_inclusive('\n') {
+        if let Some((before_comment, _)) = line.split_once("//") {
+            result.push_str(before_comment);
+            if line.ends_with('\n') {
+                result.push('\n');
+            }
+        } else {
+            result.push_str(line);
         }
-
-        if !in_comment {
-            result.push(c);
-        }
-    });
+    }
 
     result.shrink_to_fit();
     result
@@ -85,6 +82,31 @@ mod tests {
         let input = "no\n//yes\nno\n//yes\nno\n";
         let expected = "no\n\nno\n\nno\n";
         assert_eq!(remove_tl_comments(input), expected);
+    }
+
+    #[test]
+    fn remove_comments_unicode_comment() {
+        assert_eq!(remove_tl_comments("// é\nx#1 = X;"), "\nx#1 = X;");
+    }
+
+    #[test]
+    fn remove_comments_unicode_before_comment() {
+        assert_eq!(remove_tl_comments("é🙂 // 注釈\nβ"), "é🙂 \nβ");
+    }
+
+    #[test]
+    fn remove_comments_preserves_existing_crlf_behavior() {
+        assert_eq!(remove_tl_comments("a\r\nb // c\r\nd\r\n"), "a\r\nb \nd\r\n");
+    }
+
+    #[test]
+    fn remove_comments_without_final_newline() {
+        assert_eq!(remove_tl_comments("a // comment"), "a ");
+    }
+
+    #[test]
+    fn remove_comments_preserves_lone_slashes() {
+        assert_eq!(remove_tl_comments("/\na / b\n/"), "/\na / b\n/");
     }
 
     #[test]

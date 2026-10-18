@@ -115,6 +115,42 @@ where
     }
 }
 
+fn deserialize_own_update<'a>(
+    update: Vec<u8>,
+    request: impl FnOnce() -> Option<&'a [u8]>,
+) -> tl::deserialize::Result<UpdatesLike> {
+    Ok(match deserialize_updates_like(update)? {
+        UpdatesLike::Updates(tl::enums::Updates::UpdateShortSentMessage(update)) => {
+            // Short sent messages need their original text and peer; full updates do not.
+            match request().and_then(deserialize_request::<tl::functions::messages::SendMessage>) {
+                Some(request) => UpdatesLike::ShortSentMessage { request, update },
+                None => UpdatesLike::Updates(tl::enums::Updates::UpdateShortSentMessage(update)),
+            }
+        }
+        UpdatesLike::AffectedMessages(affected) => {
+            // Channel deletions advance the channel's pts, not the common sequence.
+            let channel = request()
+                .and_then(deserialize_request::<tl::functions::channels::DeleteMessages>)
+                .and_then(|request| match request.channel {
+                    tl::enums::InputChannel::Channel(channel) => {
+                        Some((channel.channel_id, request.id))
+                    }
+                    _ => None,
+                });
+            if let Some((channel_id, message_ids)) = channel {
+                UpdatesLike::AffectedChannelMessages {
+                    affected,
+                    channel_id,
+                    message_ids,
+                }
+            } else {
+                UpdatesLike::AffectedMessages(affected)
+            }
+        }
+        update => update,
+    })
+}
+
 /// Manages enqueuing requests, matching them to their response, and IO.
 pub struct Sender<T: Transport, M: Mtp> {
     stream: NetStream,
@@ -528,50 +564,16 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         msg_id: MsgId,
         update: Vec<u8>,
     ) {
-        match (
-            deserialize_updates_like(update),
-            self.peek_request(msg_id).and_then(|request| {
-                deserialize_request::<tl::functions::messages::SendMessage>(&request.body)
-            }),
-        ) {
-            (
-                Ok(UpdatesLike::Updates(tl::enums::Updates::UpdateShortSentMessage(u))),
-                Some(request),
-            ) => {
-                // As far as I know, UpdateShortSentMessage can only occur from SendMessage.
-                // If that's not the case, new variants with additional requests should be added.
-                updates.push(UpdatesLike::ShortSentMessage { request, update: u })
-            }
-            (Ok(UpdatesLike::AffectedMessages(affected)), _) => {
-                // Check if the original request targeted a channel (e.g. channels.deleteMessages).
-                // If so, the pts belongs to that channel, not the common/user pts sequence.
-                let channel_id = self
-                    .peek_request(msg_id)
-                    .and_then(|request| {
-                        deserialize_request::<tl::functions::channels::DeleteMessages>(
-                            &request.body,
-                        )
-                    })
-                    .and_then(|request| match request.channel {
-                        tl::enums::InputChannel::Channel(c) => Some((c.channel_id, request.id)),
-                        _ => None,
-                    });
-                if let Some((channel_id, message_ids)) = channel_id {
-                    updates.push(UpdatesLike::AffectedChannelMessages {
-                        affected,
-                        channel_id,
-                        message_ids,
-                    });
-                } else {
-                    updates.push(UpdatesLike::AffectedMessages(affected));
-                }
-            }
-            (Ok(u), _) => {
+        match deserialize_own_update(update, || {
+            self.peek_request(msg_id)
+                .map(|request| request.body.as_ref())
+        }) {
+            Ok(u) => {
                 // In the future, we might want to flag "updates produced by the client" somehow.
                 // This would be the starting place to do it.
                 updates.push(u);
             }
-            (Err(e), _) => {
+            Err(e) => {
                 // This shouldn't happen. We just made the request, so they shouldn't be stale.
                 // If the request failed with a failed-to-deserialize error, callers will handle it.
                 warn!("telegram responded with updates that failed to be deserialized: {e}")
@@ -697,7 +699,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         }
     }
 
-    fn peek_request(&mut self, msg_id: MsgId) -> Option<&Request> {
+    fn peek_request(&self, msg_id: MsgId) -> Option<&Request> {
         self.requests.iter().find(|request| match request.state {
             RequestState::NotSerialized => false,
             RequestState::Serialized(MsgIdPair { msg_id: m, .. }) => m == msg_id,
@@ -805,6 +807,371 @@ pub async fn connect_with_auth<T: Transport>(
 #[cfg(test)]
 mod optimization_tests {
     use super::*;
+
+    fn send_message_fixture(message: &str) -> Vec<u8> {
+        // Minimal SendMessage wire fixture: silent, self peer, text, random id.
+        let mut body = tl::functions::messages::SendMessage::CONSTRUCTOR_ID
+            .to_le_bytes()
+            .to_vec();
+        (1u32 << 5).serialize(&mut body);
+        tl::enums::InputPeer::PeerSelf.serialize(&mut body);
+        message.to_owned().serialize(&mut body);
+        987654321i64.serialize(&mut body);
+        body
+    }
+
+    fn full_updates_fixture() -> Vec<u8> {
+        tl::enums::Updates::Updates(tl::types::Updates {
+            updates: vec![tl::enums::Update::MessageId(tl::types::UpdateMessageId {
+                id: 73,
+                random_id: 987654321,
+            })],
+            users: Vec::new(),
+            chats: Vec::new(),
+            date: 1234,
+            seq: 19,
+        })
+        .to_bytes()
+    }
+
+    fn short_sent_fixture() -> Vec<u8> {
+        tl::enums::Updates::UpdateShortSentMessage(tl::types::UpdateShortSentMessage {
+            out: true,
+            id: 73,
+            pts: 81,
+            pts_count: 1,
+            date: 1234,
+            media: None,
+            entities: None,
+            ttl_period: Some(60),
+        })
+        .to_bytes()
+    }
+
+    fn fixture_msg_id() -> MsgId {
+        mtp::Plain::new()
+            .push(&mut DequeBuffer::with_capacity(32, 0), &[1; 4])
+            .unwrap()
+    }
+
+    fn saved_request(body: Vec<u8>, msg_id: MsgId) -> Request {
+        Request {
+            body: body.into(),
+            state: RequestState::Sent(MsgIdPair::new(msg_id)),
+            permit: None,
+            result: None,
+        }
+    }
+
+    // Retain the former eager control flow only for the local comparison benchmark.
+    fn deserialize_own_update_eager<'a>(
+        update: Vec<u8>,
+        mut request: impl FnMut() -> Option<&'a [u8]>,
+    ) -> tl::deserialize::Result<UpdatesLike> {
+        match (
+            deserialize_updates_like(update),
+            request().and_then(deserialize_request::<tl::functions::messages::SendMessage>),
+        ) {
+            (
+                Ok(UpdatesLike::Updates(tl::enums::Updates::UpdateShortSentMessage(update))),
+                Some(request),
+            ) => Ok(UpdatesLike::ShortSentMessage { request, update }),
+            (Ok(UpdatesLike::AffectedMessages(affected)), _) => {
+                let channel = request()
+                    .and_then(deserialize_request::<tl::functions::channels::DeleteMessages>)
+                    .and_then(|request| match request.channel {
+                        tl::enums::InputChannel::Channel(channel) => {
+                            Some((channel.channel_id, request.id))
+                        }
+                        _ => None,
+                    });
+                Ok(if let Some((channel_id, message_ids)) = channel {
+                    UpdatesLike::AffectedChannelMessages {
+                        affected,
+                        channel_id,
+                        message_ids,
+                    }
+                } else {
+                    UpdatesLike::AffectedMessages(affected)
+                })
+            }
+            (update, _) => update,
+        }
+    }
+
+    #[test]
+    fn own_full_updates_do_not_consult_the_original_request() {
+        let bytes = full_updates_fixture();
+        let update = deserialize_own_update(bytes.clone(), || {
+            panic!("full updates must not look up or decode request bodies")
+        })
+        .unwrap();
+        assert!(matches!(update, UpdatesLike::Updates(update) if update.to_bytes() == bytes));
+    }
+
+    #[test]
+    fn malformed_own_updates_do_not_consult_the_original_request() {
+        assert!(
+            deserialize_own_update(vec![1; 4], || {
+                panic!("invalid updates must not decode request bodies")
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    #[ignore = "isolated full-update decoding benchmark; synthetic requests, no sockets"]
+    fn benchmark_own_full_update_decoding() {
+        use std::hint::black_box;
+        const ITERATIONS: usize = 25_000;
+        fn lookup(requests: &[Request], msg_id: MsgId) -> Option<&[u8]> {
+            requests
+                .iter()
+                .find(|request| match request.state {
+                    RequestState::NotSerialized => false,
+                    RequestState::Serialized(MsgIdPair { msg_id: id, .. })
+                    | RequestState::Sent(MsgIdPair { msg_id: id, .. }) => id == msg_id,
+                })
+                .map(|request| request.body.as_ref())
+        }
+        let msg_id = fixture_msg_id();
+        let other_msg_id = mtp::Encrypted::build()
+            .finish([0; 256])
+            .push(&mut DequeBuffer::with_capacity(128, 0), &[1; 4])
+            .unwrap();
+        assert_ne!(msg_id, other_msg_id);
+        let update = full_updates_fixture();
+        for message_len in [32, 4096] {
+            let body = send_message_fixture(&"x".repeat(message_len));
+            for pending in [1, 64, 1024] {
+                let mut requests: Vec<_> = (0..pending)
+                    .map(|_| saved_request(body.clone(), other_msg_id))
+                    .collect();
+                requests.last_mut().unwrap().state = RequestState::Sent(MsgIdPair::new(msg_id));
+                // Sanity-check the retained baseline before timing either branch.
+                for optimized in [false, true] {
+                    let result = if optimized {
+                        deserialize_own_update(update.clone(), || lookup(&requests, msg_id))
+                    } else {
+                        deserialize_own_update_eager(update.clone(), || lookup(&requests, msg_id))
+                    }
+                    .unwrap();
+                    assert!(
+                        matches!(result, UpdatesLike::Updates(result) if result.to_bytes() == update)
+                    );
+                }
+                let mut samples = [Vec::new(), Vec::new()];
+                for round in 0..8 {
+                    for optimized in [round % 2 == 0, round % 2 != 0] {
+                        let started = std::time::Instant::now();
+                        for _ in 0..ITERATIONS {
+                            let request = || lookup(black_box(&requests), msg_id);
+                            let result = if optimized {
+                                deserialize_own_update(black_box(update.clone()), request)
+                            } else {
+                                deserialize_own_update_eager(black_box(update.clone()), request)
+                            };
+                            black_box(result.unwrap());
+                        }
+                        samples[usize::from(optimized)]
+                            .push(started.elapsed().as_nanos() as f64 / ITERATIONS as f64);
+                    }
+                }
+                for sample in &mut samples {
+                    sample.sort_by(f64::total_cmp);
+                }
+                println!(
+                    "Full own update / SendMessage text {message_len} bytes / pending {pending}, target last: eager {:.1} ns, lazy {:.1} ns median (includes update input clone and decode)",
+                    (samples[0][3] + samples[0][4]) / 2.0,
+                    (samples[1][3] + samples[1][4]) / 2.0
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn own_full_updates_survive_missing_or_malformed_original_requests() {
+        let (mut sender, _peer) = pair().await;
+        let msg_id = fixture_msg_id();
+        let bytes = full_updates_fixture();
+        for body in [
+            None,
+            Some(send_message_fixture("hello")),
+            Some(vec![1; 4]),
+            Some(
+                tl::functions::messages::SendMessage::CONSTRUCTOR_ID
+                    .to_le_bytes()
+                    .to_vec(),
+            ),
+        ] {
+            sender.requests = body
+                .into_iter()
+                .map(|body| saved_request(body, msg_id))
+                .collect();
+            let mut updates = Vec::new();
+            sender.process_own_update(&mut updates, msg_id, bytes.clone());
+            assert!(
+                matches!(updates.as_slice(), [UpdatesLike::Updates(update)] if update.to_bytes() == bytes)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn own_short_sent_update_keeps_the_original_message_and_fields() {
+        let (mut sender, _peer) = pair().await;
+        let msg_id = fixture_msg_id();
+        let body = send_message_fixture("hello from a short update");
+        sender.requests.push(saved_request(body.clone(), msg_id));
+        let mut updates = Vec::new();
+        sender.process_own_update(&mut updates, msg_id, short_sent_fixture());
+        let [UpdatesLike::ShortSentMessage { request, update }] = updates.as_slice() else {
+            panic!("expected an expanded short-sent message: {updates:?}");
+        };
+        assert_eq!(request.to_bytes(), body);
+        assert!(request.silent);
+        assert_eq!(
+            (
+                update.id,
+                update.pts,
+                update.pts_count,
+                update.date,
+                update.ttl_period
+            ),
+            (73, 81, 1, 1234, Some(60))
+        );
+    }
+
+    #[tokio::test]
+    async fn own_short_sent_update_falls_back_without_a_decodable_send_message() {
+        let (mut sender, _peer) = pair().await;
+        let msg_id = fixture_msg_id();
+        let bytes = short_sent_fixture();
+        for body in [
+            None,
+            Some(vec![1; 4]),
+            Some(
+                tl::functions::messages::SendMessage::CONSTRUCTOR_ID
+                    .to_le_bytes()
+                    .to_vec(),
+            ),
+        ] {
+            sender.requests = body
+                .into_iter()
+                .map(|body| saved_request(body, msg_id))
+                .collect();
+            let mut updates = Vec::new();
+            sender.process_own_update(&mut updates, msg_id, bytes.clone());
+            assert!(
+                matches!(updates.as_slice(), [UpdatesLike::Updates(update)] if update.to_bytes() == bytes)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn own_affected_messages_preserve_channel_identity_and_common_fallback() {
+        let (mut sender, _peer) = pair().await;
+        let msg_id = fixture_msg_id();
+        let affected = tl::enums::messages::AffectedMessages::Messages(
+            tl::types::messages::AffectedMessages {
+                pts: 93,
+                pts_count: 2,
+            },
+        )
+        .to_bytes();
+        let channel_delete = tl::functions::channels::DeleteMessages {
+            channel: tl::enums::InputChannel::Channel(tl::types::InputChannel {
+                channel_id: 456,
+                access_hash: 789,
+            }),
+            id: vec![21, 22],
+        }
+        .to_bytes();
+        let unsupported_channel_delete = tl::functions::channels::DeleteMessages {
+            channel: tl::enums::InputChannel::FromMessage(tl::types::InputChannelFromMessage {
+                peer: tl::enums::InputPeer::PeerSelf,
+                msg_id: 20,
+                channel_id: 456,
+            }),
+            id: vec![21, 22],
+        }
+        .to_bytes();
+        for (body, is_channel) in [
+            (Some(channel_delete), true),
+            (Some(unsupported_channel_delete), false),
+            (Some(send_message_fixture("unrelated")), false),
+            (
+                Some(
+                    tl::functions::channels::DeleteMessages::CONSTRUCTOR_ID
+                        .to_le_bytes()
+                        .to_vec(),
+                ),
+                false,
+            ),
+            (None, false),
+        ] {
+            sender.requests = body
+                .into_iter()
+                .map(|body| saved_request(body, msg_id))
+                .collect();
+            let mut updates = Vec::new();
+            sender.process_own_update(&mut updates, msg_id, affected.clone());
+            if is_channel {
+                assert!(
+                    matches!(updates.as_slice(), [UpdatesLike::AffectedChannelMessages { affected, channel_id: 456, message_ids }]
+                    if affected.pts == 93 && affected.pts_count == 2 && message_ids == &[21, 22])
+                );
+            } else {
+                assert!(
+                    matches!(updates.as_slice(), [UpdatesLike::AffectedMessages(affected)]
+                    if affected.pts == 93 && affected.pts_count == 2)
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn own_update_is_expanded_before_cancelled_request_retirement() {
+        let (mut sender, _peer) = pair().await;
+        let tracker = crate::InvocationTracker::default();
+        let (tx, rx) = oneshot::channel();
+        sender.enqueue_tracked_body(
+            send_message_fixture("retained request").into(),
+            tx,
+            tracker.try_acquire(),
+        );
+        sender.try_fill_write();
+        sender.on_net_write(sender.write_buffer.len()).unwrap();
+        let RequestState::Sent(pair) = &sender.requests[0].state else {
+            panic!("unsent");
+        };
+        let msg_id = pair.msg_id;
+        drop(rx);
+        let bytes = short_sent_fixture();
+        let mut updates = Vec::new();
+        sender.process_own_update(&mut updates, msg_id, bytes.clone());
+        assert_eq!(tracker.stage(), crate::InvocationStage::Sent);
+        assert_eq!(sender.requests.len(), 1);
+        updates.clear();
+        sender.process_mtp_buffer(
+            vec![
+                Deserialization::OwnUpdate {
+                    msg_id,
+                    update: bytes.clone(),
+                },
+                Deserialization::RpcResult(RpcResult {
+                    msg_id,
+                    body: bytes,
+                }),
+            ],
+            &mut updates,
+        );
+        assert!(
+            matches!(updates.as_slice(), [UpdatesLike::ShortSentMessage { request, .. }]
+            if request.message == "retained request")
+        );
+        assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+        assert!(sender.requests.is_empty());
+    }
 
     /// The write time is recorded once, survives the reply and is cleared by
     /// the next reservation.

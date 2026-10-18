@@ -332,6 +332,28 @@ impl Deserializable for f64 {
     }
 }
 
+#[inline]
+fn deserialize_vector<T: Deserializable>(buf: Buffer) -> Result<Vec<T>> {
+    let len = u32::deserialize(buf)?;
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+
+    // The wire count is untrusted. Decode one item before reserving, and cap
+    // the initial allocation while allowing valid vectors to grow normally.
+    let first = T::deserialize(buf)?;
+    let bounded_capacity = (4096 / std::mem::size_of::<T>().max(1)).max(1);
+    // A power-of-two growth base avoids retaining extra capacity for large
+    // vectors whose element size does not divide the byte budget evenly.
+    let initial_capacity = 1usize << bounded_capacity.ilog2();
+    let mut values = Vec::with_capacity(initial_capacity.min(len as usize));
+    values.push(first);
+    for _ in 1..len {
+        values.push(T::deserialize(buf)?);
+    }
+    Ok(values)
+}
+
 impl<T: Deserializable> Deserializable for Vec<T> {
     /// Deserializes a vector of deserializable items according to the
     /// following definition:
@@ -348,13 +370,13 @@ impl<T: Deserializable> Deserializable for Vec<T> {
     ///            vec![0x7f_i32]);
     /// ```
     #[allow(clippy::unreadable_literal)]
+    #[inline]
     fn deserialize(buf: Buffer) -> Result<Self> {
         let id = u32::deserialize(buf)?;
         if id != 0x1cb5c415u32 {
             return Err(Error::UnexpectedConstructor { id });
         }
-        let len = u32::deserialize(buf)?;
-        (0..len).map(|_| T::deserialize(buf)).collect()
+        deserialize_vector(buf)
     }
 }
 
@@ -372,13 +394,9 @@ impl<T: Deserializable> Deserializable for crate::RawVec<T> {
     /// assert_eq!(RawVec::<i32>::from_bytes(&[0x0, 0x0, 0x0, 0x0]).unwrap().0, Vec::<i32>::new());
     /// assert_eq!(RawVec::<i32>::from_bytes(&[0x1, 0x0, 0x0, 0x0, 0x7f, 0x0, 0x0, 0x0]).unwrap().0, vec![0x7f_i32]);
     /// ```
+    #[inline]
     fn deserialize(buf: Buffer) -> Result<Self> {
-        let len = u32::deserialize(buf)?;
-        Ok(Self(
-            (0..len)
-                .map(|_| T::deserialize(buf))
-                .collect::<Result<Vec<T>>>()?,
-        ))
+        deserialize_vector(buf).map(Self)
     }
 }
 
@@ -440,6 +458,266 @@ impl Deserializable for Vec<u8> {
     /// ```
     fn deserialize(buf: Buffer) -> Result<Self> {
         Ok(buf.read_bytes()?.to_vec())
+    }
+}
+
+#[cfg(test)]
+mod vector_tests {
+    use super::*;
+    use crate::{RawVec, Serializable};
+    use std::cell::Cell;
+
+    fn boxed_bytes(count: u32, body: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0x15, 0xc4, 0xb5, 0x1c];
+        bytes.extend(count.to_le_bytes());
+        bytes.extend(body);
+        bytes
+    }
+
+    fn both_vectors<T: Deserializable>(bytes: &[u8]) -> [Result<Vec<T>>; 2] {
+        [
+            Vec::<T>::from_bytes(bytes),
+            RawVec::<T>::from_bytes(&bytes[4..]).map(|value| value.0),
+        ]
+    }
+
+    #[test]
+    fn vectors_preserve_empty_single_and_small_values() {
+        for values in [vec![], vec![7], vec![-1, 0, 1, 2, 3, 4, 5, 6]] {
+            for result in both_vectors::<i32>(&values.to_bytes()) {
+                assert_eq!(result.unwrap(), values);
+            }
+        }
+    }
+
+    #[test]
+    fn vectors_reject_truncation_at_each_element_and_header() {
+        let bytes = vec![11_i32, 22, 33].to_bytes();
+        for cut in 0..bytes.len() {
+            assert_eq!(
+                Vec::<i32>::from_bytes(&bytes[..cut]),
+                Err(Error::UnexpectedEof),
+                "boxed vector truncated at {cut}"
+            );
+        }
+        for cut in 0..bytes.len() - 4 {
+            assert_eq!(
+                RawVec::<i32>::from_bytes(&bytes[4..4 + cut]),
+                Err(Error::UnexpectedEof),
+                "bare vector truncated at {cut}"
+            );
+        }
+    }
+
+    #[test]
+    fn vectors_reject_unbounded_counts_with_short_input() {
+        for body in [&[][..], &[1, 0, 0, 0][..], &[1, 0, 0, 0, 2][..]] {
+            for result in both_vectors::<i32>(&boxed_bytes(u32::MAX, body)) {
+                assert_eq!(result, Err(Error::UnexpectedEof));
+            }
+        }
+    }
+
+    #[test]
+    fn vectors_preserve_constructor_validation() {
+        assert_eq!(
+            Vec::<i32>::from_bytes(&[0, 0, 0, 0]),
+            Err(Error::UnexpectedConstructor { id: 0 })
+        );
+        let bytes = boxed_bytes(2, &[0xb5, 0x75, 0x72, 0x99, 1, 0, 0, 0]);
+        for result in both_vectors::<bool>(&bytes) {
+            assert_eq!(result, Err(Error::UnexpectedConstructor { id: 1 }));
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct ZeroSized;
+
+    impl Deserializable for ZeroSized {
+        fn deserialize(_: Buffer) -> Result<Self> {
+            Ok(Self)
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct ZeroBytes(u32);
+
+    impl Deserializable for ZeroBytes {
+        fn deserialize(_: Buffer) -> Result<Self> {
+            Ok(Self(7))
+        }
+    }
+
+    #[test]
+    fn vectors_accept_zero_sized_and_zero_byte_elements() {
+        for count in [0, 1, 8, 32] {
+            let bytes = boxed_bytes(count, &[]);
+            for result in both_vectors::<ZeroSized>(&bytes) {
+                assert_eq!(result.unwrap().len(), count as usize);
+            }
+            for result in both_vectors::<ZeroBytes>(&bytes) {
+                assert_eq!(
+                    result.unwrap(),
+                    (0..count).map(|_| ZeroBytes(7)).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct LargeElement([u8; 8192]);
+
+    impl Deserializable for LargeElement {
+        fn deserialize(buf: Buffer) -> Result<Self> {
+            Ok(Self([buf.read_byte()?; 8192]))
+        }
+    }
+
+    #[test]
+    fn vectors_accept_elements_larger_than_initial_reservation_cap() {
+        for result in both_vectors::<LargeElement>(&boxed_bytes(2, &[3, 5])) {
+            assert_eq!(
+                result.unwrap(),
+                vec![LargeElement([3; 8192]), LargeElement([5; 8192])]
+            );
+        }
+    }
+
+    thread_local! {
+        static DROPPED: Cell<usize> = const { Cell::new(0) };
+    }
+
+    #[derive(Debug)]
+    struct DropElement;
+
+    impl Deserializable for DropElement {
+        fn deserialize(buf: Buffer) -> Result<Self> {
+            bool::deserialize(buf).map(|_| Self)
+        }
+    }
+
+    impl Drop for DropElement {
+        fn drop(&mut self) {
+            DROPPED.set(DROPPED.get() + 1);
+        }
+    }
+
+    #[test]
+    fn vectors_drop_completed_elements_on_first_middle_and_last_errors() {
+        for valid in 0..3 {
+            for boxed in [false, true] {
+                DROPPED.set(0);
+                let mut body = Vec::new();
+                for _ in 0..valid {
+                    body.extend([0xb5, 0x75, 0x72, 0x99]);
+                }
+                body.extend([1, 0, 0, 0]);
+                body.extend([0xb5, 0x75, 0x72, 0x99]);
+                let bytes = boxed_bytes(3, &body);
+                let mut cursor = Cursor::from_slice(if boxed { &bytes } else { &bytes[4..] });
+                let result = if boxed {
+                    Vec::<DropElement>::deserialize(&mut cursor)
+                } else {
+                    RawVec::<DropElement>::deserialize(&mut cursor).map(|value| value.0)
+                };
+                assert!(matches!(
+                    result,
+                    Err(Error::UnexpectedConstructor { id: 1 })
+                ));
+                assert_eq!(DROPPED.get(), valid);
+                assert_eq!(cursor.pos(), (if boxed { 8 } else { 4 }) + (valid + 1) * 4);
+            }
+        }
+    }
+
+    fn collect_vector<T: Deserializable>(bytes: &[u8]) -> Vec<T> {
+        // Preserve the old decoder's Result boundary and constructor validation.
+        fn deserialize<T: Deserializable>(buf: Buffer) -> Result<Vec<T>> {
+            let id = u32::deserialize(buf)?;
+            if id != 0x1cb5_c415 {
+                return Err(Error::UnexpectedConstructor { id });
+            }
+            let len = u32::deserialize(buf)?;
+            (0..len).map(|_| T::deserialize(buf)).collect()
+        }
+        deserialize(&mut Cursor::from_slice(bytes)).unwrap()
+    }
+
+    fn reserved_vector<T: Deserializable>(bytes: &[u8]) -> Vec<T> {
+        Vec::<T>::from_bytes(bytes).unwrap()
+    }
+
+    fn benchmark_vector<T: Deserializable + Serializable>(name: &str, values: &[T]) {
+        use std::{hint::black_box, time::Instant};
+
+        fn elapsed<T>(bytes: &[u8], iterations: usize, decode: fn(&[u8]) -> Vec<T>) -> f64 {
+            let start = Instant::now();
+            for _ in 0..iterations {
+                black_box(decode(black_box(bytes)));
+            }
+            start.elapsed().as_secs_f64() * 1e9 / iterations as f64
+        }
+
+        let mut bytes = boxed_bytes(values.len() as u32, &[]);
+        for value in values {
+            value.serialize(&mut bytes);
+        }
+        let iterations = (250_000 / values.len().max(1)).clamp(2_000, 250_000);
+        let mut collect_times = [0.0_f64; 8];
+        let mut reserved_times = [0.0_f64; 8];
+        for _ in 0..100 {
+            black_box(collect_vector::<T>(&bytes));
+            black_box(reserved_vector::<T>(&bytes));
+        }
+        for sample in 0..8 {
+            if sample % 2 == 0 {
+                collect_times[sample] = elapsed(&bytes, iterations, collect_vector::<T>);
+                reserved_times[sample] = elapsed(&bytes, iterations, reserved_vector::<T>);
+            } else {
+                reserved_times[sample] = elapsed(&bytes, iterations, reserved_vector::<T>);
+                collect_times[sample] = elapsed(&bytes, iterations, collect_vector::<T>);
+            }
+        }
+        collect_times.sort_by(f64::total_cmp);
+        reserved_times.sort_by(f64::total_cmp);
+        let collect_ns = (collect_times[3] + collect_times[4]) / 2.0;
+        let reserved_ns = (reserved_times[3] + reserved_times[4]) / 2.0;
+        println!(
+            "{name:>8} count={:>4}: collect={collect_ns:>9.1} ns reserved={reserved_ns:>9.1} ns ratio={:.3} capacity={}/{}",
+            values.len(),
+            reserved_ns / collect_ns,
+            collect_vector::<T>(&bytes).capacity(),
+            reserved_vector::<T>(&bytes).capacity()
+        );
+    }
+
+    #[test]
+    #[ignore = "local release microbenchmark; no network or live performance claim"]
+    fn benchmark_vector_deserialization() {
+        if cfg!(debug_assertions) {
+            panic!("run this benchmark with --release");
+        }
+        for count in [0, 1, 8, 32, 128, 1024] {
+            benchmark_vector("i32", &(0..count).collect::<Vec<i32>>());
+            benchmark_vector("i64", &(0..i64::from(count)).collect::<Vec<i64>>());
+            benchmark_vector(
+                "string",
+                &(0..count)
+                    .map(|index| format!("fixture-{index:04}"))
+                    .collect::<Vec<_>>(),
+            );
+            #[cfg(feature = "tl-api")]
+            benchmark_vector(
+                "Peer",
+                &(0..count)
+                    .map(|index| {
+                        crate::enums::Peer::User(crate::types::PeerUser {
+                            user_id: i64::from(index),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
     }
 }
 

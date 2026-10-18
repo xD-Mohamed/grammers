@@ -83,6 +83,36 @@ enum PeerSubtype {
 }
 
 impl Database {
+    fn peer_from_row(peer: PeerId, row: libsql::Row) -> libsql::Result<PeerInfo> {
+        let subtype = row.get::<Option<i64>>(2)?.map(|s| s as u8);
+        Ok(match peer.kind() {
+            PeerKind::User => PeerInfo::User {
+                id: PeerId::user_unchecked(row.get::<i64>(0)?).bare_id_unchecked(),
+                auth: row.get::<Option<i64>>(1)?.map(PeerAuth::from_hash),
+                bot: subtype.map(|s| s & PeerSubtype::UserBot as u8 != 0),
+                is_self: subtype.map(|s| s & PeerSubtype::UserSelf as u8 != 0),
+            },
+            PeerKind::Chat => PeerInfo::Chat {
+                id: peer.bare_id_unchecked(),
+            },
+            PeerKind::Channel => PeerInfo::Channel {
+                id: peer.bare_id_unchecked(),
+                auth: row.get::<Option<i64>>(1)?.map(PeerAuth::from_hash),
+                kind: subtype.and_then(|s| {
+                    if (s & PeerSubtype::Gigagroup as u8) == PeerSubtype::Gigagroup as u8 {
+                        Some(ChannelKind::Gigagroup)
+                    } else if s & PeerSubtype::Broadcast as u8 != 0 {
+                        Some(ChannelKind::Broadcast)
+                    } else if s & PeerSubtype::Megagroup as u8 != 0 {
+                        Some(ChannelKind::Megagroup)
+                    } else {
+                        None
+                    }
+                }),
+            },
+        })
+    }
+
     async fn init(&self) -> libsql::Result<()> {
         let mut user_version: i64 = self
             .fetch_one("PRAGMA user_version", params![], |row| row.get(0))
@@ -329,35 +359,7 @@ impl Session for SqliteSession {
     fn peer(&self, peer: PeerId) -> BoxFuture<'_, Result<Option<PeerInfo>, SqliteSessionError>> {
         Box::pin(async move {
             let db = self.database.lock().await;
-            let map_row = |row: libsql::Row| {
-                let subtype = row.get::<Option<i64>>(2)?.map(|s| s as u8);
-                Ok(match peer.kind() {
-                    PeerKind::User => PeerInfo::User {
-                        id: PeerId::user_unchecked(row.get::<i64>(0)?).bare_id_unchecked(),
-                        auth: row.get::<Option<i64>>(1)?.map(PeerAuth::from_hash),
-                        bot: subtype.map(|s| s & PeerSubtype::UserBot as u8 != 0),
-                        is_self: subtype.map(|s| s & PeerSubtype::UserSelf as u8 != 0),
-                    },
-                    PeerKind::Chat => PeerInfo::Chat {
-                        id: peer.bare_id_unchecked(),
-                    },
-                    PeerKind::Channel => PeerInfo::Channel {
-                        id: peer.bare_id_unchecked(),
-                        auth: row.get::<Option<i64>>(1)?.map(PeerAuth::from_hash),
-                        kind: subtype.and_then(|s| {
-                            if (s & PeerSubtype::Gigagroup as u8) == PeerSubtype::Gigagroup as u8 {
-                                Some(ChannelKind::Gigagroup)
-                            } else if s & PeerSubtype::Broadcast as u8 != 0 {
-                                Some(ChannelKind::Broadcast)
-                            } else if s & PeerSubtype::Megagroup as u8 != 0 {
-                                Some(ChannelKind::Megagroup)
-                            } else {
-                                None
-                            }
-                        }),
-                    },
-                })
-            };
+            let map_row = |row| Database::peer_from_row(peer, row);
 
             Ok(if let Some(peer_id) = peer.bot_api_dialog_id() {
                 db.fetch_one(
@@ -379,14 +381,21 @@ impl Session for SqliteSession {
 
     fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), SqliteSessionError>> {
         Box::pin(async move {
-            let peer = if let Some(mut existing_peer) = self.peer(peer.id()).await? {
+            let db = self.database.lock().await;
+            let existing = db
+                .fetch_one(
+                    "SELECT * FROM peer_info WHERE peer_id = :peer_id LIMIT 1",
+                    named_params! {":peer_id": peer.id().bot_api_dialog_id_unchecked()},
+                    |row| Database::peer_from_row(peer.id(), row),
+                )
+                .await?;
+            let peer = if let Some(mut existing_peer) = existing {
                 existing_peer.extend_info(&peer);
                 existing_peer
             } else {
                 peer
             };
 
-            let db = self.database.lock().await;
             let stmt =
                 db.0.prepare("INSERT OR REPLACE INTO peer_info VALUES (:peer_id, :hash, :subtype)")
                     .await?;
@@ -414,8 +423,7 @@ impl Session for SqliteSession {
             if peer.auth().is_some() {
                 params.push((":hash".to_owned(), hash));
             }
-            let subtype = subtype.map(|s| s as i64);
-            if let Some(subtype) = subtype {
+            if let Some(subtype) = subtype.map(|s| s as i64) {
                 params.push((":subtype".to_owned(), subtype));
             }
             stmt.execute(params).await?;
@@ -425,29 +433,39 @@ impl Session for SqliteSession {
 
     fn cache_peers(&self, peers: Vec<PeerInfo>) -> BoxFuture<'_, Result<(), SqliteSessionError>> {
         Box::pin(async move {
+            if peers.is_empty() {
+                return Ok(());
+            }
             let mut result = Ok(());
-            let mut extended_peers = Vec::with_capacity(peers.len());
+            let db = self.database.lock().await;
+            let tx = db.0.transaction().await?;
+            let mut select = tx
+                .prepare("SELECT * FROM peer_info WHERE peer_id = :peer_id LIMIT 1")
+                .await?;
+            let stmt = tx
+                .prepare("INSERT OR REPLACE INTO peer_info VALUES (:peer_id, :hash, :subtype)")
+                .await?;
             for peer in peers {
-                extended_peers.push(match self.peer(peer.id()).await {
-                    Ok(Some(mut existing_peer)) => {
+                // Read after each prior write so duplicate IDs see only accepted updates.
+                // Retain the database lock across reads and writes to avoid lost metadata.
+                let existing = select
+                    .query_row(named_params! {
+                        ":peer_id": peer.id().bot_api_dialog_id_unchecked(),
+                    })
+                    .await
+                    .and_then(|row| Database::peer_from_row(peer.id(), row));
+                select.reset();
+                let peer = match existing {
+                    Ok(mut existing_peer) => {
                         existing_peer.extend_info(&peer);
                         existing_peer
                     }
-                    Ok(None) => peer,
+                    Err(libsql::Error::QueryReturnedNoRows) => peer,
                     Err(e) => {
-                        result = Err(e);
+                        result = Err(e.into());
                         peer
                     }
-                });
-            }
-
-            let db = self.database.lock().await;
-            let tx = db.0.transaction().await.unwrap();
-            let stmt = tx
-                .prepare("INSERT OR REPLACE INTO peer_info VALUES (:peer_id, :hash, :subtype)")
-                .await
-                .unwrap();
-            for peer in extended_peers {
+                };
                 let subtype = match peer {
                     PeerInfo::User { bot, is_self, .. } => {
                         match (bot.unwrap_or_default(), is_self.unwrap_or_default()) {
@@ -635,6 +653,134 @@ mod tests {
     use {DcOption, KNOWN_DC_OPTIONS, PeerInfo, Session, UpdateState};
 
     use super::*;
+
+    #[test]
+    fn cache_peers_reports_row_error_and_commits_other_peers() {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let session = SqliteSession::open(":memory:").await.unwrap();
+            session.database.lock().await.0.execute(
+                "CREATE TRIGGER reject_peer BEFORE INSERT ON peer_info WHEN NEW.peer_id = 1 BEGIN SELECT RAISE(FAIL, 'rejected peer'); END", params![]
+            ).await.unwrap();
+            assert!(matches!(session.cache_peers(vec![PeerInfo::Chat { id: 1 }, PeerInfo::User { id: 1, auth: None, bot: None, is_self: None }, PeerInfo::Chat { id: 2 }]).await, Err(SqliteSessionError::Sql(_))));
+            assert_eq!(session.peer(PeerId::chat_unchecked(2)).await.unwrap(), Some(PeerInfo::Chat { id: 2 }));
+        });
+    }
+
+    #[test]
+    fn cache_peers_duplicate_after_row_error_retains_only_committed_metadata() {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let session = SqliteSession::open(":memory:").await.unwrap();
+            session.database.lock().await.0.execute(
+                "CREATE TRIGGER reject_hash BEFORE INSERT ON peer_info WHEN NEW.hash = 999 BEGIN SELECT RAISE(FAIL, 'rejected hash'); END", params![]
+            ).await.unwrap();
+            let result = session.cache_peers(vec![
+                PeerInfo::Channel { id: 7, auth: Some(PeerAuth::from_hash(200)), kind: Some(ChannelKind::Megagroup) },
+                PeerInfo::Channel { id: 7, auth: Some(PeerAuth::from_hash(999)), kind: None },
+                PeerInfo::Channel { id: 7, auth: None, kind: Some(ChannelKind::Gigagroup) },
+            ]).await;
+            assert!(matches!(result, Err(SqliteSessionError::Sql(_))));
+            assert_eq!(session.peer(PeerId::channel_unchecked(7)).await.unwrap(), Some(PeerInfo::Channel {
+                id: 7, auth: Some(PeerAuth::from_hash(200)), kind: Some(ChannelKind::Gigagroup),
+            }));
+        });
+    }
+
+    #[test]
+    #[ignore = "local in-memory SQLite microbenchmark; run explicitly in release mode"]
+    fn benchmark_sqlite_cache_peers_transaction() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            for size in [0, 1, 8, 100, 1000] {
+                let peers: Vec<_> = (1..=size).map(|id| PeerInfo::Channel {
+                    id: id as i64,
+                    auth: Some(PeerAuth::from_hash(id as i64)),
+                    kind: Some(ChannelKind::Broadcast),
+                }).collect();
+                let iterations = (1000 / size.max(1)).clamp(3, 200);
+                let mut samples: [Vec<f64>; 2] = std::array::from_fn(|_| Vec::new());
+                for sample in 0..5 {
+                    for offset in 0..2 {
+                        let variant = (sample + offset) % 2;
+                        let session = SqliteSession::open(":memory:").await.unwrap();
+                        session.cache_peers(peers.clone()).await.unwrap();
+                        // Database creation, schema, fixture cloning, and initial inserts are excluded.
+                        let batches = vec![peers.clone(); iterations];
+                        let started = Instant::now();
+                        for batch in batches {
+                            if variant == 0 {
+                                for peer in black_box(batch) {
+                                    session.cache_peer(peer).await.unwrap();
+                                }
+                            } else {
+                                session.cache_peers(black_box(batch)).await.unwrap();
+                            }
+                        }
+                        samples[variant].push(started.elapsed().as_secs_f64() * 1e6 / iterations as f64);
+                    }
+                }
+                for sample in &mut samples {
+                    sample.sort_by(f64::total_cmp);
+                }
+                eprintln!("peers={size} iterations={iterations} us/batch: SQLite sequential={:.2} transaction={:.2}", samples[0][2], samples[1][2]);
+            }
+        });
+    }
+
+    #[test]
+    fn cache_peers_returns_transaction_error_without_panicking() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let session = SqliteSession::open(":memory:").await.unwrap();
+                let transaction = session.database.lock().await.0.transaction().await.unwrap();
+                assert!(matches!(
+                    session.cache_peers(vec![PeerInfo::Chat { id: 1 }]).await,
+                    Err(SqliteSessionError::Sql(_))
+                ));
+                transaction.rollback().await.unwrap();
+            });
+    }
+
+    #[test]
+    fn cache_peers_returns_prepare_error_without_panicking() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let session = SqliteSession::open(":memory:").await.unwrap();
+                session
+                    .database
+                    .lock()
+                    .await
+                    .0
+                    .execute("DROP TABLE peer_info", params![])
+                    .await
+                    .unwrap();
+                assert!(matches!(
+                    session.cache_peers(vec![PeerInfo::Chat { id: 1 }]).await,
+                    Err(SqliteSessionError::Sql(_))
+                ));
+            });
+    }
+
+    #[test]
+    fn cache_peers_empty_input_does_not_require_database_transaction() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let session = SqliteSession::open(":memory:").await.unwrap();
+                let transaction = session.database.lock().await.0.transaction().await.unwrap();
+                session.cache_peers(Vec::new()).await.unwrap();
+                transaction.rollback().await.unwrap();
+            });
+    }
 
     #[test]
     fn exercise_sqlite_session() {
