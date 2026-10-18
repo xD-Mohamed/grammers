@@ -21,7 +21,7 @@ mod photo_sizes;
 pub use attributes::Attribute;
 pub use downloadable::Downloadable;
 use grammers_tl_types as tl;
-pub use input_media::InputMedia;
+pub use input_media::{InputAudio, InputMedia, InputVideo, TimeToLive};
 pub use model::{
     ChatPhoto, Contact, Dice, Document, Geo, GeoLive, Media, Photo, Poll, Sticker, Uploaded, Venue,
     WebPage,

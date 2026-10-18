@@ -28,7 +28,7 @@ pub(crate) fn group_by_ns(
             result.entry(ns.into()).or_default().push(d);
         });
 
-    for (_, vec) in result.iter_mut() {
+    for vec in result.values_mut() {
         vec.sort_by_key(|d| &d.name);
     }
     result
@@ -49,7 +49,7 @@ pub(crate) fn group_types_by_ns(definitions: &[Definition]) -> HashMap<Option<St
                 .push(&d.ty);
         });
 
-    for (_, vec) in result.iter_mut() {
+    for vec in result.values_mut() {
         vec.sort_by_key(|t| &t.name);
         vec.dedup();
     }

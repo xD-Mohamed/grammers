@@ -63,12 +63,14 @@ pub struct LoginToken {
 /// Password token needed to complete a 2FA login.
 #[derive(Debug)]
 pub struct PasswordToken {
-    pub(crate) password: tl::types::account::Password,
+    pub(crate) password: Box<tl::types::account::Password>,
 }
 
 impl PasswordToken {
     pub fn new(password: tl::types::account::Password) -> Self {
-        PasswordToken { password }
+        PasswordToken {
+            password: Box::new(password),
+        }
     }
 
     pub fn hint(&self) -> Option<&str> {

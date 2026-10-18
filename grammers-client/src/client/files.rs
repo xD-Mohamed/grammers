@@ -60,7 +60,7 @@ impl DownloadIter {
     pub fn chunk_size(mut self, size: i32) -> Self {
         assert!((MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE).contains(&size) && size % MIN_CHUNK_SIZE == 0);
         if let DownloadIterVariant::Request(request) = &mut self.variant {
-            request.limit = size
+            request.limit = size;
         }
         self
     }
@@ -70,7 +70,7 @@ impl DownloadIter {
     /// any value you want.
     pub fn skip_chunks(mut self, n: i32) -> Self {
         if let DownloadIterVariant::Request(request) = &mut self.variant {
-            request.offset += request.limit as i64 * (n as i64)
+            request.offset += request.limit as i64 * (n as i64);
         }
         self
     }

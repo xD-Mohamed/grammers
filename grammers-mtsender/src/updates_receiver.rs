@@ -11,7 +11,9 @@ use std::sync::Arc;
 
 use grammers_session::storages::ErasedSession;
 use grammers_session::types::{PeerId, PeerInfo, UpdateState, UpdatesState};
-use grammers_session::updates::{MessageBoxes, PrematureEndReason, State, UpdatesLike};
+use grammers_session::updates::{
+    MessageBoxes, PrematureEndReason, State, UpdateAndPeers, UpdatesLike,
+};
 use grammers_tl_types::{self as tl, Deserializable};
 use tokio::sync::mpsc;
 use tokio::time::timeout_at;
@@ -23,18 +25,12 @@ use crate::{InvocationError, SenderPoolHandle, UpdatesConfiguration};
 const BOT_CHANNEL_DIFF_LIMIT: i32 = 100000;
 const USER_CHANNEL_DIFF_LIMIT: i32 = 100;
 
-type BufferedUpdates = (
-    Vec<(tl::enums::Update, State)>,
-    Vec<tl::enums::User>,
-    Vec<tl::enums::Chat>,
-);
-
 pub struct UpdatesReceiver {
     handle: SenderPoolHandle,
     session: Arc<ErasedSession>,
     message_box: MessageBoxes,
     updates: mpsc::Receiver<UpdatesLike>,
-    buffer: VecDeque<BufferedUpdates>,
+    buffer: VecDeque<UpdateAndPeers>,
     should_get_state: bool,
 }
 

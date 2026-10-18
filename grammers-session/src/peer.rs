@@ -186,8 +186,8 @@ impl PeerId {
     pub fn from_bot_api_dialog_id(id: i64) -> Option<Self> {
         if (1..=0xffffffffff).contains(&id)
             || (-999999999999..=-1).contains(&id)
-            || ((-1997852516352..=-1000000000001).contains(&id)
-                || (-4000000000000..=-2002147483649).contains(&id))
+            || (-1997852516352..=-1000000000001).contains(&id)
+            || (-4000000000000..=-2002147483649).contains(&id)
         {
             Some(Self(id))
         } else {

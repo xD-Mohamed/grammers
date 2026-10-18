@@ -39,11 +39,11 @@ fn find_layer(file: &str) -> io::Result<Option<i32>> {
 
     Ok(BufReader::new(File::open(file)?).lines().find_map(|line| {
         let line = line.unwrap();
-        if !line.trim().starts_with("//") {
-            return None;
-        }
-        let pos = line.find(LAYER_MARK)?;
-        line[pos + LAYER_MARK.len()..].trim().parse().ok()
+        let trimmed = line.trim();
+        trimmed
+            .strip_prefix("//")
+            .and_then(|s| s.split_once(LAYER_MARK))
+            .and_then(|(_, s)| s.trim().parse().ok())
     }))
 }
 
