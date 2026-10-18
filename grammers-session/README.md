@@ -49,7 +49,10 @@ fn imported_client(exported_session: &str, api_id: i32)
 ```
 
 The caller supplies its own application API ID. Only current Pyrogram strings
-contain an API ID; Telethon and gotd do not contain one. Run the returned pool's
+have an API ID field; a zero value means unavailable source metadata and is
+returned as `None` by `ImportedSession::api_id()`. Positive values must fit in
+`i32`. Legacy Pyrogram, Telethon and gotd do not contain this field. This optional
+metadata does not replace the caller's configured API ID. Run the returned pool's
 runner as usual when ready to connect. The existing home-DC key is reused; no
 new authorization is performed by the importer. Normal connection and protocol
 initialization are still required, and the key must remain accepted by Telegram.

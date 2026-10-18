@@ -97,6 +97,41 @@ fn pyrogram_imports_current_and_both_legacy_formats_with_optional_padding() {
 }
 
 #[test]
+fn pyrogram_zero_application_id_is_missing_metadata() {
+    for test_mode in [false, true] {
+        let mut bytes = pyrogram_bytes(true, true, test_mode);
+        bytes[1..5].fill(0);
+        for input in [URL_SAFE.encode(&bytes), URL_SAFE_NO_PAD.encode(&bytes)] {
+            let imported = ImportedSession::from_pyrogram(&input).unwrap();
+            assert_eq!(imported.api_id(), None);
+            assert_eq!(imported.dc_id(), 2);
+            assert_eq!(imported.user_id(), Some(9_876_543_210));
+            assert_eq!(imported.is_bot(), Some(true));
+            assert_eq!(imported.test_mode(), Some(test_mode));
+            assert_home_key_only(imported);
+        }
+    }
+}
+
+#[test]
+fn pyrogram_application_id_metadata_respects_signed_range() {
+    for id in [1_u32, i32::MAX as u32] {
+        let mut bytes = pyrogram_bytes(true, true, false);
+        bytes[1..5].copy_from_slice(&id.to_be_bytes());
+        let imported = ImportedSession::from_pyrogram(&URL_SAFE_NO_PAD.encode(bytes)).unwrap();
+        assert_eq!(imported.api_id(), Some(id as i32));
+    }
+    for id in [i32::MAX as u32 + 1, u32::MAX] {
+        let mut bytes = pyrogram_bytes(true, true, false);
+        bytes[1..5].copy_from_slice(&id.to_be_bytes());
+        assert!(matches!(
+            ImportedSession::from_pyrogram(&URL_SAFE_NO_PAD.encode(bytes)),
+            Err(ImportError::InvalidApiId)
+        ));
+    }
+}
+
+#[test]
 fn pyrogram_test_sessions_have_only_test_routes() {
     let input = URL_SAFE_NO_PAD.encode(pyrogram_bytes(true, true, true));
     let imported = ImportedSession::from_pyrogram(&input).unwrap();
@@ -125,20 +160,20 @@ fn pyrogram_rejects_invalid_fields_and_lengths() {
         bytes[index] = value;
         cases.push(bytes);
     }
-    for range in [1..5, 6..262, 262..270] {
+    for range in [6..262, 262..270] {
         let mut bytes = original.clone();
         bytes[range].fill(0);
         cases.push(bytes);
     }
-    let mut api_overflow = original.clone();
-    api_overflow[1..5].copy_from_slice(&u32::MAX.to_be_bytes());
-    cases.push(api_overflow);
     cases.push(original[..270].to_vec());
     let mut trailing = original.clone();
     trailing.push(0);
     cases.push(trailing);
-    for bytes in cases {
-        assert!(ImportedSession::from_pyrogram(&URL_SAFE_NO_PAD.encode(bytes)).is_err());
+    for mut bytes in cases {
+        assert!(ImportedSession::from_pyrogram(&URL_SAFE_NO_PAD.encode(&bytes)).is_err());
+        // Missing optional metadata must not bypass structural/key validation.
+        bytes[1..5].fill(0);
+        assert!(ImportedSession::from_pyrogram(&URL_SAFE_NO_PAD.encode(&bytes)).is_err());
     }
     assert!(ImportedSession::from_pyrogram("secret-not-base64!").is_err());
 }

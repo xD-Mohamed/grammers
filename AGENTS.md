@@ -31,6 +31,11 @@ are performed while importing. Unknown Telethon endpoints keep only their own
 route; IPv6 imports require the supplied preference. Do not add speculative
 support for SQLite sessions, tdata or custom JSON without explicit format tests.
 
+Current Pyrogram strings may carry zero in their API ID field: import it as
+missing source metadata (`api_id() == None`), never as the sender pool's API ID.
+Keep positive IDs within the signed `i32` range and retain key, DC, boolean,
+user-ID and payload-length validation when this optional metadata is absent.
+
 For memory-only use: `ImportedSession::into_memory_session()` and
 `ClientConfiguration { auto_cache_peers: false }`; MemorySession itself is not a
 cache-disable switch. Self login/explicit cache calls are distinct. The compiled

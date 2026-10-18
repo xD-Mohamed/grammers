@@ -62,7 +62,7 @@ pub enum ImportError {
     InvalidDc,
     /// A boolean is not encoded as zero or one.
     InvalidBoolean,
-    /// The application identifier is zero or outside the API's signed range.
+    /// The stored application identifier is outside the API's signed range.
     InvalidApiId,
     /// The stored user identifier is zero.
     InvalidUserId,
@@ -130,7 +130,9 @@ impl ImportedSession {
     ///
     /// Accepts URL-safe base64 with or without padding. Supports the 271-byte
     /// current layout and 263-/267-byte legacy layouts. Legacy layouts do not
-    /// contain an application identifier. Inputs are limited to 512 bytes.
+    /// contain an application identifier. A zero identifier in the current
+    /// layout represents missing metadata; callers supply their own API ID
+    /// when connecting. Inputs are limited to 512 bytes.
     ///
     /// # Errors
     /// Returns a sanitized [`ImportError`] for malformed or unsupported input.
@@ -142,10 +144,10 @@ impl ImportedSession {
         let (api_id, test_offset, user_size) = match bytes.len() {
             271 => {
                 let id = u32::from_be_bytes(read_fixed(&bytes, 1)?);
-                if id == 0 || id > i32::MAX as u32 {
+                if id > i32::MAX as u32 {
                     return Err(ImportError::InvalidApiId);
                 }
-                (Some(id as i32), 5, 8)
+                ((id != 0).then_some(id as i32), 5, 8)
             }
             263 => (None, 1, 4),
             267 => (None, 1, 8),
@@ -289,7 +291,8 @@ impl ImportedSession {
         self.data.home_dc
     }
 
-    /// Returns the stored application identifier, if available.
+    /// Returns the stored application identifier, if available and nonzero.
+    /// This metadata does not configure the API ID used by a sender pool.
     pub fn api_id(&self) -> Option<i32> {
         self.api_id
     }
