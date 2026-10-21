@@ -90,9 +90,19 @@ async fn listen(client: &Client) -> Result {
         let shutdown = tokio::signal::ctrl_c();
         tokio::pin!(shutdown);
         loop {
-            tokio::select! {
+            let update = tokio::select! {
+                biased;
                 signal = &mut shutdown => { signal?; break; }
-                update = updates.next() => handle(update?).await?,
+                update = updates.next() => update?,
+            };
+            // Await one handler at a time, but keep polling the same shutdown
+            // future during RPCs and flood-wait sleeps. Cancellation drops only
+            // this handler future: an already-sent RPC may have taken effect.
+            // Do not replay it; sync below and let awaited stop own teardown.
+            tokio::select! {
+                biased;
+                signal = &mut shutdown => { signal?; break; }
+                handled = handle(update) => handled?,
             }
         }
         Ok(())
