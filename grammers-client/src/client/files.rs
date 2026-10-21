@@ -7,7 +7,10 @@
 // except according to those terms.
 
 use std::mem;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicI32, Ordering},
+};
 #[cfg(feature = "fs")]
 use std::{io::SeekFrom, path::Path};
 
@@ -45,6 +48,62 @@ fn migration_dc(value: Option<u32>) -> Result<i32, InvocationError> {
         .and_then(|value| i32::try_from(value).ok())
         .filter(|dc| *dc > 0)
         .ok_or(InvocationError::InvalidDc)
+}
+
+// Shared by the iterator and parallel downloader so recovery has one implementation.
+// Only the file's DC number is shared; request bodies and authorization state remain separate.
+async fn fetch_download_file<I, IFut, A, AFut>(
+    route: &AtomicI32,
+    mut invoke: I,
+    mut authorize: A,
+) -> Result<tl::enums::upload::File, InvocationError>
+where
+    I: FnMut(i32) -> IFut,
+    IFut: std::future::Future<Output = Result<tl::enums::upload::File, InvocationError>>,
+    A: FnMut(i32) -> AFut,
+    AFut: std::future::Future<Output = Result<(), InvocationError>>,
+{
+    // This budget is local to one chunk, independent of the ordinary RPC retry policy.
+    // It permits migration plus auth export while bounding cycles of server rejections.
+    let mut remaining_recoveries = 8;
+    let mut authorized_dcs = Vec::new();
+    loop {
+        let dc = route.load(Ordering::Relaxed);
+        match invoke(dc).await {
+            Ok(response) => return Ok(response),
+            Err(InvocationError::Rpc(error)) if error.name == "AUTH_KEY_UNREGISTERED" => {
+                if remaining_recoveries == 0 {
+                    return Err(InvocationError::Rpc(error));
+                }
+                remaining_recoveries -= 1;
+                if route.load(Ordering::Relaxed) != dc {
+                    continue;
+                }
+                if authorized_dcs.contains(&dc) {
+                    return Err(InvocationError::Rpc(error));
+                }
+                authorized_dcs.push(dc);
+                authorize(dc).await?;
+            }
+            Err(InvocationError::Rpc(error)) if error.code == FILE_MIGRATE_ERROR => {
+                let migrated_dc = migration_dc(error.value)?;
+                if remaining_recoveries == 0 {
+                    return Err(InvocationError::Rpc(error));
+                }
+                remaining_recoveries -= 1;
+                // A late response from an earlier route must not replace a newer route
+                // already learned by another chunk. No routing lock spans an await.
+                if route
+                    .compare_exchange(dc, migrated_dc, Ordering::Relaxed, Ordering::Relaxed)
+                    .is_ok()
+                    && migrated_dc == dc
+                {
+                    return Err(InvocationError::Rpc(error));
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[cfg(feature = "fs")]
@@ -184,42 +243,34 @@ impl DownloadIter {
         use tl::enums::upload::File;
 
         // TODO handle maybe FILEREF_UPGRADE_NEEDED
-        let mut dc = self
+        let dc = self
             .dc_id
             .map_or_else(|| self.client.0.session.home_dc_id(), Ok)?;
-
-        loop {
-            break match self.client.invoke_in_dc(dc, &request).await {
-                Ok(File::File(f)) => {
-                    let reached_known_size = self
-                        .size
-                        .is_some_and(|size| request.offset as usize + f.bytes.len() >= size);
-
-                    if reached_known_size || f.bytes.len() < request.limit as usize {
-                        self.done = true;
-                        if f.bytes.is_empty() {
-                            break Ok(None);
-                        }
-                    }
-
-                    request.offset += request.limit as i64;
-                    self.variant = DownloadIterVariant::Request(request);
-
-                    Ok(Some(f.bytes))
-                }
-                Ok(File::CdnRedirect(_)) => Err(unsupported_cdn()),
-                Err(InvocationError::Rpc(err)) if &err.name == "AUTH_KEY_UNREGISTERED" => {
-                    match self.client.copy_auth_to_dc(dc).await {
-                        Ok(_) => continue,
-                        Err(e) => Err(e),
+        let route = AtomicI32::new(dc);
+        let response = fetch_download_file(
+            &route,
+            |dc| self.client.invoke_in_dc(dc, &request),
+            |dc| self.client.copy_auth_to_dc(dc),
+        )
+        .await;
+        self.dc_id = Some(route.load(Ordering::Relaxed));
+        match response {
+            Ok(File::File(f)) => {
+                let reached_known_size = self
+                    .size
+                    .is_some_and(|size| request.offset as usize + f.bytes.len() >= size);
+                if reached_known_size || f.bytes.len() < request.limit as usize {
+                    self.done = true;
+                    if f.bytes.is_empty() {
+                        return Ok(None);
                     }
                 }
-                Err(InvocationError::Rpc(err)) if err.code == FILE_MIGRATE_ERROR => {
-                    dc = migration_dc(err.value)?;
-                    continue;
-                }
-                Err(e) => Err(e),
-            };
+                request.offset += request.limit as i64;
+                self.variant = DownloadIterVariant::Request(request);
+                Ok(Some(f.bytes))
+            }
+            Ok(File::CdnRedirect(_)) => Err(unsupported_cdn()),
+            Err(error) => Err(error),
         }
     }
 }
@@ -229,6 +280,9 @@ impl Client {
     /// Returns a new iterator over the contents of a media document that will be downloaded.
     ///
     /// CDN redirects return [`InvocationError::Io`] with [`io::ErrorKind::Unsupported`].
+    /// Each chunk permits at most eight file-migration/auth-export recovery retries,
+    /// including at most one authorization export to each DC. Exhaustion returns the
+    /// last RPC rejection; ordinary invocation retry policy remains separate.
     ///
     /// # Examples
     ///
@@ -289,6 +343,9 @@ impl Client {
     /// Cancelling the download or encountering an error drops all chunk futures and leaves
     /// a potentially incomplete destination file. Already accepted RPCs retain their normal
     /// sender lifetime; cancellation does not replay them or roll back already issued writes.
+    /// Errors from the sequential download path retain their original [`InvocationError`]
+    /// variants instead of being wrapped in a generic I/O error. Unsupported CDN downloads
+    /// use [`InvocationError::Io`] with [`io::ErrorKind::Unsupported`].
     ///
     /// # Examples
     ///
@@ -350,11 +407,12 @@ impl Client {
         let mut file = fs::File::create(path).await?;
         file.set_len(size as u64).await?;
 
+        let route = AtomicI32::new(dc_id);
         download_chunks(&mut file, size, workers, |offset| {
             let client = self.clone();
             let location = location.clone();
+            let route = &route;
             async move {
-                let mut task_dc = dc_id;
                 let request = tl::functions::upload::GetFile {
                     precise: true,
                     cdn_supported: false,
@@ -362,18 +420,14 @@ impl Client {
                     offset,
                     limit: MAX_CHUNK_SIZE,
                 };
-                loop {
-                    match client.invoke_in_dc(task_dc, &request).await {
-                        Ok(response) => return download_bytes(response),
-                        Err(InvocationError::Rpc(err)) if err.name == "AUTH_KEY_UNREGISTERED" => {
-                            client.copy_auth_to_dc(task_dc).await?;
-                        }
-                        Err(InvocationError::Rpc(err)) if err.code == FILE_MIGRATE_ERROR => {
-                            task_dc = migration_dc(err.value)?;
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
+                download_bytes(
+                    fetch_download_file(
+                        route,
+                        |dc| client.invoke_in_dc(dc, &request),
+                        |dc| client.copy_auth_to_dc(dc),
+                    )
+                    .await?,
+                )
             }
         })
         .await
@@ -911,5 +965,236 @@ mod safety_tests {
         assert!(
             matches!(result, Err(InvocationError::Io(error)) if error.kind() == io::ErrorKind::Unsupported)
         );
+    }
+    fn file_response() -> tl::enums::upload::File {
+        tl::types::upload::File {
+            r#type: tl::enums::storage::FileType::FileUnknown,
+            mtime: 0,
+            bytes: vec![1],
+        }
+        .into()
+    }
+
+    fn file_migrate(dc: u32) -> InvocationError {
+        InvocationError::Rpc(grammers_mtsender::RpcError {
+            code: FILE_MIGRATE_ERROR,
+            name: "FILE_MIGRATE".into(),
+            value: Some(dc),
+            caused_by: None,
+        })
+    }
+
+    fn auth_unregistered() -> InvocationError {
+        InvocationError::Rpc(grammers_mtsender::RpcError {
+            code: 401,
+            name: "AUTH_KEY_UNREGISTERED".into(),
+            value: None,
+            caused_by: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn concurrent_initial_chunks_publish_migration_for_later_chunks() {
+        let route = AtomicI32::new(2);
+        let barrier = tokio::sync::Barrier::new(WORKER_COUNT);
+        let requests = std::sync::Mutex::new(Vec::new());
+        let mut chunks = FuturesUnordered::new();
+        for _ in 0..WORKER_COUNT {
+            let requests = &requests;
+            let barrier = &barrier;
+            chunks.push(fetch_download_file(
+                &route,
+                move |dc| async move {
+                    requests.lock().unwrap().push(dc);
+                    if dc == 2 {
+                        barrier.wait().await;
+                        Err(file_migrate(3))
+                    } else {
+                        assert_eq!(dc, 3);
+                        Ok(file_response())
+                    }
+                },
+                |_| async { Ok(()) },
+            ));
+        }
+        while let Some(chunk) = chunks.next().await {
+            chunk.unwrap();
+        }
+        assert_eq!(
+            requests
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|dc| **dc == 2)
+                .count(),
+            WORKER_COUNT
+        );
+        let next = fetch_download_file(
+            &route,
+            |dc| async move {
+                assert_eq!(dc, 3, "later chunks must start at the learned file DC");
+                Ok(file_response())
+            },
+            |_| async { Ok(()) },
+        )
+        .await;
+        next.unwrap();
+        assert_eq!(route.load(Ordering::Relaxed), 3);
+        fetch_download_file(
+            &AtomicI32::new(2),
+            |dc| async move {
+                assert_eq!(dc, 2, "another file download must retain its own route");
+                Ok(file_response())
+            },
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn repeated_same_dc_migration_is_returned_without_retry_loop() {
+        let attempts = std::cell::Cell::new(0);
+        let result = fetch_download_file(
+            &AtomicI32::new(2),
+            |_| {
+                attempts.set(attempts.get() + 1);
+                std::future::ready(if attempts.get() < 3 {
+                    Err(file_migrate(2))
+                } else {
+                    Ok(file_response())
+                })
+            },
+            |_| async { Ok(()) },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(InvocationError::Rpc(error)) if error.code == FILE_MIGRATE_ERROR)
+        );
+        assert_eq!(attempts.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn repeated_auth_failure_exports_once_and_preserves_rpc_error() {
+        let attempts = std::cell::Cell::new(0);
+        let exports = std::cell::Cell::new(0);
+        let result = fetch_download_file(
+            &AtomicI32::new(2),
+            |_| {
+                attempts.set(attempts.get() + 1);
+                std::future::ready(if attempts.get() < 3 {
+                    Err(auth_unregistered())
+                } else {
+                    Ok(file_response())
+                })
+            },
+            |_| {
+                exports.set(exports.get() + 1);
+                std::future::ready(Ok(()))
+            },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(InvocationError::Rpc(error)) if error.name == "AUTH_KEY_UNREGISTERED")
+        );
+        assert_eq!(attempts.get(), 2);
+        assert_eq!(exports.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn migration_cycles_have_a_finite_recovery_budget() {
+        let attempts = std::cell::Cell::new(0);
+        let result = fetch_download_file(
+            &AtomicI32::new(2),
+            |dc| {
+                attempts.set(attempts.get() + 1);
+                std::future::ready(if attempts.get() < 17 {
+                    Err(file_migrate(if dc == 2 { 3 } else { 2 }))
+                } else {
+                    Ok(file_response())
+                })
+            },
+            |_| async { Ok(()) },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(InvocationError::Rpc(error)) if error.code == FILE_MIGRATE_ERROR)
+        );
+        assert_eq!(attempts.get(), 9);
+    }
+
+    #[tokio::test]
+    async fn migration_then_authorization_still_retries_the_chunk_successfully() {
+        let route = AtomicI32::new(2);
+        let attempts = std::cell::Cell::new(0);
+        let exports = std::cell::Cell::new(0);
+        let result = fetch_download_file(
+            &route,
+            |dc| {
+                attempts.set(attempts.get() + 1);
+                std::future::ready(match attempts.get() {
+                    1 => {
+                        assert_eq!(dc, 2);
+                        Err(file_migrate(3))
+                    }
+                    2 => {
+                        assert_eq!(dc, 3);
+                        Err(auth_unregistered())
+                    }
+                    _ => {
+                        assert_eq!(dc, 3);
+                        Ok(file_response())
+                    }
+                })
+            },
+            |dc| {
+                assert_eq!(dc, 3);
+                exports.set(exports.get() + 1);
+                std::future::ready(Ok(()))
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(exports.get(), 1);
+        assert_eq!(attempts.get(), 3);
+    }
+    #[tokio::test]
+    async fn late_migration_response_cannot_overwrite_a_newer_shared_route() {
+        let route = AtomicI32::new(2);
+        let initial = tokio::sync::Barrier::new(2);
+        let changed = tokio::sync::Notify::new();
+        let mut chunks = FuturesUnordered::new();
+        for index in 0..2 {
+            let initial = &initial;
+            let changed = &changed;
+            chunks.push(fetch_download_file(
+                &route,
+                move |dc| async move {
+                    if dc == 2 {
+                        initial.wait().await;
+                        if index == 0 {
+                            Err(file_migrate(3))
+                        } else {
+                            changed.notified().await;
+                            Err(file_migrate(4))
+                        }
+                    } else {
+                        assert_eq!(
+                            dc, 3,
+                            "the late DC2 response must use the already learned DC3 route"
+                        );
+                        if index == 0 {
+                            changed.notify_one();
+                        }
+                        Ok(file_response())
+                    }
+                },
+                |_| async { Ok(()) },
+            ));
+        }
+        while let Some(chunk) = chunks.next().await {
+            chunk.unwrap();
+        }
+        assert_eq!(route.load(Ordering::Relaxed), 3);
     }
 }
