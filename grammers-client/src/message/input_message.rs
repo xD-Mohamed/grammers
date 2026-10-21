@@ -291,6 +291,7 @@ impl InputMessage {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "fs")]
     /// async fn f(client: &mut grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
     ///     use grammers_client::message::InputMessage;
     ///
@@ -335,6 +336,7 @@ impl InputMessage {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "fs")]
     /// # async fn f(client: &mut grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
     /// # let audio = client.upload_file("audio.flac").await?;
     /// #

@@ -29,6 +29,7 @@ pub struct InputMedia {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(feature = "fs")]
 /// # async fn f(client: &mut grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
 /// use std::time::Duration;
 /// use grammers_client::media::InputAudio;
@@ -45,6 +46,7 @@ pub struct InputMedia {
 /// let media = InputMessage::new().media(media);
 /// # Ok(())
 /// # }
+/// ```
 pub struct InputAudio {
     file: Uploaded,
     force_file: bool,
@@ -62,6 +64,7 @@ pub struct InputAudio {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(feature = "fs")]
 /// # async fn f(client: &mut grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
 /// use std::time::Duration;
 /// use grammers_client::media::InputVideo;
@@ -77,6 +80,7 @@ pub struct InputAudio {
 /// let media = InputMessage::new().media(media);
 /// # Ok(())
 /// # }
+/// ```
 pub struct InputVideo {
     file: Uploaded,
     force_file: bool,
@@ -279,6 +283,7 @@ impl InputMedia {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "fs")]
     /// async fn f(client: &mut grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
     ///     use grammers_client::media::InputMedia;
     ///
@@ -323,6 +328,7 @@ impl InputMedia {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(feature = "fs")]
     /// # async fn f(client: &mut grammers_client::Client) -> Result<(), Box<dyn std::error::Error>> {
     /// # let audio = client.upload_file("audio.flac").await?;
     /// #

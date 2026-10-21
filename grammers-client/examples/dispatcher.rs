@@ -42,14 +42,23 @@ async fn receive(client: &Client) -> Result {
     );
 
     let result: Result = async {
+        let shutdown = tokio::signal::ctrl_c();
+        tokio::pin!(shutdown);
         loop {
             let update = tokio::select! {
-                signal = tokio::signal::ctrl_c() => { signal?; break; },
+                biased;
+                signal = &mut shutdown => { signal?; break; },
                 update = updates.next() => update?,
             };
             // Errors and caught unwinds stop this example. An application can
             // inspect DispatchError and choose its own policy for the next update.
-            let _ = router.dispatch(&update).await?;
+            // Continue polling shutdown during a handler's RPCs. Cancelling the
+            // handler does not undo an already-sent request; never replay it.
+            tokio::select! {
+                biased;
+                signal = &mut shutdown => { signal?; break; },
+                dispatched = router.dispatch(&update) => { let _ = dispatched?; },
+            }
         }
         Ok(())
     }

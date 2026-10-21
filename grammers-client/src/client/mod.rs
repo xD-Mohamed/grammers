@@ -36,5 +36,5 @@ pub use iter_buffer::IterBuffer;
 pub use messages::{GlobalSearchIter, MessageIter, SearchIter};
 #[cfg(feature = "qr-login")]
 pub use qr_login::{QrLogin, QrLoginToken};
-pub use updates::UpdateStream;
 pub use runtime::{ClientBuildError, ClientBuilder, LifecycleError, SessionSource};
+pub use updates::UpdateStream;
