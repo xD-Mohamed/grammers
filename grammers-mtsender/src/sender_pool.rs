@@ -871,12 +871,12 @@ impl SenderPoolRunner {
 
         let (rpc_tx, rpc_rx) = mpsc::unbounded_channel();
         let updates = self.updates_tx.clone();
-        let home_sender = dc_option.id == self.session.home_dc_id()?;
+        let session = Arc::clone(&self.session);
         let state = Arc::clone(&self.state);
         let abort_handle = self.connection_pool.spawn(async move {
             (
                 dc_id,
-                run_sender(sender, rpc_rx, updates, home_sender, state).await,
+                run_sender(sender, rpc_rx, updates, dc_id, session, state).await,
             )
         });
         {
@@ -1114,7 +1114,8 @@ async fn run_sender(
     mut sender: Sender<Transport, grammers_mtproto::mtp::Encrypted>,
     mut rpc_rx: mpsc::UnboundedReceiver<Rpc>,
     updates: Option<mpsc::Sender<UpdatesLike>>,
-    home_sender: bool,
+    dc_id: i32,
+    session: Arc<ErasedSession>,
     state: Arc<PoolState>,
 ) -> Result<(), ReadError> {
     let mut dropped: usize = 0;
@@ -1154,6 +1155,12 @@ async fn run_sender(
                     }
                 },
                 Err(err) => {
+                    // Login migration can promote a connection created while
+                    // another DC was home. Classify only at failure, without a
+                    // lookup on the RPC path or recreating a live sender.
+                    // If storage fails, still wake consumers so they can surface
+                    // that failure instead of waiting indefinitely for updates.
+                    let home_sender = session.home_dc_id().map_or(true, |home| home == dc_id);
                     if let (true, Some(updates)) = (home_sender, &updates) {
                         let _ = forward_update(updates, &state, UpdatesLike::ConnectionClosed);
                     }
@@ -1767,7 +1774,16 @@ mod optimization_tests {
             drop(peer.unwrap());
             let result = tokio::time::timeout(
                 Duration::from_secs(1),
-                run_sender(sender, rpc_rx, updates, true, Arc::default()),
+                run_sender(
+                    sender,
+                    rpc_rx,
+                    updates,
+                    2,
+                    erase(Arc::new(
+                        grammers_session::storages::MemorySession::default(),
+                    )),
+                    Arc::default(),
+                ),
             )
             .await
             .unwrap();
@@ -1779,6 +1795,59 @@ mod optimization_tests {
                 ));
             } else {
                 assert!(updates_rx.recv().await.is_none());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn preexisting_connections_classify_failures_using_the_current_home_dc() {
+        // QR imports open the destination before committing it as home. Keep a
+        // real established local transport alive across the session transition,
+        // then fail it without issuing another RPC to wake the update stream.
+        for connection_dc in [4, 2] {
+            let session = Arc::new(grammers_session::storages::MemorySession::default());
+            session.set_home_dc_id(2).await.unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (sender, peer) = tokio::join!(
+                connect_with_auth(Transport::new(), ServerAddr::Tcp { address }, [0; 256]),
+                listener.accept(),
+            );
+            let sender = sender.unwrap();
+            let peer = peer.unwrap();
+            let (_rpc_tx, rpc_rx) = mpsc::unbounded_channel();
+            let (updates_tx, mut updates_rx) = mpsc::channel(1);
+            let shared_session = erase(Arc::clone(&session));
+            let running = tokio::spawn(run_sender(
+                sender,
+                rpc_rx,
+                Some(updates_tx),
+                connection_dc,
+                shared_session,
+                Arc::default(),
+            ));
+            tokio::task::yield_now().await;
+            assert!(!running.is_finished());
+
+            session.set_home_dc_id(4).await.unwrap();
+            drop(peer);
+            assert!(
+                tokio::time::timeout(Duration::from_secs(1), running)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .is_err()
+            );
+            if connection_dc == 4 {
+                assert!(
+                    matches!(updates_rx.recv().await, Some(UpdatesLike::ConnectionClosed)),
+                    "a promoted destination failure must wake passive update consumers"
+                );
+            } else {
+                assert!(
+                    updates_rx.recv().await.is_none(),
+                    "a former home must no longer be classified as the current home"
+                );
             }
         }
     }
