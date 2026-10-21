@@ -788,6 +788,7 @@ mod tests {
             .build()
             .await
             .unwrap();
+        let mut events = client.events();
         client.start().await.unwrap();
         let clone = client.clone();
         assert!(
@@ -800,6 +801,11 @@ mod tests {
         assert!(matches!(error, LifecycleError::RunnerPanicked));
         assert!(!format!("{error:?}").contains("sensitive"));
         assert!(client.status().stopped);
+        assert!(matches!(
+            events.try_recv(),
+            Ok(PoolEvent::SetupFailed { .. })
+        ));
+        assert!(matches!(events.try_recv(), Ok(PoolEvent::RunnerFailed(_))));
     }
 
     #[tokio::test]

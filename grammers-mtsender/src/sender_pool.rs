@@ -800,6 +800,10 @@ impl SenderPoolRunner {
                 self.connections.retain(|connection| {
                     if connection.dc_id == dc_id {
                         connection.abort_handle.abort();
+                        let _ = self.state.events.send(PoolEvent::ConnectionClosed {
+                            dc_id,
+                            category: None,
+                        });
                         false
                     } else {
                         true
@@ -1025,6 +1029,12 @@ fn validate_dc_endpoint(option: &tl::types::DcOption) -> std::io::Result<()> {
 
 impl Drop for SenderPoolRunner {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            let _ = self
+                .state
+                .events
+                .send(PoolEvent::RunnerFailed(PoolRunError::TaskPanicked));
+        }
         self.close_routes();
         self.state.active.store(0, Ordering::Relaxed);
         self.state.stopped.store(true, Ordering::Release);
