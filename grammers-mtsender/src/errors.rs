@@ -209,8 +209,8 @@ pub enum InvocationError {
 
     /// Standard I/O error when reading the response.
     ///
-    /// Telegram may kill the connection at any moment, but it is generally valid to retry
-    /// the request at least once immediately, which will be done through a new connection.
+    /// The request may already have reached Telegram. Retrying a mutating request
+    /// can duplicate its effects; an I/O failure alone does not make replay safe.
     Io(io::Error),
 
     /// Error propagated from attempting to deserialize an invalid [`tl::Deserializable`].
@@ -243,7 +243,48 @@ pub enum InvocationError {
     Authentication(authentication::Error),
 }
 
-impl std::error::Error for InvocationError {}
+impl std::error::Error for InvocationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Session(e) => Some(e.as_ref()),
+            Self::Rpc(e) => Some(e),
+            Self::Io(e) => Some(e),
+            Self::Deserialize(e) => Some(e),
+            Self::Transport(e) => Some(e),
+            Self::Authentication(e) => Some(e),
+            Self::Dropped(_) | Self::InvalidDc => None,
+        }
+    }
+}
+
+/// Stable, credential-free error classification. Categories do not imply that
+/// retrying a request is safe: an accepted request may have already taken effect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InvocationErrorCategory {
+    /// Local admission limit was reached.
+    Overloaded,
+    /// The runner or response channel is closed.
+    Closed,
+    /// Network I/O failed, possibly after a request was sent.
+    Network,
+    /// Transport, encoding or protocol validation failed.
+    Protocol,
+    /// Local session storage failed.
+    Session,
+    /// Authentication or authorization is required or invalid.
+    Authentication,
+    /// The account lacks permission.
+    Permission,
+    /// Invalid request arguments or unknown datacenter.
+    InvalidRequest,
+    /// A server-side failure was reported.
+    Server,
+    /// An explicit timed flood or slow mode rejection.
+    FloodWait,
+    /// Another RPC rejection, including migration instructions.
+    Rpc,
+}
 
 impl fmt::Display for InvocationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -307,6 +348,52 @@ impl From<authentication::Error> for InvocationError {
 }
 
 impl InvocationError {
+    /// Classify without formatting or discarding the original error.
+    pub fn category(&self) -> InvocationErrorCategory {
+        use InvocationErrorCategory as C;
+        match self {
+            Self::Session(_) => C::Session,
+            Self::Dropped(_) => C::Closed,
+            Self::InvalidDc => C::InvalidRequest,
+            Self::Authentication(_) => C::Authentication,
+            Self::Deserialize(_) | Self::Transport(_) => C::Protocol,
+            Self::Io(e) => match e.kind() {
+                io::ErrorKind::WouldBlock => C::Overloaded,
+                io::ErrorKind::InvalidInput => C::InvalidRequest,
+                _ => C::Network,
+            },
+            Self::Rpc(_) if self.is_flood_wait() => C::FloodWait,
+            Self::Rpc(e) => match e.code {
+                401 => C::Authentication,
+                403 => C::Permission,
+                400 | 404 => C::InvalidRequest,
+                500.. => C::Server,
+                _ => C::Rpc,
+            },
+        }
+    }
+
+    /// The server's explicit flood/slow mode wait, never an inferred I/O retry.
+    pub fn retry_after(&self) -> Option<std::time::Duration> {
+        match self {
+            Self::Rpc(e)
+                if matches!(
+                    e.name.as_str(),
+                    "FLOOD_WAIT" | "FLOOD_PREMIUM_WAIT" | "SLOWMODE_WAIT" | "FLOOD_TEST_PHONE_WAIT"
+                ) =>
+            {
+                e.value
+                    .map(|n| std::time::Duration::from_secs(u64::from(n)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether an explicit timed flood or slow mode rejection was returned.
+    pub fn is_flood_wait(&self) -> bool {
+        self.retry_after().is_some()
+    }
+
     /// Matches on the name of the RPC error (case-sensitive).
     ///
     /// Useful in `match` arm guards. A single trailing or leading asterisk (`'*'`) is allowed,
@@ -338,6 +425,37 @@ impl InvocationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn categories_and_wait_delays_are_typed() {
+        let flood = InvocationError::Rpc(RpcError {
+            code: 420,
+            name: "FLOOD_WAIT".into(),
+            value: Some(17),
+            caused_by: None,
+        });
+        assert_eq!(flood.category(), InvocationErrorCategory::FloodWait);
+        assert_eq!(
+            flood.retry_after(),
+            Some(std::time::Duration::from_secs(17))
+        );
+        assert!(flood.is_flood_wait());
+        let migrate = InvocationError::Rpc(RpcError {
+            code: 303,
+            name: "PHONE_MIGRATE".into(),
+            value: Some(2),
+            caused_by: None,
+        });
+        assert_eq!(migrate.retry_after(), None);
+        assert_eq!(
+            InvocationError::Io(io::ErrorKind::WouldBlock.into()).category(),
+            InvocationErrorCategory::Overloaded
+        );
+        assert_eq!(
+            InvocationError::Dropped("closed").category(),
+            InvocationErrorCategory::Closed
+        );
+    }
 
     #[test]
     fn check_rpc_error_parsing() {

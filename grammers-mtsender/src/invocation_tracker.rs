@@ -9,7 +9,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::sync::oneshot;
+use tokio::sync::{OwnedSemaphorePermit, oneshot};
 
 /// Origin for write timestamps, so they fit in an atomic.
 static ORIGIN: OnceLock<Instant> = OnceLock::new();
@@ -59,7 +59,10 @@ impl InvocationTracker {
             .ok()
             .map(|_| {
                 self.0.sent_at.store(0, Ordering::Relaxed);
-                InvocationPermit(Arc::clone(&self.0))
+                InvocationPermit {
+                    tracker: Some(Arc::clone(&self.0)),
+                    capacity: None,
+                }
             })
     }
 
@@ -75,23 +78,40 @@ impl InvocationTracker {
 
 /// Exclusive reservation moved into the SDK request, not retained by its caller.
 /// It is released on completion, an unsent cancellation, or connection teardown.
-pub struct InvocationPermit(Arc<TrackerState>);
+pub struct InvocationPermit {
+    tracker: Option<Arc<TrackerState>>,
+    capacity: Option<OwnedSemaphorePermit>,
+}
 
 impl InvocationPermit {
+    pub(crate) fn with_capacity(permit: Option<Self>, capacity: OwnedSemaphorePermit) -> Self {
+        let mut permit = permit.unwrap_or(Self {
+            tracker: None,
+            capacity: None,
+        });
+        permit.capacity = Some(capacity);
+        permit
+    }
+
     pub(crate) fn mark_sent(&self) {
+        let Some(tracker) = &self.tracker else {
+            return;
+        };
         let nanos = u64::try_from(origin().elapsed().as_nanos()).unwrap_or(u64::MAX - 1);
         // The first complete write is the one that reached the network.
-        let _ = self
-            .0
-            .sent_at
-            .compare_exchange(0, nanos + 1, Ordering::Release, Ordering::Relaxed);
-        self.0.stage.store(2, Ordering::Release);
+        let _ =
+            tracker
+                .sent_at
+                .compare_exchange(0, nanos + 1, Ordering::Release, Ordering::Relaxed);
+        tracker.stage.store(2, Ordering::Release);
     }
 }
 
 impl Drop for InvocationPermit {
     fn drop(&mut self) {
-        self.0.stage.store(0, Ordering::Release);
+        if let Some(tracker) = &self.tracker {
+            tracker.stage.store(0, Ordering::Release);
+        }
     }
 }
 
@@ -134,7 +154,12 @@ mod benchmarks {
                         permit.mark_sent();
                     } else {
                         // Comparison only: keep production timestamp semantics.
-                        permit.0.stage.store(2, Ordering::Release);
+                        permit
+                            .tracker
+                            .as_ref()
+                            .unwrap()
+                            .stage
+                            .store(2, Ordering::Release);
                     }
                     black_box(&permit);
                     drop(permit);

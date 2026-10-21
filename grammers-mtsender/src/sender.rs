@@ -1203,11 +1203,17 @@ mod optimization_tests {
 
     #[tokio::test]
     async fn cancelled_sent_request_keeps_reservation_until_reply_or_disconnect() {
+        use std::sync::Arc;
         for disconnect in [false, true] {
             let (mut sender, _peer) = pair().await;
             let tracker = crate::InvocationTracker::default();
             let (tx, rx) = oneshot::channel();
-            sender.enqueue_tracked_body(Bytes::from_static(&[1; 4]), tx, tracker.try_acquire());
+            let capacity = Arc::new(tokio::sync::Semaphore::new(1));
+            let permit = crate::InvocationPermit::with_capacity(
+                tracker.try_acquire(),
+                Arc::clone(&capacity).try_acquire_owned().unwrap(),
+            );
+            sender.enqueue_tracked_body(Bytes::from_static(&[1; 4]), tx, Some(permit));
             sender.try_fill_write();
             sender.on_net_write(sender.write_buffer.len()).unwrap();
             let RequestState::Sent(pair) = &sender.requests[0].state else {
@@ -1218,6 +1224,7 @@ mod optimization_tests {
             drop(rx); // Simulate an outer deadline cancelling the response waiter.
             sender.try_fill_write();
             assert!(tracker.try_acquire().is_none());
+            assert_eq!(capacity.available_permits(), 0);
             assert_eq!(sender.requests.len(), 1);
             if disconnect {
                 drop(sender);
@@ -1228,6 +1235,7 @@ mod optimization_tests {
                 });
             }
             assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+            assert_eq!(capacity.available_permits(), 1);
             assert!(tracker.try_acquire().is_some());
         }
     }
@@ -1270,12 +1278,16 @@ mod optimization_tests {
         struct ObserveWake {
             tracker: crate::InvocationTracker,
             seen: AtomicU8,
+            capacity: Arc<tokio::sync::Semaphore>,
+            free_slots: std::sync::atomic::AtomicUsize,
         }
         impl Wake for ObserveWake {
             fn wake(self: Arc<Self>) {
                 self.wake_by_ref();
             }
             fn wake_by_ref(self: &Arc<Self>) {
+                self.free_slots
+                    .store(self.capacity.available_permits(), Ordering::SeqCst);
                 self.seen.store(
                     match self.tracker.stage() {
                         crate::InvocationStage::Idle => 0,
@@ -1290,7 +1302,12 @@ mod optimization_tests {
             let (mut sender, _peer) = pair().await;
             let tracker = crate::InvocationTracker::default();
             let (tx, rx) = oneshot::channel();
-            sender.enqueue_tracked_body(Bytes::from_static(&[1; 4]), tx, tracker.try_acquire());
+            let capacity = Arc::new(tokio::sync::Semaphore::new(1));
+            let permit = crate::InvocationPermit::with_capacity(
+                tracker.try_acquire(),
+                Arc::clone(&capacity).try_acquire_owned().unwrap(),
+            );
+            sender.enqueue_tracked_body(Bytes::from_static(&[1; 4]), tx, Some(permit));
             sender.try_fill_write();
             sender.on_net_write(sender.write_buffer.len()).unwrap();
             let RequestState::Sent(pair) = &sender.requests[0].state else {
@@ -1300,6 +1317,8 @@ mod optimization_tests {
             let wake = Arc::new(ObserveWake {
                 tracker: tracker.clone(),
                 seen: AtomicU8::new(255),
+                capacity: Arc::clone(&capacity),
+                free_slots: std::sync::atomic::AtomicUsize::new(0),
             });
             let waker = Waker::from(Arc::clone(&wake));
             let mut context = Context::from_waker(&waker);
@@ -1332,6 +1351,11 @@ mod optimization_tests {
                 wake.seen.load(Ordering::SeqCst),
                 0,
                 "terminal error path {kind} woke a busy reservation"
+            );
+            assert_eq!(
+                wake.free_slots.load(Ordering::SeqCst),
+                1,
+                "terminal path {kind} woke a busy admission slot"
             );
             let outcome = rx.await;
             if kind == 4 {

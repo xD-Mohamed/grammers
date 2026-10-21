@@ -6,12 +6,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::num::NonZeroU32;
 use std::ops::{ControlFlow, Deref};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use std::{fmt, panic};
 
 use bytes::Bytes;
 use grammers_mtproto::{mtp, transport};
@@ -22,14 +23,14 @@ use grammers_session::updates::UpdatesLike;
 use grammers_tl_types::{self as tl, Deserializable, enums};
 use tokio::task::AbortHandle;
 use tokio::{
-    sync::{mpsc, oneshot},
+    sync::{Semaphore, broadcast, mpsc, oneshot},
     task::JoinSet,
     time::sleep,
 };
 use tracing::{debug, info, warn};
 
 use crate::configuration::{ConnectionParams, RetryContext};
-use crate::errors::{InvocationError, ReadError};
+use crate::errors::{InvocationError, InvocationErrorCategory, ReadError};
 use crate::{Sender, ServerAddr, connect, connect_with_auth};
 
 /// How long to wait after warning the user that the updates was dropped.
@@ -82,9 +83,85 @@ struct RouteCache {
     entries: Vec<(i32, mpsc::UnboundedSender<Rpc>)>,
     disconnecting: Vec<(i32, usize)>,
     stopping: bool,
+    parked: bool,
     control_changed: Arc<tokio::sync::Notify>,
 }
 type Routes = Arc<RwLock<RouteCache>>;
+
+/// Snapshot of local runtime activity, not proof of account authorization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PoolStatus {
+    /// No new invocations can be admitted because shutdown has begun.
+    pub stopping: bool,
+    /// The runner was dropped or completed.
+    pub stopped: bool,
+    /// Number of currently established connection tasks.
+    pub active_connections: usize,
+    /// Cumulative updates dropped when the bounded delivery channel was full.
+    pub dropped_updates: u64,
+    /// Cumulative requests rejected by the admission limit.
+    pub admission_rejections: u64,
+}
+
+/// Bounded, credential-free runtime notifications. Slow receivers observe
+/// [`broadcast::error::RecvError::Lagged`]; network tasks never await observers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PoolEvent {
+    /// A datacenter connection completed initialization.
+    Connected { dc_id: i32 },
+    /// A connection ended; `None` means orderly shutdown.
+    ConnectionClosed {
+        dc_id: i32,
+        category: Option<InvocationErrorCategory>,
+    },
+    /// A datacenter connection could not be initialized.
+    SetupFailed {
+        dc_id: i32,
+        category: InvocationErrorCategory,
+    },
+    /// The delivery channel dropped an update batch.
+    UpdateOverflow,
+    /// An internal connection task failed unexpectedly.
+    RunnerFailed(PoolRunError),
+}
+
+/// Failure of an internal runner task. Panic payloads are never exposed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PoolRunError {
+    /// An internal task panicked.
+    TaskPanicked,
+}
+impl fmt::Display for PoolRunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("sender task panicked (payload redacted)")
+    }
+}
+impl std::error::Error for PoolRunError {}
+
+struct PoolState {
+    capacity: Option<Arc<Semaphore>>,
+    stopped: AtomicBool,
+    active: AtomicUsize,
+    dropped: AtomicU64,
+    rejected: AtomicU64,
+    events: broadcast::Sender<PoolEvent>,
+    prefer_ipv6: bool,
+}
+impl Default for PoolState {
+    fn default() -> Self {
+        Self {
+            capacity: None,
+            stopped: AtomicBool::new(false),
+            active: AtomicUsize::new(0),
+            dropped: AtomicU64::new(0),
+            rejected: AtomicU64::new(0),
+            events: broadcast::channel(64).0,
+            prefer_ipv6: false,
+        }
+    }
+}
 
 impl RouteCache {
     fn publish(&mut self, dc_id: i32, tx: &mpsc::UnboundedSender<Rpc>) {
@@ -132,7 +209,7 @@ pub struct SenderPoolFatHandle {
 
 /// Cheaply cloneable handle to interact with its [`SenderPoolRunner`].
 #[derive(Clone)]
-pub struct SenderPoolHandle(mpsc::UnboundedSender<Request>, Routes, bool);
+pub struct SenderPoolHandle(mpsc::UnboundedSender<Request>, Routes, bool, Arc<PoolState>);
 
 /// Builder to configure the runner to drive I/O and linked handles.
 pub struct SenderPool {
@@ -163,8 +240,9 @@ pub struct SenderPoolRunner {
     request_rx: mpsc::UnboundedReceiver<Request>,
     updates_tx: Option<mpsc::Sender<UpdatesLike>>,
     connections: Vec<ConnectionInfo>,
-    connection_pool: JoinSet<Result<(), ReadError>>,
+    connection_pool: JoinSet<(i32, Result<(), ReadError>)>,
     routes: Routes,
+    state: Arc<PoolState>,
 }
 
 impl Deref for SenderPoolFatHandle {
@@ -176,6 +254,38 @@ impl Deref for SenderPoolFatHandle {
 }
 
 impl SenderPoolHandle {
+    /// Observe runtime activity without holding a lock across I/O.
+    pub fn status(&self) -> PoolStatus {
+        PoolStatus {
+            stopping: self.1.read().unwrap_or_else(|e| e.into_inner()).stopping,
+            stopped: self.3.stopped.load(Ordering::Acquire),
+            active_connections: self.3.active.load(Ordering::Relaxed),
+            dropped_updates: self.3.dropped.load(Ordering::Relaxed),
+            admission_rejections: self.3.rejected.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Subscribe to the next runtime events (64 buffered notifications).
+    pub fn events(&self) -> broadcast::Receiver<PoolEvent> {
+        self.3.events.subscribe()
+    }
+
+    /// The address-family preference fixed at pool construction.
+    pub fn prefers_ipv6(&self) -> bool {
+        self.3.prefer_ipv6
+    }
+
+    /// Activate a parked pool. Does not reopen a stopping or stopped pool.
+    /// Start its runner immediately afterward; this method does not spawn it.
+    pub fn activate(&self) -> bool {
+        let mut cache = self.1.write().unwrap_or_else(|e| e.into_inner());
+        if cache.stopping || self.0.is_closed() {
+            return false;
+        }
+        cache.parked = false;
+        true
+    }
+
     /// Whether this pool accepts API update delivery (fixed at construction).
     pub fn updates_enabled(&self) -> bool {
         self.2
@@ -271,6 +381,18 @@ impl SenderPoolHandle {
             )
             .into());
         }
+        let permit = if let Some(capacity) = &self.3.capacity {
+            let capacity = Arc::clone(capacity).try_acquire_owned().map_err(|_| {
+                self.3.rejected.fetch_add(1, Ordering::Relaxed);
+                InvocationError::Io(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "pending request limit reached",
+                ))
+            })?;
+            Some(crate::InvocationPermit::with_capacity(permit, capacity))
+        } else {
+            permit
+        };
         let (tx, rx) = oneshot::channel();
         let rpc = Rpc { body, tx, permit };
         let rpc = match self.try_route(dc_id, rpc)? {
@@ -296,7 +418,7 @@ impl SenderPoolHandle {
         }
         let route = {
             let cache = self.1.read().unwrap_or_else(|e| e.into_inner());
-            if cache.stopping {
+            if cache.stopping || cache.parked {
                 return Err(InvocationError::Dropped(
                     "SenderPoolRunner is closed or stopping",
                 ));
@@ -384,6 +506,17 @@ impl SenderPoolHandle {
         fail_count: NonZeroU32,
         slept_so_far: Duration,
     ) -> ControlFlow<InvocationError, Duration> {
+        // Preserve local validation/admission/closure errors without enqueueing
+        // policy work into an inactive runner.
+        let inactive = {
+            let cache = self.1.read().unwrap_or_else(|e| e.into_inner());
+            cache.parked || cache.stopping
+        };
+        if inactive
+            || matches!(error, InvocationError::Io(ref e) if e.kind() == std::io::ErrorKind::WouldBlock)
+        {
+            return ControlFlow::Break(error);
+        }
         let (tx, rx) = oneshot::channel();
         if self
             .0
@@ -436,10 +569,49 @@ impl SenderPool {
         S: Session + Sized,
         S::Error: std::error::Error + Send + Sync + 'static,
     {
+        Self::with_erased_session(erase(session), api_id, connection_params)
+    }
+
+    /// Construct a pool around already type-erased session storage.
+    pub fn with_erased_session(
+        session: Arc<ErasedSession>,
+        api_id: i32,
+        connection_params: ConnectionParams,
+    ) -> Self {
+        Self::construct(session, api_id, connection_params, false)
+    }
+
+    /// Construct a pool that rejects invocations until [`SenderPoolHandle::activate`].
+    /// No tasks, network calls or authorization are started here.
+    pub fn parked(
+        session: Arc<ErasedSession>,
+        api_id: i32,
+        connection_params: ConnectionParams,
+    ) -> Self {
+        Self::construct(session, api_id, connection_params, true)
+    }
+
+    fn construct(
+        session: Arc<ErasedSession>,
+        api_id: i32,
+        connection_params: ConnectionParams,
+        parked: bool,
+    ) -> Self {
         let receive_updates = connection_params.receive_updates;
-        let session = erase(session);
         let (request_tx, request_rx) = mpsc::unbounded_channel();
-        let routes = Routes::default();
+        let routes = Arc::new(RwLock::new(RouteCache {
+            parked,
+            ..Default::default()
+        }));
+        let state = Arc::new(PoolState {
+            // Oversized low-level limits saturate at Tokio's supported maximum.
+            // The managed builder reports these as configuration errors.
+            capacity: connection_params
+                .max_pending_requests
+                .map(|n| Arc::new(Semaphore::new(n.get().min(Semaphore::MAX_PERMITS)))),
+            prefer_ipv6: connection_params.use_ipv6,
+            ..Default::default()
+        });
         let (updates_tx, updates_rx) =
             mpsc::channel(connection_params.updates_channel_capacity.get());
 
@@ -453,9 +625,10 @@ impl SenderPool {
                 connections: Vec::new(),
                 connection_pool: JoinSet::new(),
                 routes: Arc::clone(&routes),
+                state: Arc::clone(&state),
             },
             handle: SenderPoolFatHandle {
-                thin: SenderPoolHandle(request_tx, routes, receive_updates),
+                thin: SenderPoolHandle(request_tx, routes, receive_updates, state),
                 session: Arc::clone(&session),
                 api_id,
             },
@@ -468,40 +641,87 @@ impl SenderPoolRunner {
     /// Run the sender pool until [`SenderPoolHandle::quit`] is called or the returned future is dropped.
     ///
     /// Connections will be initiated on-demand whenever the first request to a datacenter is made.
-    pub async fn run(mut self) {
+    pub async fn run(self) {
+        if let Err(error) = self.run_checked().await {
+            warn!(%error, "sender pool stopped unexpectedly");
+        }
+    }
+
+    /// Run with observable internal task failures. Connection I/O failures are
+    /// reported as events and to their callers; a later call may reconnect.
+    pub async fn run_checked(mut self) -> Result<(), PoolRunError> {
+        let mut failure = None;
         loop {
             tokio::select! {
                 biased;
                 completion = self.connection_pool.join_next(), if !self.connection_pool.is_empty() => {
-                    if let Some(reason) = completion.unwrap().err().and_then(|err| err.try_into_panic().ok()) {
-                            panic::resume_unwind(reason);
-                        }
-                    self.connections
-                        .retain(|connection| !connection.abort_handle.is_finished());
-                    self.routes.write().unwrap_or_else(|e| e.into_inner())
-                        .entries.retain(|(_, tx)| !tx.is_closed());
+                    if let Some(Err(error)) = completion.map(|completion| self.record_completion(completion)) {
+                        failure = Some(error);
+                        break;
+                    }
                 }
                 request = self.request_rx.recv() => {
-                    let flow = if let Some(request) = request {
-                        self.process_request(request).await
-                    } else {
-                        ControlFlow::Break(())
-                    };
-                    match flow {
-                        ControlFlow::Continue(_) => continue,
-                        ControlFlow::Break(_) => break,
-                    }
+                    if let Some(request) = request {
+                        if self.process_request(request).await.is_break() { break; }
+                    } else { break; }
                 }
             }
         }
-
-        {
-            let mut cache = self.routes.write().unwrap_or_else(|e| e.into_inner());
-            cache.stopping = true;
-            cache.entries.clear();
+        self.close_routes();
+        self.request_rx.close();
+        // Retire queued permits before their response channels are dropped.
+        while self.request_rx.try_recv().is_ok() {}
+        self.connections.clear();
+        if failure.is_some() {
+            self.connection_pool.abort_all();
         }
-        self.connections.clear(); // drop all channels to cause the `run_sender` loops to stop
-        self.connection_pool.join_all().await;
+        while let Some(completion) = self.connection_pool.join_next().await {
+            if let Err(error) = self.record_completion(completion) {
+                failure = Some(error);
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
+
+    fn record_completion(
+        &mut self,
+        completion: Result<(i32, Result<(), ReadError>), tokio::task::JoinError>,
+    ) -> Result<(), PoolRunError> {
+        self.connections
+            .retain(|connection| !connection.abort_handle.is_finished());
+        self.state
+            .active
+            .store(self.connections.len(), Ordering::Relaxed);
+        self.routes
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .entries
+            .retain(|(_, tx)| !tx.is_closed());
+        match completion {
+            Ok((dc_id, result)) => {
+                let category = result
+                    .err()
+                    .map(|error| InvocationError::from(error).category());
+                let _ = self
+                    .state
+                    .events
+                    .send(PoolEvent::ConnectionClosed { dc_id, category });
+                Ok(())
+            }
+            Err(error) if error.is_panic() => {
+                let error = PoolRunError::TaskPanicked;
+                let _ = self.state.events.send(PoolEvent::RunnerFailed(error));
+                Err(error)
+            }
+            Err(_) => Ok(()), // explicit disconnect/termination cancellation
+        }
+    }
+
+    fn close_routes(&self) {
+        let mut cache = self.routes.write().unwrap_or_else(|e| e.into_inner());
+        cache.stopping = true;
+        cache.entries.clear();
+        cache.control_changed.notify_waiters();
     }
 
     async fn process_request(&mut self, request: Request) -> ControlFlow<()> {
@@ -529,6 +749,10 @@ impl SenderPoolRunner {
                     } {
                         Ok(x) => x,
                         Err(e) => {
+                            let _ = self.state.events.send(PoolEvent::SetupFailed {
+                                dc_id,
+                                category: e.category(),
+                            });
                             drop(permit);
                             let _ = tx.send(Err(e));
                             return ControlFlow::Continue(());
@@ -581,6 +805,9 @@ impl SenderPoolRunner {
                         true
                     }
                 });
+                self.state
+                    .active
+                    .store(self.connections.len(), Ordering::Relaxed);
                 ControlFlow::Continue(())
             }
             Request::Quit => ControlFlow::Break(()),
@@ -612,12 +839,15 @@ impl SenderPoolRunner {
         self.session.set_dc_option(&dc_option).await?;
 
         let (rpc_tx, rpc_rx) = mpsc::unbounded_channel();
-        let abort_handle = self.connection_pool.spawn(run_sender(
-            sender,
-            rpc_rx,
-            self.updates_tx.clone(),
-            dc_option.id == self.session.home_dc_id()?,
-        ));
+        let updates = self.updates_tx.clone();
+        let home_sender = dc_option.id == self.session.home_dc_id()?;
+        let state = Arc::clone(&self.state);
+        let abort_handle = self.connection_pool.spawn(async move {
+            (
+                dc_id,
+                run_sender(sender, rpc_rx, updates, home_sender, state).await,
+            )
+        });
         {
             let mut cache = self.routes.write().unwrap_or_else(|e| e.into_inner());
             cache.publish(dc_id, &rpc_tx);
@@ -627,6 +857,10 @@ impl SenderPoolRunner {
             rpc_tx,
             abort_handle,
         });
+        self.state
+            .active
+            .store(self.connections.len(), Ordering::Relaxed);
+        let _ = self.state.events.send(PoolEvent::Connected { dc_id });
         Ok(self.connections.last().unwrap())
     }
 
@@ -699,8 +933,21 @@ impl SenderPoolRunner {
         &self,
         config: tl::types::Config,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        for option in config
-            .dc_options
+        self.update_dc_options(&config.dc_options).await
+    }
+
+    async fn update_dc_options(
+        &self,
+        options: &[tl::enums::DcOption],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        for option in options
+            .iter()
+            .map(|tl::enums::DcOption::Option(o)| o)
+            .filter(|o| !o.media_only && !o.tcpo_only && o.r#static)
+        {
+            validate_dc_endpoint(option)?;
+        }
+        for option in options
             .iter()
             .map(|tl::enums::DcOption::Option(option)| option)
             .filter(|option| !option.media_only && !option.tcpo_only && option.r#static)
@@ -716,21 +963,35 @@ impl SenderPoolRunner {
                 });
             if option.ipv6 {
                 dc_option.ipv6 = SocketAddrV6::new(
-                    option
-                        .ip_address
-                        .parse()
-                        .expect("Telegram to return a valid IPv6 address"),
-                    option.port as _,
+                    option.ip_address.parse().map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "invalid datacenter IPv6 address",
+                        )
+                    })?,
+                    u16::try_from(option.port).map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "invalid datacenter port",
+                        )
+                    })?,
                     0,
                     0,
                 );
             } else {
                 dc_option.ipv4 = SocketAddrV4::new(
-                    option
-                        .ip_address
-                        .parse()
-                        .expect("Telegram to return a valid IPv4 address"),
-                    option.port as _,
+                    option.ip_address.parse().map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "invalid datacenter IPv4 address",
+                        )
+                    })?,
+                    u16::try_from(option.port).map_err(|_| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "invalid datacenter port",
+                        )
+                    })?,
                 );
                 if dc_option.ipv6.ip().to_bits() == 0 {
                     dc_option.ipv6 = SocketAddrV6::new(
@@ -744,6 +1005,30 @@ impl SenderPoolRunner {
             self.session.set_dc_option(&dc_option).await?;
         }
         Ok(())
+    }
+}
+
+fn validate_dc_endpoint(option: &tl::types::DcOption) -> std::io::Result<()> {
+    let valid_ip = if option.ipv6 {
+        option.ip_address.parse::<Ipv6Addr>().is_ok()
+    } else {
+        option.ip_address.parse::<Ipv4Addr>().is_ok()
+    };
+    if !valid_ip || !(1..=65535).contains(&option.port) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid datacenter endpoint",
+        ));
+    }
+    Ok(())
+}
+
+impl Drop for SenderPoolRunner {
+    fn drop(&mut self) {
+        self.close_routes();
+        self.state.active.store(0, Ordering::Relaxed);
+        self.state.stopped.store(true, Ordering::Release);
+        // JoinSet aborts all children when dropped, including cancellation of run().
     }
 }
 
@@ -769,11 +1054,34 @@ async fn wait_for_connection_cancel(routes: Routes, dc_id: i32) {
     }
 }
 
+#[derive(Debug)]
+enum UpdateDeliveryError {
+    Full,
+    Closed,
+}
+
+fn forward_update(
+    updates: &mpsc::Sender<UpdatesLike>,
+    state: &PoolState,
+    update: UpdatesLike,
+) -> Result<(), UpdateDeliveryError> {
+    match updates.try_send(update) {
+        Ok(()) => Ok(()),
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            state.dropped.fetch_add(1, Ordering::Relaxed);
+            let _ = state.events.send(PoolEvent::UpdateOverflow);
+            Err(UpdateDeliveryError::Full)
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => Err(UpdateDeliveryError::Closed),
+    }
+}
+
 async fn run_sender(
     mut sender: Sender<Transport, grammers_mtproto::mtp::Encrypted>,
     mut rpc_rx: mpsc::UnboundedReceiver<Rpc>,
     updates: Option<mpsc::Sender<UpdatesLike>>,
     home_sender: bool,
+    state: Arc<PoolState>,
 ) -> Result<(), ReadError> {
     let mut dropped: usize = 0;
     let mut last_update_limit_warn = Instant::now();
@@ -787,9 +1095,9 @@ async fn run_sender(
                         continue;
                     };
                     for new_updates in all_new_updates {
-                        if let Err(e) = updates.try_send(new_updates) {
+                        if let Err(e) = forward_update(updates, &state, new_updates) {
                             match e {
-                                mpsc::error::TrySendError::Full(_) => {
+                                UpdateDeliveryError::Full => {
                                     dropped += 1;
                                     if last_update_limit_warn.elapsed() >= UPDATES_DROPPED_LOG_COOLDOWN {
                                         warn!(
@@ -802,7 +1110,7 @@ async fn run_sender(
                                         last_update_limit_warn = Instant::now();
                                     }
                                 }
-                                mpsc::error::TrySendError::Closed(_) => {
+                                UpdateDeliveryError::Closed => {
                                     debug!("updates channel closed, stopping update forwarding");
                                     updates_closed = true;
                                     break;
@@ -813,7 +1121,7 @@ async fn run_sender(
                 },
                 Err(err) => {
                     if let (true, Some(updates)) = (home_sender, &updates) {
-                        let _ = updates.try_send(UpdatesLike::ConnectionClosed);
+                        let _ = forward_update(updates, &state, UpdatesLike::ConnectionClosed);
                     }
                     break Err(err)
                 },
@@ -866,6 +1174,195 @@ impl fmt::Debug for Request {
 #[cfg(test)]
 mod optimization_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn admission_covers_warm_raw_and_tracked_entry_points() {
+        let pool = SenderPool::with_configuration(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+            ConnectionParams {
+                max_pending_requests: std::num::NonZeroUsize::new(1),
+                ..Default::default()
+            },
+        );
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        pool.handle.1.write().unwrap().publish(4, &tx);
+        let held = pool
+            .handle
+            .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None)
+            .unwrap();
+        let rpc = rx.recv().await.unwrap();
+        rpc.permit.as_ref().unwrap().mark_sent();
+        drop(held);
+        let tracker = crate::InvocationTracker::default();
+        let result = pool
+            .handle
+            .raw_invoke_shared_in_dc_tracked(
+                4,
+                Bytes::from_static(&[1; 4]),
+                tracker.try_acquire().unwrap(),
+            )
+            .await;
+        assert!(
+            matches!(result, Err(InvocationError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock)
+        );
+        assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+        assert!(
+            matches!(pool.handle.raw_invoke_in_dc(4, vec![1; 4]).await, Err(InvocationError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock)
+        );
+        assert!(
+            matches!(pool.handle.raw_invoke_shared_in_dc(4, Bytes::from_static(&[1; 4])).await, Err(InvocationError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock)
+        );
+        assert!(
+            pool.handle
+                .start_raw_invoke_shared_in_dc_tracked(
+                    4,
+                    Bytes::from_static(&[1; 4]),
+                    tracker.try_acquire().unwrap()
+                )
+                .is_err()
+        );
+        let rejected = pool.handle.status().admission_rejections;
+        assert!(matches!(
+            pool.handle.raw_invoke_in_dc(4, vec![1; 3]).await,
+            Err(InvocationError::Deserialize(_))
+        ));
+        assert_eq!(pool.handle.status().admission_rejections, rejected);
+        drop(rpc);
+        assert!(
+            pool.handle
+                .start_raw_invoke_shared_in_dc_tracked(
+                    4,
+                    Bytes::from_static(&[1; 4]),
+                    tracker.try_acquire().unwrap()
+                )
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_dc_config_is_rejected_before_any_storage_write() {
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        let pool = SenderPool::new(Arc::clone(&session), 1);
+        let valid = tl::types::DcOption {
+            ipv6: false,
+            media_only: false,
+            tcpo_only: false,
+            cdn: false,
+            r#static: true,
+            this_port_only: false,
+            id: 90,
+            ip_address: "127.0.0.1".into(),
+            port: 443,
+            secret: None,
+        };
+        for (ip, port) in [
+            ("invalid", 443),
+            ("127.0.0.1", 0),
+            ("127.0.0.1", -1),
+            ("127.0.0.1", 65536),
+        ] {
+            let invalid = tl::types::DcOption {
+                id: 91,
+                ip_address: ip.into(),
+                port,
+                ..valid.clone()
+            };
+            let error = pool
+                .runner
+                .update_dc_options(&[valid.clone().into(), invalid.into()])
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                std::io::ErrorKind::InvalidData
+            );
+            assert!(session.dc_option(90).unwrap().is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn overflow_is_counted_and_observer_lag_is_explicit() {
+        let state = PoolState::default();
+        let mut events = state.events.subscribe();
+        let (tx, _rx) = mpsc::channel(1);
+        forward_update(&tx, &state, UpdatesLike::ConnectionClosed).unwrap();
+        for _ in 0..65 {
+            assert!(forward_update(&tx, &state, UpdatesLike::ConnectionClosed).is_err());
+        }
+        assert_eq!(state.dropped.load(Ordering::Relaxed), 65);
+        assert!(matches!(
+            events.recv().await,
+            Err(broadcast::error::RecvError::Lagged(1))
+        ));
+        assert_eq!(events.recv().await.unwrap(), PoolEvent::UpdateOverflow);
+    }
+
+    #[tokio::test]
+    async fn bounded_admission_survives_waiter_cancellation() {
+        let mut pool = SenderPool::with_configuration(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+            ConnectionParams {
+                max_pending_requests: std::num::NonZeroUsize::new(1),
+                ..Default::default()
+            },
+        );
+        let first = pool
+            .handle
+            .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None)
+            .unwrap();
+        let request = pool.runner.request_rx.recv().await.unwrap();
+        drop(first);
+        assert!(
+            matches!(pool.handle.start_invoke_shared(4, Bytes::from_static(&[1; 4]), None), Err(InvocationError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock)
+        );
+        assert_eq!(pool.handle.status().admission_rejections, 1);
+        drop(request);
+        assert!(
+            pool.handle
+                .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None)
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn parked_pool_rejects_requests_before_activation() {
+        let pool = SenderPool::parked(
+            erase(Arc::new(
+                grammers_session::storages::MemorySession::default(),
+            )),
+            1,
+            ConnectionParams::default(),
+        );
+        assert!(matches!(
+            pool.handle
+                .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None),
+            Err(InvocationError::Dropped(_))
+        ));
+        assert!(pool.handle.activate());
+        assert!(
+            pool.handle
+                .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None)
+                .is_ok()
+        );
+        pool.handle.quit();
+        assert!(!pool.handle.activate());
+    }
+
+    #[tokio::test]
+    async fn checked_runner_classifies_child_panic_and_clears_routes() {
+        let mut pool = SenderPool::new(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+        );
+        pool.runner
+            .connection_pool
+            .spawn(async { panic!("private panic data") });
+        let result = pool.runner.run_checked().await;
+        assert_eq!(result, Err(PoolRunError::TaskPanicked));
+        assert!(pool.handle.status().stopped);
+    }
 
     #[tokio::test]
     async fn regression_cancelled_cold_call_does_not_block_pool_shutdown() {
@@ -1043,7 +1540,10 @@ mod optimization_tests {
 
     fn fake_handle() -> (SenderPoolHandle, mpsc::UnboundedReceiver<Request>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (SenderPoolHandle(tx, Routes::default(), true), rx)
+        (
+            SenderPoolHandle(tx, Routes::default(), true, Arc::default()),
+            rx,
+        )
     }
 
     #[test]
@@ -1144,7 +1644,7 @@ mod optimization_tests {
             drop(peer.unwrap());
             let result = tokio::time::timeout(
                 Duration::from_secs(1),
-                run_sender(sender, rpc_rx, updates, true),
+                run_sender(sender, rpc_rx, updates, true, Arc::default()),
             )
             .await
             .unwrap();
@@ -1279,7 +1779,7 @@ mod optimization_tests {
             while let Some(rpc) = rx.recv().await {
                 let _ = rpc.tx.send(Ok(vec![1; 4]));
             }
-            Ok(())
+            (4, Ok(()))
         });
         runner.connections.push(ConnectionInfo {
             dc_id: 4,
@@ -1399,7 +1899,7 @@ mod optimization_tests {
     #[tokio::test]
     async fn malformed_raw_bodies_fail_before_reaching_the_runner() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = SenderPoolHandle(tx, Routes::default(), true);
+        let handle = SenderPoolHandle(tx, Routes::default(), true, Arc::default());
         for len in 0..4 {
             assert!(matches!(
                 handle.raw_invoke_in_dc(4, vec![0; len]).await,
@@ -1541,7 +2041,7 @@ mod optimization_tests {
     async fn shared_and_owned_request_apis_preserve_the_payload_allocation() {
         for shared in [false, true] {
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let handle = SenderPoolHandle(tx, Routes::default(), true);
+            let handle = SenderPoolHandle(tx, Routes::default(), true, Arc::default());
             let body = vec![1, 0, 0, 0];
             let address = body.as_ptr() as usize;
             let call = tokio::spawn(async move {
@@ -1597,7 +2097,7 @@ mod optimization_tests {
     #[tokio::test]
     async fn typed_retry_reuses_request_storage_and_keeps_retry_policy() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let handle = SenderPoolHandle(tx, Routes::default(), true);
+        let handle = SenderPoolHandle(tx, Routes::default(), true, Arc::default());
         let call = tokio::spawn(async move { handle.do_invoke_in_dc(4, vec![1, 0, 0, 0]).await });
         let Request::Invoke {
             body: first, tx, ..

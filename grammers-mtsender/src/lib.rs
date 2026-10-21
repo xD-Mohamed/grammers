@@ -36,12 +36,16 @@ pub use invocation_tracker::{
 };
 
 pub use configuration::{
-    AutoSleep, ConnectionParams, NoRetries, RetryContext, RetryPolicy, UpdatesConfiguration,
+    AutoSleep, ConnectionParams, NoRetries, RetryBudget, RetryContext, RetryPolicy,
+    UpdatesConfiguration,
 };
-pub use errors::{InvocationError, ReadError, RpcError};
+pub use errors::{InvocationError, InvocationErrorCategory, ReadError, RpcError};
 pub use net::ServerAddr;
 pub use sender::{Sender, connect, connect_with_auth, generate_auth_key};
-pub use sender_pool::{SenderPool, SenderPoolFatHandle, SenderPoolHandle, SenderPoolRunner};
+pub use sender_pool::{
+    PoolEvent, PoolRunError, PoolStatus, SenderPool, SenderPoolFatHandle, SenderPoolHandle,
+    SenderPoolRunner,
+};
 pub use updates_receiver::UpdatesReceiver;
 
 /// Shared, immutable serialized request bytes for repeated raw invocations.

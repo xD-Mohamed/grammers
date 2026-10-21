@@ -79,6 +79,11 @@ pub struct ConnectionParams {
     /// None preserves unlimited establishment; this is not an ordinary RPC timeout.
     pub connection_timeout: Option<Duration>,
 
+    /// Maximum queued plus in-flight requests. At capacity admission fails with
+    /// [`std::io::ErrorKind::WouldBlock`]. Caller cancellation does not release
+    /// capacity held by an already serialized request. `None` is unlimited.
+    pub max_pending_requests: Option<NonZeroUsize>,
+
     #[doc(hidden)]
     pub __non_exhaustive: (),
 }
@@ -168,6 +173,7 @@ impl Default for ConnectionParams {
             receive_updates: true,
             ack_batch: 1,
             connection_timeout: None,
+            max_pending_requests: None,
             __non_exhaustive: (),
         }
     }
@@ -218,5 +224,93 @@ impl Default for AutoSleep {
             threshold: Duration::from_secs(60),
             io_errors_as_flood_of: Some(Duration::from_secs(1)),
         }
+    }
+}
+
+/// Bound cumulative sleep approved by another retry policy. The wrapper either
+/// preserves the complete delay or stops; it never shortens a server flood wait.
+/// This is a sleep budget, not an elapsed request deadline or replay guarantee.
+///
+/// ```
+/// use std::time::Duration;
+/// use grammers_mtsender::{AutoSleep, RetryBudget};
+/// let policy = RetryBudget::new(AutoSleep::default(), Duration::from_secs(30));
+/// ```
+pub struct RetryBudget<P> {
+    policy: P,
+    max_sleep: Duration,
+}
+
+impl<P: RetryPolicy> RetryBudget<P> {
+    /// Wrap `policy` with a maximum cumulative retry sleep.
+    pub fn new(policy: P, max_sleep: Duration) -> Self {
+        Self { policy, max_sleep }
+    }
+}
+
+impl<P: RetryPolicy> RetryPolicy for RetryBudget<P> {
+    fn should_retry(&self, ctx: &RetryContext) -> ControlFlow<(), Duration> {
+        match self.policy.should_retry(ctx) {
+            ControlFlow::Continue(delay)
+                if ctx
+                    .slept_so_far
+                    .checked_add(delay)
+                    .is_some_and(|total| total <= self.max_sleep) =>
+            {
+                ControlFlow::Continue(delay)
+            }
+            _ => ControlFlow::Break(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod retry_budget_tests {
+    use super::*;
+
+    struct Fixed(Option<Duration>);
+    impl RetryPolicy for Fixed {
+        fn should_retry(&self, _: &RetryContext) -> ControlFlow<(), Duration> {
+            self.0.map_or(ControlFlow::Break(()), ControlFlow::Continue)
+        }
+    }
+    fn context(slept_so_far: Duration) -> RetryContext {
+        RetryContext {
+            fail_count: NonZeroU32::MIN,
+            slept_so_far,
+            error: InvocationError::Dropped("test"),
+        }
+    }
+    #[test]
+    fn retry_budget_preserves_delays_and_stops_at_total_limit() {
+        let delay = Duration::from_secs(2);
+        let policy = RetryBudget::new(Fixed(Some(delay)), Duration::from_secs(5));
+        assert_eq!(
+            policy.should_retry(&context(Duration::from_secs(3))),
+            ControlFlow::Continue(delay)
+        );
+        assert_eq!(
+            policy.should_retry(&context(Duration::from_secs(4))),
+            ControlFlow::Break(())
+        );
+        assert_eq!(
+            RetryBudget::new(Fixed(Some(delay)), Duration::ZERO)
+                .should_retry(&context(Duration::ZERO)),
+            ControlFlow::Break(())
+        );
+        assert_eq!(
+            RetryBudget::new(Fixed(Some(Duration::ZERO)), Duration::ZERO)
+                .should_retry(&context(Duration::ZERO)),
+            ControlFlow::Continue(Duration::ZERO)
+        );
+        assert_eq!(
+            RetryBudget::new(Fixed(None), Duration::MAX).should_retry(&context(Duration::ZERO)),
+            ControlFlow::Break(())
+        );
+        assert_eq!(
+            RetryBudget::new(Fixed(Some(delay)), Duration::MAX)
+                .should_retry(&context(Duration::MAX)),
+            ControlFlow::Break(())
+        );
     }
 }
