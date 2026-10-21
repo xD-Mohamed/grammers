@@ -466,3 +466,82 @@ its trailer size, capped at 32 KiB. Eight alternating medians improved only
 allocation policy is unchanged. Prior AES experiments were also rejected.
 These fixes target failure handling and avoidable typed-error work, not a measured
 reduction in steady-state whole-process CPU or network latency.
+
+## Safety and usability dependency refresh (2026-10-21)
+
+`Cargo.lock` is retained for reproducible workspace checks. `cargo update` selected
+49 compatible package updates, including Tokio 1.53.1 -> 1.54.0 and
+glass_pumpkin 2.0.0-rc1 -> the stable 2.0.0 release. No incompatible major update,
+runtime replacement, or new prerelease was forced. This means latest compatible
+versions under the manifests on this date, rather than every crate's latest major.
+The [Tokio changelog](https://github.com/tokio-rs/tokio/blob/tokio-1.54.0/tokio/CHANGELOG.md)
+includes scheduler, timer, synchronization and I/O fixes. The
+[glass_pumpkin changelog](https://github.com/LF-Decentralized-Trust-labs/agora-glass_pumpkin/blob/v2.0.0/CHANGELOG.md)
+documents its stable cryptographic API and Rust 1.88 requirement. Registry metadata
+marked both versions non-yanked. Neither changelog establishes a workload speedup.
+
+Fresh local measurements used Windows 11 Pro 10.0.26300, an AMD Ryzen 9 9900X3D
+(12 cores, 24 logical processors), rustc 1.94.1 (e408947bf), Cargo 1.94.1, and the
+ordinary optimized release profile for x86_64-pc-windows-msvc. No custom CPU flags
+or global toolchain changes were used. The baseline was detached revision
+`c4d4f75`; the comparison source was `48e76dd` with the refreshed lockfile. The
+baseline copied the pre-refresh lockfile, then resolved offline solely to reconcile
+its older workspace graph (without changing retained dependency versions). Baseline
+and comparison builds used separate target directories.
+
+Each benchmark ran three times per revision. Entries below are the middle of the
+three printed medians, in nanoseconds per operation. Each printed median already
+uses eight alternating rounds for routing/ACKs or ten for clones. Routing uses
+20,000 requests per round; clones use 500,000; ACKs use 100,000. Revisions were
+measured in sequence, not alternating, so small changes may include system noise.
+
+| Component/path | Baseline | Current |
+|---|---:|---:|
+| Routing, current-thread runtime, pool queue | 1088.1 | 1178.8 |
+| Routing, current-thread runtime, direct route | 1020.7 | 1111.0 |
+| Routing, four-worker runtime, pool queue | 1373.9 | 1397.9 |
+| Routing, four-worker runtime, direct route | 1284.7 | 1298.7 |
+| Clone 152 bytes, Vec / shared | 25.0 / 11.7 | 24.5 / 11.7 |
+| Clone 1024 bytes, Vec / shared | 29.9 / 12.0 | 29.2 / 11.7 |
+| Clone 8192 bytes, Vec / shared | 59.3 / 12.0 | 56.5 / 11.7 |
+| One-ID ACK, allocate / reuse | 122.3 / 31.8 | 124.6 / 32.2 |
+
+Shared clones and reused ACKs retain their component advantage against the
+allocating comparison paths within the current executable. This refresh does not
+demonstrate a general throughput improvement: current-thread direct routing was
+about 8.8% slower against the baseline, while four-worker direct routing changed
+about 1.1%. The first routing runs also had substantial outliers (baseline
+current-thread direct 1374.1 ns; current four-worker direct 1660.7 ns). Source
+changes and dependency changes are confounded; these measurements do not assign
+the difference to a specific change. No speculative hot-path optimization was
+added to compensate for these results.
+
+The resource improvement in this change is bounded ownership when configured:
+`ConnectionParams::max_pending_requests` can cap queued plus in-flight SDK
+requests, returning `WouldBlock` at capacity. Its default remains `None`
+(unlimited). Caller cancellation cannot release a serialized request's permit
+early. Concurrent downloads own their chunk futures and hold at most the worker
+count in progress (four in the normal concurrent download), instead of leaving
+detached workers or an unbounded completed-result queue behind. A worker handles
+at most one 512 KiB response chunk at a time; RPC, transport and allocator storage
+are additional. These are source invariants covered by offline regression tests,
+not measurements of total process RSS, CPU savings, network speed or Telegram
+latency. Already-sent SDK requests retain their protocol lifetime on cancellation.
+
+Reproduce the three selected local benchmarks, three runs each, with no account or
+Telegram connection:
+
+```sh
+cargo test --locked --release -p grammers-mtsender --lib benchmark_warm_connection_route -- --ignored --nocapture --test-threads=1
+cargo test --locked --release -p grammers-mtsender --lib benchmark_prepared_request_clones -- --ignored --nocapture --test-threads=1
+cargo test --locked --release -p grammers-mtproto --lib benchmark_ack_serialization -- --ignored --nocapture --test-threads=1
+```
+
+All 18 selected benchmark invocations passed (nine baseline, nine current). The
+fresh dependency graph compiled in the current release benchmark runs. Full
+workspace validation is recorded separately from these component measurements.
+Locked `cargo metadata` for default/all-feature Windows x86_64 and all-feature
+Linux x86_64 graphs reports a highest declared dependency `rust-version` of 1.89
+(AES; additionally UUID with all features). This is metadata inspection rather
+than a tested minimum toolchain; these measurements used Rust 1.94.1. No live
+authorization, authenticated RPC, consumer deployment or production profile ran.
