@@ -13,6 +13,7 @@ mod bots;
 mod chats;
 #[allow(clippy::module_inception)]
 mod client;
+mod device;
 mod dialogs;
 mod files;
 mod iter_buffer;
@@ -28,6 +29,7 @@ pub use bots::{InlineResult, InlineResultIter};
 pub use chats::{ParticipantIter, ParticipantPermissions, ProfilePhotoIter};
 pub(crate) use client::ClientInner;
 pub use client::{Client, ClientConfiguration};
+pub use device::DeviceConfig;
 pub use dialogs::DialogIter;
 pub use files::DownloadIter;
 pub use iter_buffer::IterBuffer;

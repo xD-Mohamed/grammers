@@ -349,6 +349,16 @@ impl ClientBuilder {
         self.configuration = configuration;
         self
     }
+    /// Apply grouped device/language settings. Later flat setters override only
+    /// their own field; later `connection_params` replaces the complete group.
+    pub fn device(mut self, device: super::DeviceConfig) -> Self {
+        self.params.device_model = device.device_model;
+        self.params.system_version = device.system_version;
+        self.params.app_version = device.app_version;
+        self.params.system_lang_code = device.system_lang_code;
+        self.params.lang_code = device.lang_code;
+        self
+    }
     /// Device name supplied to Telegram.
     pub fn device_model(mut self, value: impl Into<String>) -> Self {
         self.params.device_model = value.into();
@@ -815,6 +825,35 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grouped_device_settings_preserve_omitted_defaults_and_flat_overrides() {
+        let defaults = ConnectionParams::default();
+        let builder = Client::builder(1)
+            .device(crate::DeviceConfig {
+                device_model: "Grouped device".into(),
+                app_version: "2.3".into(),
+                ..Default::default()
+            })
+            .language("ar");
+        assert_eq!(builder.params.device_model, "Grouped device");
+        assert_eq!(builder.params.app_version, "2.3");
+        assert_eq!(builder.params.system_version, defaults.system_version);
+        assert_eq!(builder.params.system_lang_code, defaults.system_lang_code);
+        assert_eq!(builder.params.lang_code, "ar");
+        let builder = builder.device(crate::DeviceConfig {
+            device_model: "Second".into(),
+            system_version: "OS 5".into(),
+            app_version: "3".into(),
+            system_lang_code: "fr".into(),
+            lang_code: "de".into(),
+        });
+        assert_eq!(builder.params.device_model, "Second");
+        assert_eq!(builder.params.system_version, "OS 5");
+        assert_eq!(builder.params.app_version, "3");
+        assert_eq!(builder.params.system_lang_code, "fr");
+        assert_eq!(builder.params.lang_code, "de");
+    }
 
     // Own the real parked runner in a task stalled before queue processing.
     // This keeps admission and cancellation real without contacting Telegram.

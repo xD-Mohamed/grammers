@@ -113,7 +113,7 @@ pub mod peer;
 pub mod update;
 pub(crate) mod utils;
 
-pub use client::{Client, ClientBuildError, ClientBuilder, LifecycleError, SessionSource, SignInError};
+pub use client::{Client, ClientBuildError, ClientBuilder, DeviceConfig, LifecycleError, SessionSource, SignInError};
 #[cfg(feature = "qr-login")]
 pub use client::{QrLogin, QrLoginToken};
 pub use grammers_mtsender::{self as sender, InvocationError, InvocationErrorCategory, PoolEvent, PoolRunError, PoolStatus, SenderPool};
