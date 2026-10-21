@@ -528,20 +528,33 @@ impl std::error::Error for LifecycleError {
 type Completion = Result<(), LifecycleError>;
 type SharedJoin = Shared<BoxFuture<'static, Completion>>;
 
+#[derive(Clone)]
+enum CompletionRecord {
+    // A request closure may be the first visible symptom of a runner panic.
+    // Keep its error until joined termination can establish the primary cause.
+    ClosedRequest(LifecycleError),
+    Final(Completion),
+}
+
 // The watch lock linearizes the first terminal reason. Publish a timeout before
 // aborting so a woken join waiter cannot mistake that cancellation for its cause.
 fn publish_completion(
-    completion: &watch::Sender<Option<Completion>>,
+    completion: &watch::Sender<Option<CompletionRecord>>,
     result: Completion,
 ) -> Completion {
     completion.send_if_modified(|current| {
-        if current.is_some() {
-            return false;
-        }
-        *current = Some(result.clone());
+        let resolved = match current {
+            Some(CompletionRecord::Final(_)) => return false,
+            Some(CompletionRecord::ClosedRequest(error)) if result.is_ok() => Err(error.clone()),
+            _ => result.clone(),
+        };
+        *current = Some(CompletionRecord::Final(resolved));
         true
     });
-    completion.borrow().clone().unwrap_or(result)
+    match completion.borrow().as_ref() {
+        Some(CompletionRecord::Final(result)) => result.clone(),
+        _ => result,
+    }
 }
 
 struct RunningTask {
@@ -560,7 +573,7 @@ struct LifecycleState {
 pub(crate) struct ManagedLifecycle {
     handle: SenderPoolHandle,
     state: Mutex<LifecycleState>,
-    completion: watch::Sender<Option<Completion>>,
+    completion: watch::Sender<Option<CompletionRecord>>,
     shutdown_timeout: Duration,
 }
 impl ManagedLifecycle {
@@ -636,10 +649,43 @@ impl Client {
         Ok(())
     }
 
-    /// Start the runner and share one home-DC startup ping with concurrent callers.
+    /// Start the runner and check current home-DC connectivity with a fresh ping.
+    /// Every explicit call checks again; failures do not stop a healthy runner.
     /// A successful ping is not proof that the session is logged into an account.
     pub async fn connect(&self) -> Result<(), LifecycleError> {
         self.start().await?;
+        let managed = self.managed()?;
+        let join = {
+            let state = managed.state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.stopping {
+                return Err(LifecycleError::AlreadyStopped);
+            }
+            state
+                .task
+                .as_ref()
+                .ok_or(LifecycleError::AlreadyStopped)?
+                .join
+                .clone()
+        };
+        tokio::select! {
+            biased;
+            terminal = managed.wait_for_join(join) => terminal.and(Err(LifecycleError::AlreadyStopped)),
+            result = Self::ping_home(Arc::clone(&self.0.session), self.0.handle.clone()) => result,
+        }
+    }
+
+    async fn ping_home(session: Arc<ErasedSession>, handle: SenderPoolHandle) -> Completion {
+        let dc = session
+            .home_dc_id()
+            .map_err(|e| LifecycleError::Connectivity(Arc::new(e.into())))?;
+        handle
+            .invoke_in_dc(dc, &grammers_tl_types::functions::Ping { ping_id: 0 })
+            .await
+            .map(|_| ())
+            .map_err(|e| LifecycleError::Connectivity(Arc::new(e)))
+    }
+
+    async fn shared_startup(&self) -> Completion {
         let managed = self.managed()?;
         let (connection, join) = {
             let mut state = managed.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -651,18 +697,7 @@ impl Client {
                 .get_or_insert_with(|| {
                     let session = Arc::clone(&self.0.session);
                     let handle = self.0.handle.clone();
-                    async move {
-                        let dc = session
-                            .home_dc_id()
-                            .map_err(|e| LifecycleError::Connectivity(Arc::new(e.into())))?;
-                        handle
-                            .invoke_in_dc(dc, &grammers_tl_types::functions::Ping { ping_id: 0 })
-                            .await
-                            .map(|_| ())
-                            .map_err(|e| LifecycleError::Connectivity(Arc::new(e)))
-                    }
-                    .boxed()
-                    .shared()
+                    Self::ping_home(session, handle).boxed().shared()
                 })
                 .clone();
             let join = state
@@ -711,7 +746,7 @@ impl Client {
         let connected = tokio::select! {
             biased;
             terminal = managed.wait_for_join(join.clone()) => return terminal,
-            result = self.connect() => result,
+            result = self.shared_startup() => result,
         };
         if let Err(error) = connected {
             if matches!(&error, LifecycleError::Connectivity(e) if e.category() == grammers_mtsender::InvocationErrorCategory::Overloaded)
@@ -720,11 +755,19 @@ impl Client {
             }
             {
                 let state = managed.state.lock().unwrap_or_else(|e| e.into_inner());
-                // A closed reply can be secondary to a runner panic. Let its
-                // joined result establish that cause instead of masking it.
                 let closed = matches!(&error, LifecycleError::Connectivity(e) if e.category() == grammers_mtsender::InvocationErrorCategory::Closed);
-                if !state.stopping && !closed {
-                    let _ = publish_completion(&managed.completion, Err(error));
+                if !state.stopping {
+                    if closed {
+                        managed.completion.send_if_modified(|current| {
+                            if current.is_some() {
+                                return false;
+                            }
+                            *current = Some(CompletionRecord::ClosedRequest(error));
+                            true
+                        });
+                    } else {
+                        let _ = publish_completion(&managed.completion, Err(error));
+                    }
                 }
             }
             return self.stop().await;
@@ -825,6 +868,73 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn explicit_connect_retries_after_session_route_changes() {
+        let session = Arc::new(MemorySession::default());
+        session.set_home_dc_id(999).await.unwrap();
+        let client = Client::builder(1)
+            .session(SessionSource::storage(Arc::clone(&session)))
+            .build()
+            .await
+            .unwrap();
+        let mut events = client.events();
+        assert!(client.connect().await.is_err());
+        assert!(matches!(
+            events.try_recv(),
+            Ok(PoolEvent::SetupFailed { dc_id: 999, .. })
+        ));
+        session.set_home_dc_id(998).await.unwrap();
+        assert!(client.connect().await.is_err());
+        let repeated = events.try_recv();
+        client.stop().await.unwrap();
+        assert!(
+            matches!(repeated, Ok(PoolEvent::SetupFailed { dc_id: 998, .. })),
+            "{repeated:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_connect_does_not_report_cached_startup_success() {
+        let session = Arc::new(MemorySession::default());
+        session.set_home_dc_id(999).await.unwrap();
+        let client = Client::builder(1)
+            .session(SessionSource::storage(session))
+            .build()
+            .await
+            .unwrap();
+        client.start().await.unwrap();
+        client.managed().unwrap().state.lock().unwrap().connection =
+            Some(std::future::ready(Ok(())).boxed().shared());
+        let result = client.connect().await;
+        client.stop().await.unwrap();
+        assert!(
+            matches!(result, Err(LifecycleError::Connectivity(ref e)) if matches!(e.as_ref(), InvocationError::InvalidDc)),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn request_level_closed_startup_error_cannot_become_success() {
+        let client = Client::builder(1).build().await.unwrap();
+        client.start().await.unwrap();
+        client.managed().unwrap().state.lock().unwrap().connection = Some(
+            std::future::ready(Err(LifecycleError::Connectivity(Arc::new(
+                InvocationError::Dropped("request rejected while runner remains healthy"),
+            ))))
+            .boxed()
+            .shared(),
+        );
+        let result = client.run().await;
+        assert!(
+            matches!(result, Err(LifecycleError::Connectivity(ref e)) if matches!(e.as_ref(), InvocationError::Dropped(_))),
+            "{result:?}"
+        );
+        assert!(matches!(
+            client.stop().await,
+            Err(LifecycleError::Connectivity(_))
+        ));
+    }
 
     #[test]
     fn grouped_device_settings_preserve_omitted_defaults_and_flat_overrides() {
@@ -936,7 +1046,9 @@ mod tests {
             .managed()
             .unwrap()
             .completion
-            .send_replace(Some(Err(LifecycleError::RunnerPanicked)));
+            .send_replace(Some(CompletionRecord::Final(Err(
+                LifecycleError::RunnerPanicked,
+            ))));
         assert!(matches!(
             client.stop_with_timeout(Duration::ZERO).await,
             Err(LifecycleError::RunnerPanicked)
