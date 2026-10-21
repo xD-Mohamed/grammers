@@ -18,6 +18,7 @@ mod files;
 mod iter_buffer;
 mod messages;
 mod net;
+mod runtime;
 mod updates;
 
 pub use auth::{LoginToken, PasswordToken, SignInError};
@@ -30,3 +31,4 @@ pub use files::DownloadIter;
 pub use iter_buffer::IterBuffer;
 pub use messages::{GlobalSearchIter, MessageIter, SearchIter};
 pub use updates::UpdateStream;
+pub use runtime::{ClientBuildError, ClientBuilder, LifecycleError, SessionSource};

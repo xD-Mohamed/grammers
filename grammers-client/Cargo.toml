@@ -19,11 +19,15 @@ html = ["dep:html5ever"]
 proxy = ["grammers-mtsender/proxy"]
 parse_invite_link = ["dep:url"]
 fs = ["tokio/fs"]
+session-file = ["grammers-session/sqlite-storage"]
+session-string = ["grammers-session/session-string"]
+session-import = ["grammers-session/session-import"]
+session-import-files = ["session-import", "grammers-session/session-import-files"]
 default = ["fs"]
 
 [dependencies]
 futures-util = { version = "0.3.32", default-features = false, features = [
-    "alloc"
+    "alloc", "std"
 ] }
 grammers-crypto = { path = "../grammers-crypto", version = "0.10.0" }
 grammers-mtsender = { path = "../grammers-mtsender", version = "0.10.0" }
@@ -77,3 +81,7 @@ required-features = ["grammers-session/sqlite-storage"]
 [[example]]
 name = "import_session"
 required-features = ["grammers-session/session-import"]
+
+[[example]]
+name = "managed_client"
+required-features = ["session-string"]

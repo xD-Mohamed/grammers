@@ -17,17 +17,19 @@ pub(crate) struct ClientInner {
     pub(crate) handle: SenderPoolHandle,
     pub(crate) configuration: ClientConfiguration,
     pub(crate) auth_copied_to_dcs: tokio::sync::Mutex<Vec<i32>>,
+    pub(crate) lifecycle: Option<super::runtime::ManagedLifecycle>,
 }
 
 /// Wrapper around [`SenderPool`] to facilitate interaction with Telegram's API.
 ///
 /// This structure is the "entry point" of the library, from which you can start using the rest.
 ///
-/// This structure owns all the necessary connections to Telegram, and has implementations for the
-/// most basic methods, such as connecting, signing in, or processing network events.
+/// [`Client::builder`] creates a managed client with `start`, `stop`, and `run`.
+/// Legacy [`Client::new`] instances use an externally owned sender-pool runner.
 ///
-/// On drop, all state is synchronized to the session. The [`Session`] must be explicitly saved
-/// to disk with its corresponding save method for persistence.
+/// Drop does not synchronize asynchronous update state. Explicitly call your
+/// update stream's `sync_update_state`, then await [`Client::stop`] for managed
+/// clients. Dropping the last managed clone requests quit and aborts its runner.
 ///
 /// [`SenderPool`]: grammers_mtsender::SenderPool
 /// [`Session`]: grammers_session::Session

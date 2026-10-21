@@ -16,12 +16,10 @@ use super::{Client, ClientConfiguration, ClientInner};
 
 /// Method implementations directly related with network connectivity.
 impl Client {
-    /// Creates and returns a new client instance upon successful connection to Telegram.
-    ///
-    /// If the session in the configuration did not have an authorization key, a new one
-    /// will be created and the session will be saved with it.
-    ///
-    /// The connection will be initialized with the data from the input configuration.
+    /// Creates a client attached to an externally managed sender pool.
+    /// No connection or account authorization is performed here. The caller must
+    /// run and shut down the pool separately; prefer [`Client::builder`] for an
+    /// owned lifecycle with [`Client::start`] and [`Client::stop`].
     ///
     /// The [`grammers_mtsender::SenderPoolHandle`] does not keep a reference to the [`grammers_session::Session`]
     /// or `api_id`, but the [`grammers_mtsender::SenderPool`] itself does, so the latter is used as input to guarantee
@@ -55,13 +53,13 @@ impl Client {
         sender_pool: SenderPoolFatHandle,
         configuration: ClientConfiguration,
     ) -> Self {
-        // TODO Sender doesn't have a way to handle backpressure yet
         Self(Arc::new(ClientInner {
             session: sender_pool.session.clone(),
             api_id: sender_pool.api_id,
             handle: sender_pool.thin.clone(),
             auth_copied_to_dcs: Mutex::new(Vec::new()),
             configuration,
+            lifecycle: None,
         }))
     }
 
