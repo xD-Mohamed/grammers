@@ -360,6 +360,7 @@ impl InvocationError {
             Self::Io(e) => match e.kind() {
                 io::ErrorKind::WouldBlock => C::Overloaded,
                 io::ErrorKind::InvalidInput => C::InvalidRequest,
+                io::ErrorKind::InvalidData => C::Protocol,
                 _ => C::Network,
             },
             Self::Rpc(_) if self.is_flood_wait() => C::FloodWait,

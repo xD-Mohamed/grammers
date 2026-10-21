@@ -7,11 +7,14 @@
 // except according to those terms.
 
 use std::fmt;
+use std::future::{Future, poll_fn};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
 use std::num::NonZeroU32;
 use std::ops::{ControlFlow, Deref};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
+use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -650,23 +653,25 @@ impl SenderPoolRunner {
     /// Run with observable internal task failures. Connection I/O failures are
     /// reported as events and to their callers; a later call may reconnect.
     pub async fn run_checked(mut self) -> Result<(), PoolRunError> {
-        let mut failure = None;
-        loop {
-            tokio::select! {
-                biased;
-                completion = self.connection_pool.join_next(), if !self.connection_pool.is_empty() => {
-                    if let Some(Err(error)) = completion.map(|completion| self.record_completion(completion)) {
-                        failure = Some(error);
-                        break;
-                    }
-                }
-                request = self.request_rx.recv() => {
-                    if let Some(request) = request {
-                        if self.process_request(request).await.is_break() { break; }
-                    } else { break; }
-                }
+        let outcome = {
+            let mut driving = std::pin::pin!(self.drive());
+            poll_fn(
+                |cx| match catch_unwind(AssertUnwindSafe(|| driving.as_mut().poll(cx))) {
+                    Ok(Poll::Pending) => Poll::Pending,
+                    Ok(Poll::Ready(result)) => Poll::Ready(Ok(result)),
+                    Err(_) => Poll::Ready(Err(())),
+                },
+            )
+            .await
+        };
+        let mut failure = match outcome {
+            Ok(result) => result.err(),
+            Err(()) => {
+                let error = PoolRunError::TaskPanicked;
+                let _ = self.state.events.send(PoolEvent::RunnerFailed(error));
+                Some(error)
             }
-        }
+        };
         self.close_routes();
         self.request_rx.close();
         // Retire queued permits before their response channels are dropped.
@@ -681,6 +686,24 @@ impl SenderPoolRunner {
             }
         }
         failure.map_or(Ok(()), Err)
+    }
+
+    async fn drive(&mut self) -> Result<(), PoolRunError> {
+        loop {
+            tokio::select! {
+                biased;
+                completion = self.connection_pool.join_next(), if !self.connection_pool.is_empty() => {
+                    if let Some(Err(error)) = completion.map(|completion| self.record_completion(completion)) {
+                        return Err(error);
+                    }
+                }
+                request = self.request_rx.recv() => {
+                    if let Some(request) = request {
+                        if self.process_request(request).await.is_break() { return Ok(()); }
+                    } else { return Ok(()); }
+                }
+            }
+        }
     }
 
     fn record_completion(
@@ -724,6 +747,13 @@ impl SenderPoolRunner {
         cache.control_changed.notify_waiters();
     }
 
+    fn report_setup_failure(&self, dc_id: i32, error: &InvocationError) {
+        let _ = self.state.events.send(PoolEvent::SetupFailed {
+            dc_id,
+            category: error.category(),
+        });
+    }
+
     async fn process_request(&mut self, request: Request) -> ControlFlow<()> {
         match request {
             Request::Invoke {
@@ -749,10 +779,7 @@ impl SenderPoolRunner {
                     } {
                         Ok(x) => x,
                         Err(e) => {
-                            let _ = self.state.events.send(PoolEvent::SetupFailed {
-                                dc_id,
-                                category: e.category(),
-                            });
+                            self.report_setup_failure(dc_id, &e);
                             drop(permit);
                             let _ = tx.send(Err(e));
                             return ControlFlow::Continue(());
@@ -933,17 +960,14 @@ impl SenderPoolRunner {
         Ok(sender)
     }
 
-    async fn update_config(
-        &self,
-        config: tl::types::Config,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    async fn update_config(&self, config: tl::types::Config) -> Result<(), InvocationError> {
         self.update_dc_options(&config.dc_options).await
     }
 
     async fn update_dc_options(
         &self,
         options: &[tl::enums::DcOption],
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(), InvocationError> {
         for option in options
             .iter()
             .map(|tl::enums::DcOption::Option(o)| o)
@@ -1186,6 +1210,92 @@ mod optimization_tests {
     use super::*;
 
     #[tokio::test]
+    async fn public_checked_and_legacy_runners_contain_policy_panics() {
+        struct PanicPolicy;
+        impl crate::RetryPolicy for PanicPolicy {
+            fn should_retry(&self, _: &RetryContext) -> ControlFlow<(), Duration> {
+                panic!("private policy fixture")
+            }
+        }
+        for checked in [true, false] {
+            let pool = SenderPool::with_configuration(
+                Arc::new(grammers_session::storages::MemorySession::default()),
+                1,
+                ConnectionParams {
+                    retry_policy: Box::new(PanicPolicy),
+                    ..Default::default()
+                },
+            );
+            let handle = pool.handle.thin.clone();
+            let call = tokio::spawn(async move {
+                handle
+                    .invoke_in_dc(999, &tl::functions::Ping { ping_id: 0 })
+                    .await
+            });
+            let runner = tokio::spawn(async move {
+                if checked {
+                    pool.runner.run_checked().await
+                } else {
+                    pool.runner.run().await;
+                    Ok(())
+                }
+            });
+            let outcome = runner.await;
+            assert!(call.await.unwrap().is_err());
+            assert!(pool.handle.status().stopped);
+            if checked {
+                assert!(
+                    matches!(outcome, Ok(Err(PoolRunError::TaskPanicked))),
+                    "{outcome:?}"
+                );
+            } else {
+                assert!(matches!(outcome, Ok(Ok(()))), "{outcome:?}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_remote_config_reports_protocol_category_to_observers() {
+        fn as_invocation(error: impl Into<InvocationError>) -> InvocationError {
+            error.into()
+        }
+        let pool = SenderPool::new(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+        );
+        let mut events = pool.handle.events();
+        let option = tl::types::DcOption {
+            ipv6: false,
+            media_only: false,
+            tcpo_only: false,
+            cdn: false,
+            r#static: true,
+            this_port_only: false,
+            id: 90,
+            ip_address: "invalid".into(),
+            port: 443,
+            secret: None,
+        };
+        let error = as_invocation(
+            pool.runner
+                .update_dc_options(&[option.into()])
+                .await
+                .unwrap_err(),
+        );
+        pool.runner.report_setup_failure(90, &error);
+        assert_eq!(
+            events.recv().await.unwrap(),
+            PoolEvent::SetupFailed {
+                dc_id: 90,
+                category: InvocationErrorCategory::Protocol
+            }
+        );
+        assert!(
+            matches!(error, InvocationError::Io(e) if e.kind() == std::io::ErrorKind::InvalidData)
+        );
+    }
+
+    #[tokio::test]
     async fn admission_covers_warm_raw_and_tracked_entry_points() {
         let pool = SenderPool::with_configuration(
             Arc::new(grammers_session::storages::MemorySession::default()),
@@ -1284,7 +1394,10 @@ mod optimization_tests {
                 .await
                 .unwrap_err();
             assert_eq!(
-                error.downcast_ref::<std::io::Error>().unwrap().kind(),
+                match error {
+                    InvocationError::Io(e) => e.kind(),
+                    other => panic!("unexpected error: {other:?}"),
+                },
                 std::io::ErrorKind::InvalidData
             );
             assert!(session.dc_option(90).unwrap().is_none());
