@@ -29,6 +29,10 @@ use crate::import::{
     validate_endpoint, validate_key,
 };
 
+const PYROGRAM_SESSION_QUERY: &str = "SELECT CASE WHEN typeof(dc_id)='integer' THEN dc_id END, CASE WHEN typeof(api_id) IN ('integer','null') THEN api_id ELSE -1 END, CASE WHEN typeof(test_mode)='integer' THEN test_mode END, CASE WHEN typeof(auth_key)='blob' AND length(auth_key)=256 THEN auth_key END, CASE WHEN typeof(user_id)='integer' THEN user_id END, CASE WHEN typeof(is_bot)='integer' THEN is_bot END FROM sessions LIMIT 2";
+const KURIGRAM_SESSION_QUERY: &str = "SELECT CASE WHEN typeof(dc_id)='integer' THEN dc_id END, CASE WHEN typeof(api_id) IN ('integer','null') THEN api_id ELSE -1 END, CASE WHEN typeof(test_mode)='integer' THEN test_mode END, CASE WHEN typeof(auth_key)='blob' AND length(auth_key)=256 THEN auth_key END, CASE WHEN typeof(user_id)='integer' THEN user_id END, CASE WHEN typeof(is_bot)='integer' THEN is_bot END, CASE WHEN typeof(server_address)='text' AND octet_length(server_address)<=64 THEN server_address END, CASE WHEN typeof(port)='integer' THEN port END FROM sessions LIMIT 2";
+const TELETHON_SESSION_QUERY: &str = "SELECT CASE WHEN typeof(dc_id)='integer' THEN dc_id END, CASE WHEN typeof(server_address)='text' AND octet_length(server_address)<=64 THEN server_address END, CASE WHEN typeof(port)='integer' THEN port END, CASE WHEN typeof(auth_key)='blob' AND length(auth_key)=256 THEN auth_key END FROM sessions LIMIT 2";
+
 /// A sanitized file import failure. Underlying paths, SQL and data are discarded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -220,6 +224,7 @@ fn immutable_uri(path: &Path) -> Result<String, ImportFileError> {
         .ok_or(ImportFileError::Io(io::ErrorKind::InvalidInput))?;
     // Windows canonicalization adds an extended path prefix; SQLite URI paths
     // use regular absolute drive paths. Reject UNC paths to keep imports local.
+    #[cfg(windows)]
     let path = path
         .strip_prefix(r"\\?\")
         .unwrap_or(path)
@@ -377,9 +382,9 @@ async fn read_pyrogram(
     // CASE bounds credential and address materialization even for huge hostile
     // values. Never select peer/user inventories or temporary authentication keys.
     let query = if version == 3 {
-        "SELECT CASE WHEN typeof(dc_id)='integer' THEN dc_id END, CASE WHEN typeof(api_id) IN ('integer','null') THEN api_id ELSE -1 END, CASE WHEN typeof(test_mode)='integer' THEN test_mode END, CASE WHEN typeof(auth_key)='blob' AND length(auth_key)=256 THEN auth_key END, CASE WHEN typeof(user_id)='integer' THEN user_id END, CASE WHEN typeof(is_bot)='integer' THEN is_bot END FROM sessions LIMIT 2"
+        PYROGRAM_SESSION_QUERY
     } else {
-        "SELECT CASE WHEN typeof(dc_id)='integer' THEN dc_id END, CASE WHEN typeof(api_id) IN ('integer','null') THEN api_id ELSE -1 END, CASE WHEN typeof(test_mode)='integer' THEN test_mode END, CASE WHEN typeof(auth_key)='blob' AND length(auth_key)=256 THEN auth_key END, CASE WHEN typeof(user_id)='integer' THEN user_id END, CASE WHEN typeof(is_bot)='integer' THEN is_bot END, CASE WHEN typeof(server_address)='text' AND length(CAST(server_address AS BLOB))<=64 THEN server_address END, CASE WHEN typeof(port)='integer' THEN port END FROM sessions LIMIT 2"
+        KURIGRAM_SESSION_QUERY
     };
     let row = single_row(connection, query).await?;
     let dc = dc_id(&row)?;
@@ -433,7 +438,7 @@ async fn read_telethon(
         columns.push(("tmp_auth_key", "BLOB"));
     }
     schema(connection, "sessions", &columns).await?;
-    let row = single_row(connection, "SELECT CASE WHEN typeof(dc_id)='integer' THEN dc_id END, CASE WHEN typeof(server_address)='text' AND length(CAST(server_address AS BLOB))<=64 THEN server_address END, CASE WHEN typeof(port)='integer' THEN port END, CASE WHEN typeof(auth_key)='blob' AND length(auth_key)=256 THEN auth_key END FROM sessions LIMIT 2").await?;
+    let row = single_row(connection, TELETHON_SESSION_QUERY).await?;
     let dc = dc_id(&row)?;
     let endpoint = endpoint(&row, 1, 2)?;
     let key = auth_key(&row, 3)?;
@@ -849,6 +854,93 @@ mod tests {
             );
         });
         assert_eq!(fixture.snapshot(), before);
+    }
+
+    #[test]
+    fn immutable_uri_escapes_metacharacters_and_platform_path_syntax() {
+        assert_eq!(
+            immutable_uri(Path::new("/synthetic/%# space.session")).unwrap(),
+            "file:/synthetic/%25%23%20space.session?mode=ro&immutable=1"
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            immutable_uri(Path::new(r"\\?\C:\synthetic\a.session")).unwrap(),
+            "file:/C:/synthetic/a.session?mode=ro&immutable=1"
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            immutable_uri(Path::new(r"/synthetic/a\b.session")).unwrap(),
+            "file:/synthetic/a%5Cb.session?mode=ro&immutable=1"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_literal_backslash_source_cannot_select_a_different_session() {
+        let mut fixture = Fixture::new(PYROGRAM, pyro_insert());
+        let literal = fixture.directory.join(r"a\b.session");
+        fs::rename(&fixture.path, &literal).unwrap();
+        fixture.path = literal;
+        let alternate_directory = fixture.directory.join("a");
+        fs::create_dir(&alternate_directory).unwrap();
+        let alternate = alternate_directory.join("b.session");
+        fs::copy(&fixture.path, &alternate).unwrap();
+        fixture.runtime.block_on(async {
+            let database = libsql::Builder::new_local(&alternate)
+                .build()
+                .await
+                .unwrap();
+            database
+                .connect()
+                .unwrap()
+                .execute("UPDATE sessions SET user_id=42", ())
+                .await
+                .unwrap();
+        });
+        let source_before = fs::read(&fixture.path).unwrap();
+        let alternate_before = fs::read(&alternate).unwrap();
+        let imported = fixture.pyro(ImportOptions::default()).unwrap();
+        assert_eq!(imported.user_id(), Some(9876543210));
+        assert_eq!(fs::read(&fixture.path).unwrap(), source_before);
+        assert_eq!(fs::read(&alternate).unwrap(), alternate_before);
+    }
+
+    #[test]
+    fn huge_text_endpoints_are_rejected_before_materialization() {
+        for (schema, insert, pyrogram) in [
+            (KURIGRAM, "INSERT INTO sessions VALUES(2, '192.0.2.42', 2443, 0, 0, randomblob(256), 0, 1234, 0)".to_owned(), true),
+            (TELETHON7, tele_insert(7, "192.0.2.42", 2443), false),
+        ] {
+            let fixture = Fixture::new(schema, &insert);
+            // A real 8 MiB TEXT value, including multibyte content. A BLOB
+            // fixture would not exercise SQLite's TEXT byte-length behavior.
+            fixture.execute("UPDATE sessions SET server_address=replace(hex(zeroblob(2*1024*1024)), '0', 'é')");
+            let before = fs::read(&fixture.path).unwrap();
+            let error = if pyrogram { fixture.pyro(ImportOptions::default()) } else { fixture.tele(ImportOptions::default()) }.unwrap_err();
+            assert_eq!(error, ImportFileError::InvalidData(ImportError::InvalidAddress));
+            assert_eq!(fs::read(&fixture.path).unwrap(), before);
+            // Inspect the actual importer query, not a duplicate predicate.
+            // The bundled SQLite must mark octet_length's Column argument as
+            // metadata-only (OPFLAG_BYTELENARG=0xc0), so hostile TEXT is not read.
+            fixture.runtime.block_on(async {
+                let database = libsql::Builder::new_local(&fixture.path).build().await.unwrap();
+                let connection = database.connect().unwrap();
+                let query = if pyrogram { KURIGRAM_SESSION_QUERY } else { TELETHON_SESSION_QUERY };
+                let mut rows = connection.query(&format!("EXPLAIN {query}"), ()).await.unwrap();
+                let mut previous = None;
+                let mut metadata_only_length = false;
+                while let Some(row) = rows.next().await.unwrap() {
+                    let opcode = row.get::<String>(1).unwrap();
+                    let p4 = row.get::<Option<String>>(5).unwrap();
+                    let p5 = row.get::<i64>(6).unwrap();
+                    if opcode == "Function" && p4.as_deref().is_some_and(|name| name.starts_with("octet_length(")) {
+                        metadata_only_length = previous.as_ref().is_some_and(|(opcode, flags)| opcode == "Column" && flags & 0xc0 == 0xc0);
+                    }
+                    previous = Some((opcode, p5));
+                }
+                assert!(metadata_only_length, "endpoint length guard must avoid loading TEXT payloads");
+            });
+        }
     }
 
     #[test]
