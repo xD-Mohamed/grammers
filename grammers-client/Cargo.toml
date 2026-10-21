@@ -100,3 +100,7 @@ required-features = ["session-string"]
 [[example]]
 name = "export_session"
 required-features = ["session-file", "session-string"]
+
+[[example]]
+name = "send_options"
+required-features = ["session-string", "fs"]

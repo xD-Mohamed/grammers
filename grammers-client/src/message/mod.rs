@@ -18,6 +18,7 @@ mod input_rich_message;
 mod model;
 mod reactions;
 mod reply_markup;
+mod send_options;
 
 pub use button::{Button, Key};
 pub use input_message::InputMessage;
@@ -25,3 +26,4 @@ pub use input_rich_message::InputRichMessage;
 pub use model::Message;
 pub use reactions::InputReactions;
 pub use reply_markup::ReplyMarkup;
+pub use send_options::SendOptions;

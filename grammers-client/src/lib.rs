@@ -119,6 +119,7 @@ pub use client::{QrLogin, QrLoginToken};
 pub use grammers_mtsender::{self as sender, InvocationError, InvocationErrorCategory, PoolEvent, PoolRunError, PoolStatus, SenderPool};
 pub use grammers_session as session;
 pub use grammers_tl_types as tl;
+pub use message::SendOptions;
 
 /// Alias for [`std::result::Result`] with the error set to [`InvocationError`].
 pub type Result<T> = std::result::Result<T, InvocationError>;

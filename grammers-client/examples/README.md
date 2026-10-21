@@ -32,6 +32,7 @@ login codes and two-factor passwords are hidden rather than echoed.
 | [send_album](send_album.rs) | Reuse two photo/document messages as a spoiler album in Saved Messages | `session-file` | `PEER MESSAGE_ID MESSAGE_ID`; user environment |
 | [import_session](import_session.rs) | Explicit foreign/native session input, memory-only authorization check | `session-string`, `session-import-files`, `fs` | `FORMAT INPUT_FILE [--ipv6]` |
 | [export_session](export_session.rs) | Local native SQLite-to-string export; never starts networking | `session-file`, `session-string` | `INPUT_SESSION --output NEW_FILE` or deliberate `--stdout` |
+| [send_options](send_options.rs) | Common optional message flags with `..Default::default()` | `session-string`, `fs` | `TG_ID` and `NATIVE_STRING_FILE`; sends to Saved Messages |
 | [error_handling](error_handling.rs) | Error categories and explicit server wait hints without automatic retries | none | `TG_ID`; unauthenticated Ping |
 | [dispatcher](dispatcher.rs) | Opt-in dispatcher and filters | `dispatcher`, `session-file` | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_BOT_TOKEN` |
 | [qr_login](qr_login.rs) | Opt-in QR authorization | `qr-login`, `session-file` | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` |
@@ -79,3 +80,21 @@ must supervise their own runner and shutdown. The raw Ping example demonstrates
 `Client::invoke` without requiring manual sender-pool ownership. Error categories
 are diagnostic hints, not proof that replaying a request is safe. Reconcile
 ambiguous network failures before retrying operations which change server state.
+
+Common message flags can use a struct without changing the simple send API:
+
+```rust
+use grammers_client::SendOptions;
+
+// Inside an async function with an authorized client and a peer:
+client.send_message(peer, "Hello").await?;
+client.send_message_with_options(peer, "Quiet hello", SendOptions {
+    silent: true,
+    ..Default::default()
+}).await?;
+```
+
+`InputMessage::with_options` applies the same options to an existing rich message.
+The six listed options replace earlier values, even when `false` or `None`;
+text, media, entities, markup, rich content, and scheduling remain intact.
+Defaults match the existing message builder, including `link_preview: false`.

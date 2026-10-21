@@ -12,6 +12,7 @@ use grammers_tl_types as tl;
 
 use super::input_rich_message::InputRichMessage;
 use super::reply_markup::ReplyMarkup;
+use super::send_options::SendOptions;
 use crate::media::{Attribute, Media, Uploaded};
 
 // https://github.com/telegramdesktop/tdesktop/blob/e7fbcce9d9f0a8944eb2c34e74bd01b8776cb891/Telegram/SourceFiles/data/data_scheduled_messages.h#L52
@@ -40,6 +41,29 @@ impl InputMessage {
     /// Creates a new empty message for input.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Replace the common optional flags, preserving the message payload.
+    ///
+    /// Every field in [`SendOptions`] is applied, including `false` and `None`:
+    /// options replace earlier values set with the individual flag builders.
+    /// Text, entities, media, reply markup, rich content and scheduling are kept.
+    ///
+    /// ```
+    /// use grammers_client::{message::InputMessage, SendOptions};
+    /// let message = InputMessage::from("A quiet message").with_options(SendOptions {
+    ///     silent: true,
+    ///     ..Default::default()
+    /// });
+    /// ```
+    pub fn with_options(mut self, options: SendOptions) -> Self {
+        self.silent = options.silent;
+        self.background = options.background;
+        self.clear_draft = options.clear_draft;
+        self.link_preview = options.link_preview;
+        self.invert_media = options.invert_media;
+        self.reply_to = options.reply_to;
+        self
     }
 
     /// Whether to "send this message as a background message".
@@ -430,5 +454,111 @@ impl From<super::Message> for InputMessage {
                 .and_then(|m| m.to_raw_input_media()),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod send_options_tests {
+    use super::*;
+    use crate::message::{Button, InputRichMessage, SendOptions};
+    use tl::Serializable;
+
+    #[test]
+    fn send_options_default_matches_existing_message_defaults() {
+        let original = InputMessage::default();
+        let configured = InputMessage::default().with_options(SendOptions::default());
+        assert_eq!(configured.silent, original.silent);
+        assert_eq!(configured.background, original.background);
+        assert_eq!(configured.clear_draft, original.clear_draft);
+        assert_eq!(configured.link_preview, original.link_preview);
+        assert_eq!(configured.invert_media, original.invert_media);
+        assert_eq!(configured.reply_to, original.reply_to);
+        assert!(
+            !configured.link_preview,
+            "existing default disables previews"
+        );
+    }
+
+    #[test]
+    fn send_options_preserve_existing_rich_payload() {
+        let original = InputMessage::new()
+            .text("hello")
+            .fmt_entities([tl::types::MessageEntityBold {
+                offset: 0,
+                length: 5,
+            }
+            .into()])
+            .media_ttl(17)
+            .mime_type("image/jpeg")
+            .photo_url("https://example.invalid/photo.jpg")
+            .rich_message(InputRichMessage::html("<b>hello</b>"))
+            .reply_markup(ReplyMarkup::from_buttons(&[vec![Button::data(
+                "test", b"test",
+            )]]))
+            .schedule_date(Some(UNIX_EPOCH + std::time::Duration::from_secs(42)));
+        let configured = original.clone().with_options(SendOptions {
+            silent: true,
+            background: true,
+            clear_draft: true,
+            link_preview: true,
+            invert_media: true,
+            reply_to: Some(9),
+        });
+        assert!(configured.silent);
+        assert!(configured.background);
+        assert!(configured.clear_draft);
+        assert!(configured.link_preview);
+        assert!(configured.invert_media);
+        assert_eq!(configured.reply_to, Some(9));
+        assert_eq!(configured.text, original.text);
+        assert_eq!(
+            configured
+                .entities
+                .iter()
+                .map(Serializable::to_bytes)
+                .collect::<Vec<_>>(),
+            original
+                .entities
+                .iter()
+                .map(Serializable::to_bytes)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            configured.media.as_ref().map(Serializable::to_bytes),
+            original.media.as_ref().map(Serializable::to_bytes)
+        );
+        assert_eq!(
+            configured.reply_markup.as_ref().map(Serializable::to_bytes),
+            original.reply_markup.as_ref().map(Serializable::to_bytes)
+        );
+        assert_eq!(
+            configured.rich_message.as_ref().map(Serializable::to_bytes),
+            original.rich_message.as_ref().map(Serializable::to_bytes)
+        );
+        assert_eq!(configured.schedule_date, original.schedule_date);
+        assert_eq!(configured.media_ttl, original.media_ttl);
+        assert_eq!(configured.mime_type, original.mime_type);
+    }
+
+    #[test]
+    fn send_options_default_explicitly_resets_only_listed_options() {
+        let configured = InputMessage::new()
+            .text("keep this")
+            .silent(true)
+            .background(true)
+            .clear_draft(true)
+            .link_preview(true)
+            .invert_media(true)
+            .reply_to(Some(7))
+            .schedule_once_online()
+            .with_options(SendOptions::default());
+        assert!(!configured.silent);
+        assert!(!configured.background);
+        assert!(!configured.clear_draft);
+        assert!(!configured.link_preview);
+        assert!(!configured.invert_media);
+        assert_eq!(configured.reply_to, None);
+        assert_eq!(configured.text, "keep this");
+        assert_eq!(configured.schedule_date, Some(SCHEDULE_ONCE_ONLINE));
     }
 }

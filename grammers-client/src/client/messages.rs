@@ -18,7 +18,7 @@ use tracing::{Level, enabled, warn};
 
 use super::{Client, IterBuffer};
 use crate::media::{InputMedia, Media};
-use crate::message::{InputMessage, InputReactions, Message};
+use crate::message::{InputMessage, InputReactions, Message, SendOptions};
 use crate::utils::{generate_random_id, generate_random_ids};
 
 async fn map_random_ids_to_messages(
@@ -695,6 +695,35 @@ impl Client {
                 }
             }
         })
+    }
+
+    /// Send text or media using a struct of common optional flags.
+    ///
+    /// This delegates to [`Self::send_message`] after applying
+    /// [`InputMessage::with_options`]. All six options replace any earlier values
+    /// on the message, including `false` and `None`. Other message fields remain
+    /// intact. Defaults retain existing behavior, including disabled link previews.
+    /// There is no additional RPC or retry policy.
+    ///
+    /// ```
+    /// # async fn example(client: &grammers_client::Client, peer: grammers_client::session::types::PeerRef) -> grammers_client::Result<()> {
+    /// use grammers_client::SendOptions;
+    /// client.send_message(peer, "Hello").await?;
+    /// client.send_message_with_options(peer, "A quiet message", SendOptions {
+    ///     silent: true,
+    ///     ..Default::default()
+    /// }).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn send_message_with_options<C: Into<PeerRef>, M: Into<InputMessage>>(
+        &self,
+        peer: C,
+        message: M,
+        options: SendOptions,
+    ) -> Result<Message, InvocationError> {
+        self.send_message(peer, message.into().with_options(options))
+            .await
     }
 
     /// Sends a album to the desired peer.
