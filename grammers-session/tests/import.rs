@@ -13,10 +13,44 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
 use grammers_session::Session;
-use grammers_session::import::{ImportError, ImportedSession, SessionFormat};
+use grammers_session::import::{
+    ImportError, ImportOptions, ImportedSession, SessionFormat, parse_gotd_json,
+    parse_pyrogram_string, parse_telethon_string,
+};
 use serde_json::json;
 
 const FAKE_KEY: [u8; 256] = [0xa5; 256];
+
+#[test]
+fn explicit_parsers_select_only_the_named_format_and_address_family() {
+    let pyro = URL_SAFE_NO_PAD.encode(pyrogram_bytes(true, true, false));
+    let ipv6 = Ipv6Addr::LOCALHOST.octets();
+    let tele = format!("1{}", URL_SAFE.encode(telethon_bytes(&ipv6, 8443)));
+    let options = ImportOptions::default();
+    assert_eq!(
+        parse_pyrogram_string(&pyro, options).unwrap().api_id(),
+        Some(12345)
+    );
+    assert!(parse_pyrogram_string(&tele, options).is_err());
+    assert!(parse_telethon_string(&pyro, options).is_err());
+    assert!(parse_gotd_json(&pyro, options).is_err());
+    assert!(matches!(
+        parse_telethon_string(&tele, options),
+        Err(ImportError::Ipv6PreferenceRequired)
+    ));
+    let ipv6_options = ImportOptions { prefer_ipv6: true };
+    assert!(
+        parse_telethon_string(&tele, ipv6_options)
+            .unwrap()
+            .prefer_ipv6()
+    );
+    assert!(
+        parse_pyrogram_string(&pyro, ipv6_options)
+            .unwrap()
+            .prefer_ipv6()
+    );
+    assert!(parse_gotd_json(&gotd_document().to_string(), options).is_ok());
+}
 
 fn pyrogram_bytes(current: bool, wide_id: bool, test_mode: bool) -> Vec<u8> {
     let mut bytes = vec![2];

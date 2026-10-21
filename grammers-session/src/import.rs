@@ -26,7 +26,7 @@ use crate::types::DcOption;
 use crate::{KNOWN_DC_OPTIONS, SessionData};
 
 const STRING_LIMIT: usize = 512;
-const JSON_LIMIT: usize = 1024 * 1024;
+pub(super) const JSON_LIMIT: usize = 1024 * 1024;
 const URL_SAFE: GeneralPurpose = GeneralPurpose::new(
     &alphabet::URL_SAFE,
     GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
@@ -74,6 +74,8 @@ pub enum ImportError {
     InvalidAddress,
     /// The JSON document is malformed or has missing, duplicate, or mistyped fields.
     InvalidJson,
+    /// An IPv6-only source requires explicitly selecting IPv6.
+    Ipv6PreferenceRequired,
 }
 
 impl fmt::Display for ImportError {
@@ -91,11 +93,65 @@ impl fmt::Display for ImportError {
             Self::InvalidAuthKeyId => "invalid session authentication key fingerprint",
             Self::InvalidAddress => "invalid session endpoint",
             Self::InvalidJson => "invalid session JSON document",
+            Self::Ipv6PreferenceRequired => "session endpoint requires an explicit IPv6 preference",
         })
     }
 }
 
 impl std::error::Error for ImportError {}
+
+/// Connection address-family preference for explicitly selected import formats.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImportOptions {
+    /// Select IPv6 routes. Required for sources containing an IPv6-only endpoint.
+    pub prefer_ipv6: bool,
+}
+
+impl ImportOptions {
+    pub(super) fn apply(
+        self,
+        mut imported: ImportedSession,
+    ) -> Result<ImportedSession, ImportError> {
+        if imported.prefer_ipv6 && !self.prefer_ipv6 {
+            return Err(ImportError::Ipv6PreferenceRequired);
+        }
+        imported.prefer_ipv6 = self.prefer_ipv6;
+        Ok(imported)
+    }
+}
+
+/// Parses only a Pyrogram exported string, with an explicit route preference.
+///
+/// # Errors
+/// Returns a sanitized format or route validation error.
+pub fn parse_pyrogram_string(
+    input: &str,
+    options: ImportOptions,
+) -> Result<ImportedSession, ImportError> {
+    options.apply(ImportedSession::from_pyrogram(input)?)
+}
+
+/// Parses only a Telethon v1 StringSession, with an explicit route preference.
+///
+/// # Errors
+/// Returns a sanitized format or route validation error.
+pub fn parse_telethon_string(
+    input: &str,
+    options: ImportOptions,
+) -> Result<ImportedSession, ImportError> {
+    options.apply(ImportedSession::from_telethon(input)?)
+}
+
+/// Parses only gotd Loader v1 JSON, with an explicit route preference.
+///
+/// # Errors
+/// Returns a sanitized format or route validation error.
+pub fn parse_gotd_json(
+    input: &str,
+    options: ImportOptions,
+) -> Result<ImportedSession, ImportError> {
+    options.apply(ImportedSession::from_gotd_json(input)?)
+}
 
 /// Validated imported session state and source metadata.
 ///
@@ -106,9 +162,9 @@ impl std::error::Error for ImportError {}
 pub struct ImportedSession {
     data: SessionData,
     format: SessionFormat,
-    api_id: Option<i32>,
-    user_id: Option<u64>,
-    is_bot: Option<bool>,
+    pub(super) api_id: Option<i32>,
+    pub(super) user_id: Option<u64>,
+    pub(super) is_bot: Option<bool>,
     test_mode: Option<bool>,
     prefer_ipv6: bool,
 }
@@ -332,7 +388,7 @@ impl ImportedSession {
         self.data.into()
     }
 
-    fn from_parts(
+    pub(super) fn from_parts(
         format: SessionFormat,
         dc: i32,
         test_mode: Option<bool>,
@@ -427,7 +483,7 @@ fn parse_boolean(value: u8) -> Result<bool, ImportError> {
     }
 }
 
-fn validate_key(bytes: &[u8]) -> Result<[u8; 256], ImportError> {
+pub(super) fn validate_key(bytes: &[u8]) -> Result<[u8; 256], ImportError> {
     let key: [u8; 256] = bytes.try_into().map_err(|_| ImportError::InvalidAuthKey)?;
     if key.iter().all(|byte| *byte == 0) {
         return Err(ImportError::InvalidAuthKey);
@@ -435,7 +491,7 @@ fn validate_key(bytes: &[u8]) -> Result<[u8; 256], ImportError> {
     Ok(key)
 }
 
-fn validate_endpoint(endpoint: SocketAddr) -> Result<SocketAddr, ImportError> {
+pub(super) fn validate_endpoint(endpoint: SocketAddr) -> Result<SocketAddr, ImportError> {
     let ip = unmap_ipv4(endpoint.ip());
     if endpoint.port() == 0
         || ip.is_unspecified()
@@ -458,7 +514,7 @@ fn unmap_ipv4(ip: IpAddr) -> IpAddr {
     }
 }
 
-fn endpoint_environment(ip: IpAddr) -> Option<bool> {
+pub(super) fn endpoint_environment(ip: IpAddr) -> Option<bool> {
     let ip = unmap_ipv4(ip);
     let matches_ip = |option: &DcOption| {
         ip == IpAddr::V4(*option.ipv4.ip()) || ip == IpAddr::V6(*option.ipv6.ip())

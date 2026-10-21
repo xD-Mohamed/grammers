@@ -18,6 +18,7 @@ default = ["sqlite-storage"]
 sqlite-storage = ["dep:libsql"]
 serde = ["dep:serde", "dep:serde_with"]
 session-import = ["dep:base64", "dep:serde", "dep:serde_json", "dep:sha1"]
+session-import-files = ["session-import", "dep:libsql", "tokio/rt"]
 session-string = ["dep:base64", "dep:sha2"]
 
 [dependencies]

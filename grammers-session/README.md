@@ -68,9 +68,10 @@ Enable the optional `session-import` feature to use
 `grammers_session::import::ImportedSession`. It supports Pyrogram exported
 session strings (current and both legacy layouts), Telethon version 1
 `StringSession` strings, and version 1 JSON written by gotd's `session.Loader`.
-SQLite session files, Telegram Desktop `tdata`, and custom JSON dialects are not
-supported. The feature does not enable the separate `serde` feature or change
-default storage behavior.
+SQLite session files require the separate `session-import-files` feature described
+below. Telegram Desktop `tdata` and custom JSON dialects are not supported. The
+string feature does not enable the separate `serde` feature or change default
+storage behavior.
 
 ```toml
 grammers-session = { version = "0.10", default-features = false, features = ["session-import"] }
@@ -152,3 +153,81 @@ Format references: [Pyrogram storage layouts](https://github.com/pyrogram/pyrogr
 [Telethon StringSession](https://github.com/LonamiWebs/Telethon/blob/v1/telethon/sessions/string.py),
 [gotd Loader](https://github.com/gotd/td/blob/main/session/session.go), and
 [gotd key fingerprint](https://github.com/gotd/td/blob/main/crypto/key.go).
+
+### Explicit formats and source files
+
+The direct functions `parse_pyrogram_string`, `parse_telethon_string`, and
+`parse_gotd_json` in `grammers_session::import` accept `(&str, ImportOptions)`.
+They select exactly the named format and return `Result<ImportedSession, ImportError>`.
+`ImportOptions { prefer_ipv6: true }` selects IPv6; the default is IPv4.
+IPv6-only source endpoints require the explicit IPv6 preference. Existing
+associated constructors retain their inferred-preference behavior for compatibility.
+
+```toml
+grammers-session = { version = "0.10", default-features = false, features = ["session-import-files"] }
+```
+
+`grammers_session::import_files` offers three asynchronous, typed file APIs:
+
+```rust,no_run
+use grammers_session::import::ImportOptions;
+use grammers_session::import_files::{import_pyrogram_file, ImportFileError};
+
+async fn import_closed_source() -> Result<(), ImportFileError> {
+    let imported = import_pyrogram_file("closed-source.session", ImportOptions::default()).await?;
+    let memory = imported.into_memory_session();
+    // Supply memory and your own application API ID when building a sender pool.
+    Ok(())
+}
+```
+
+- `import_pyrogram_file(path: impl AsRef<Path>, options: ImportOptions)` supports
+  Pyrogram schema **3** and Kurigram schema **7**.
+- `import_telethon_file(path: impl AsRef<Path>, options: ImportOptions)` supports
+  Telethon SQLite schema **7** and **8**.
+- `import_gotd_file(path: impl AsRef<Path>, options: ImportOptions)` reads gotd
+  Loader JSON version **1**, bounded to one MiB before and during the read.
+
+All return `Result<ImportedSession, ImportFileError>` and require a Tokio runtime.
+The feature enables `session-import` and the existing optional `libsql` dependency,
+but does not enable `sqlite-storage` or `session-string`. File work and SQLite
+queries run on Tokio's blocking pool. The returned result is independent of the
+source and never imports into or overwrites a destination SQLite database.
+
+Use a **closed, stable, checkpointed local source file**. The importer opens only
+existing files and never runs migrations, writes, checkpoints, or creates schema.
+SQLite uses read-only URI flags and `immutable=1` to avoid source sidecar creation.
+Nonempty `-wal`, `-shm`, and `-journal` files cause `UnsafeSource`: close the source
+application and obtain a checkpointed copy using that application. Do not delete
+pending journals or copy only the main database while it is active. Immutable
+reads do not lock against another process writing; concurrent source mutation is
+unsupported, and metadata checks cannot eliminate every race. Network/UNC database
+paths and non-UTF-8 SQLite paths are rejected.
+
+Exactly one version row and one session row are required. Only recognized regular
+tables and essential column layouts are accepted; versions outside the list fail
+without migration. The importer reads neither peers/entities nor temporary keys,
+takeout data, or update state. Keys must be nonzero 256-byte BLOBs; huge malformed
+keys and endpoint strings are bounded in SQL before materialization. Pyrogram
+API ID zero or NULL becomes missing metadata, and positive IDs must fit `i32`.
+The runtime application API ID remains caller supplied. Kurigram and Telethon
+saved endpoints retain their exact address/port; unknown Telethon endpoints keep
+only their own route. Authentication is attached only to the home DC.
+
+`ImportFileError` distinguishes `Io(ErrorKind)`, `UnsupportedSchema`,
+`MalformedDatabase`, `UnsafeSource`, `InvalidData(ImportError)`, `MissingRuntime`
+and `WorkerFailed`.
+Neither errors nor `Debug` retain source paths, SQL, credentials or input data.
+No local parse proves that Telegram still accepts the key.
+
+Schema fixtures are synthetic databases containing the official essential table
+DDL, with generated test keys and fake identifiers. Reviewed source references
+(2026-10-21): [Pyrogram SQLite schema 3](https://github.com/pyrogram/pyrogram/blob/master/pyrogram/storage/sqlite_storage.py),
+[Kurigram SQLite schema 7](https://github.com/KurimuzonAkuma/kurigram/blob/master/pyrogram/storage/sqlite_storage.py),
+[Telethon 1.40.0 SQLite schema 7](https://github.com/LonamiWebs/Telethon/blob/v1.40.0/telethon/sessions/sqlite.py),
+[Telethon v1 SQLite schema 8](https://github.com/LonamiWebs/Telethon/blob/v1/telethon/sessions/sqlite.py),
+[gotd Loader JSON versioning](https://github.com/gotd/td/blob/main/session/session.go),
+and [SQLite immutable URI semantics](https://www.sqlite.org/uri.html).
+Offline fixture tests verify supported layouts, invalid fields, bounded reads,
+unsupported schemas, and source/sidecar preservation. No real credentials or live
+authorization are used.

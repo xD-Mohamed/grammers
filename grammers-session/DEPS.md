@@ -17,7 +17,9 @@ Used to test that this file lists all dependencies from `Cargo.toml`.
 
 ## libsql
 
-SQLite-based session storage.
+_Optional._ SQLite-based session storage (`sqlite-storage`) and read-only foreign
+session database imports (`session-import-files`). The import feature does not
+enable this crate's destination SQLite storage.
 
 ## serde
 
@@ -30,6 +32,8 @@ _Optional._ Provides custom serialization helpers
 ## tokio
 
 Asynchronous locks and runtime for testing asynchronous `Session` implementations.
+With `session-import-files`, the runtime's blocking pool keeps file reads, SQLite
+queries and JSON parsing off the async reactor. No second SQLite library is added.
 
 ## base64
 

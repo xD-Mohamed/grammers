@@ -30,6 +30,8 @@
 mod dc_options;
 #[cfg(feature = "session-import")]
 pub mod import;
+#[cfg(feature = "session-import-files")]
+pub mod import_files;
 mod message_box;
 #[cfg(feature = "session-string")]
 pub mod native;
