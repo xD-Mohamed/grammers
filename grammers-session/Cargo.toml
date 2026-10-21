@@ -18,6 +18,7 @@ default = ["sqlite-storage"]
 sqlite-storage = ["dep:libsql"]
 serde = ["dep:serde", "dep:serde_with"]
 session-import = ["dep:base64", "dep:serde", "dep:serde_json", "dep:sha1"]
+session-string = ["dep:base64", "dep:sha2"]
 
 [dependencies]
 grammers-tl-types = { path = "../grammers-tl-types", version = "0.10.0" }
@@ -31,6 +32,7 @@ serde_with = { version = "3", features = ["hex"], optional = true }
 base64 = { version = "0.22", optional = true }
 serde_json = { version = "1", optional = true }
 sha1 = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
 
 [dev-dependencies]
 toml = "1.1.2"

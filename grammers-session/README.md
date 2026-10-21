@@ -6,6 +6,62 @@ Sessions are used to remember the authorization key and home server address,
 to prevent having to create a new key and login every single time (which is
 an expensive process).
 
+## Native session strings
+
+Enable `session-string` to export and restore this fork's native portable
+home-datacenter session format. This feature is independent of `session-import`,
+SQLite and serde, and works with `default-features = false`.
+
+```toml
+grammers-session = { version = "0.10", default-features = false, features = ["session-string"] }
+```
+
+```rust,no_run
+use grammers_session::{NativeSession, Session, SessionStringError};
+
+fn portable_session<S: Session + ?Sized>(
+    existing: &S,
+    prefer_ipv6: bool,
+) -> Result<(), SessionStringError> {
+    let portable = NativeSession::from_session(existing, prefer_ipv6)?;
+    let credential = portable.encode();
+    // Store credential.expose_secret() securely; never log it.
+    let restored = NativeSession::parse(credential.expose_secret())?;
+    let use_ipv6 = restored.prefer_ipv6();
+    let memory = restored.into_memory_session();
+    // Configure the sender with this memory session, an explicit application
+    // API ID and ConnectionParams { use_ipv6, ..Default::default() }.
+    // Then connect and check authorization before issuing account operations.
+    Ok(())
+}
+```
+
+`NativeSession`, `SessionString` and `SessionStringError` are available at the
+crate root and in `grammers_session::native`. `SessionString::expose_secret()`
+borrows the credential, and `into_inner()` takes its ordinary `String`.
+`Debug` is redacted and no `Display` implementation exposes credentials.
+Storage errors are reduced to a category without retaining their potentially
+sensitive message or source. Neither wrapper guarantees memory zeroization.
+
+The `grammers:1:` format preserves the home DC ID, its own 256-byte key, the
+exact IPv4 and IPv6 socket endpoints (including IPv6 scope and flow information),
+and the selected IP family. It intentionally omits other DC keys, peer cache,
+update state and API ID. It is **not a complete SQLite backup**. Parsing and
+conversion never create files, contact a server, log in, or invent fallback
+routes. An unavailable unused endpoint stays unavailable; the selected endpoint
+must exist. Test and custom DC routes remain unchanged. A nonzero key does not
+prove that a user is authorized: check authorization with Telegram after normal
+connection initialization. Export reads the home DC and route separately; avoid
+concurrent session mutation when exporting.
+
+Strings are canonical URL-safe unpadded base64 with a fixed binary layout and
+a SHA-256 corruption checksum. **The format is not encrypted or authenticated.**
+Anyone holding the string holds its authentication key. The module documentation
+specifies the byte layout and strict validation bounds. `into_session_data()`
+offers the same home-route-only conversion for other storage integrations;
+avoid merging it into a populated storage if old routes must not remain.
+`MemorySession` does not itself disable automatic client peer caching.
+
 ## Importing existing sessions
 
 Enable the optional `session-import` feature to use

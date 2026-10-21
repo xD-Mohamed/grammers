@@ -31,6 +31,8 @@ mod dc_options;
 #[cfg(feature = "session-import")]
 pub mod import;
 mod message_box;
+#[cfg(feature = "session-string")]
+pub mod native;
 mod peer;
 mod session;
 mod session_data;
@@ -41,6 +43,8 @@ pub mod updates;
 use std::pin::Pin;
 
 pub(crate) use dc_options::{DEFAULT_DC, KNOWN_DC_OPTIONS};
+#[cfg(feature = "session-string")]
+pub use native::{NativeSession, SessionString, SessionStringError};
 pub use session::Session;
 pub use session_data::SessionData;
 

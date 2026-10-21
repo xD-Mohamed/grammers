@@ -34,7 +34,8 @@ Asynchronous locks and runtime for testing asynchronous `Session` implementation
 ## base64
 
 _Optional._ Decodes exported Pyrogram, Telethon, and gotd session credentials
-when `session-import` is enabled.
+when `session-import` is enabled. Encodes and decodes native credentials when
+`session-string` is enabled.
 
 ## serde_json
 
@@ -43,3 +44,8 @@ _Optional._ Parses versioned gotd session documents when `session-import` is ena
 ## sha1
 
 _Optional._ Validates gotd's authentication-key fingerprint when `session-import` is enabled.
+
+## sha2
+
+_Optional._ Computes the native session string corruption checksum when
+`session-string` is enabled. This is not encryption or authentication.
