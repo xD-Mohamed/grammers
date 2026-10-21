@@ -92,6 +92,15 @@ class MetadataTests(unittest.TestCase):
 
 
 class RenderingTests(unittest.TestCase):
+    def test_raw_page_discovery_ignores_previously_injected_markdown_link(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder)
+            path = output / "api/grammers_tl_types/functions/messages/struct.Test.html"
+            path.parent.mkdir(parents=True)
+            path.write_text('<a href="https://core.telegram.org/method/messages.test.md">Source</a>'
+                            '<a href="https://core.telegram.org/method/messages.test">Read docs</a>', encoding="utf-8")
+            self.assertEqual(enrich.raw_pages(output, {"messages.test"}), {"messages.test": path})
+
     def test_rustdoc_injection_preserves_original_and_is_idempotent(self):
         original = '<html>\r\n<script src="search.js"></script><pre class="rust item-decl"><code><a href="type.html">Type</a></code></pre><a href="#trait">Trait</a></html>'
         changed = enrich.inject_rustdoc(original, '<aside>Metadata</aside>')
@@ -104,8 +113,41 @@ class RenderingTests(unittest.TestCase):
     def test_nested_generic_and_function_signature(self):
         text = "pub async fn test<C: Into<PeerRef>>(&self, peer: C, callback: impl Fn(i32, i32) -> bool, ids: &[i32]) -> Result<Vec<Option<Message>>, Error>"
         params, returns = enrich.signature_parameters(text)
-        self.assertEqual(params, [("peer", "C"), ("callback", "impl Fn(i32, i32) -> bool"), ("ids", "&[i32]")])
+        self.assertEqual(params, [("peer", "impl Into<PeerRef>"), ("callback", "impl Fn(i32, i32) -> bool"), ("ids", "&[i32]")])
         self.assertEqual(returns, "Result<Vec<Option<Message>>, Error>")
+
+    def test_inline_and_where_bounds_expand_without_splitting_nested_types(self):
+        params, returns = enrich.signature_parameters(
+            "pub fn send<C: Into<PeerRef>, M, F: Send>(&self, peer: C, message: M, callback: F, refs: &[M]) -> Result<(), Error> "
+            "where M: Into<InputMessage>, F: for<'a> Fn(&'a str, (u8, u8)) -> Result<(u8, u8), Error>,")
+        self.assertEqual(params, [("peer", "impl Into<PeerRef>"), ("message", "impl Into<InputMessage>"),
+                                 ("callback", "impl Send + for<'a> Fn(&'a str, (u8, u8)) -> Result<(u8, u8), Error>"),
+                                 ("refs", "&[M]")])
+        self.assertEqual(returns, "Result<(), Error>")
+        with self.assertRaises(ValueError):
+            enrich.split_bounds("M: Into<(i32, i32]>")
+
+    def test_signature_keyword_coloring_preserves_text_and_anchors(self):
+        signature = BeautifulSoup('<code>pub async fn <a href="request.html#method.send">send</a>&lt;C: <a href="trait.Into.html">Into</a>&lt;PeerRef&gt;&gt;(\r\n&amp;self, peer: C) -&gt; bool</code>', "html.parser").code
+        text = signature.get_text()
+        links = [(a["href"], a.get_text()) for a in signature.select("a")]
+        enrich.highlight_signature(signature)
+        self.assertEqual(signature.get_text(), text)
+        self.assertEqual([(a["href"], a.get_text()) for a in signature.select("a")], links)
+        self.assertIn("pub", [span.get_text() for span in signature.select("span.k")])
+        self.assertIn("fn", [span.get_text() for span in signature.select("span.k")])
+
+    def test_availability_evidence_is_collapsed_without_hiding_classification(self):
+        soup = BeautifulSoup(enrich.availability_panel(METHOD, {**RECORD, "official_constructor": "87654321"}), "html.parser")
+        self.assertEqual(soup.select_one(".availability-label strong").get_text(), enrich.LABELS["unknown"])
+        self.assertFalse(soup.details.has_attr("open"))
+        self.assertIn("87654321", soup.details.get_text())
+        self.assertIn("Users and bots", soup.details.get_text())
+        label, panel = enrich.client_availability("get_me", {"users.getUsers": METHOD}, {"users.getUsers": RECORD},
+                                                  Path("methods/client/get_me.html"), Path("."))
+        soup = BeautifulSoup(panel, "html.parser")
+        self.assertIn("Users and bots", label)
+        self.assertIsNotNone(soup.details.find("code", string="grammers-client/src/client/chats.rs"))
 
     def test_extract_only_public_inherent_methods(self):
         soup = BeautifulSoup('''<nav class="sidebar"><a href="#method.test">test</a></nav>

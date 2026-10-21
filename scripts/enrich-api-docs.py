@@ -18,7 +18,7 @@ from pathlib import Path
 import re
 from urllib.parse import urljoin, urlsplit
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 MODULE_PATH = Path(__file__).with_name("refresh-telegram-docs.py")
 SPEC = importlib.util.spec_from_file_location("telegram_docs_cache", MODULE_PATH)
@@ -42,6 +42,7 @@ CLIENT_OPERATIONS = {
     "request_login_code": ("auth.rs", ["auth.sendCode"]),
     "sign_in": ("auth.rs", ["auth.signIn"]),
     "check_password": ("auth.rs", ["auth.checkPassword"]),
+    "qr_login_step": ("qr_login.rs", ["auth.exportLoginToken", "auth.importLoginToken"]),
     "inline_query": ("bots.rs", ["messages.getInlineBotResults"]),
     "iter_dialogs": ("dialogs.rs", ["messages.getDialogs"]),
     "delete_dialog": ("dialogs.rs", ["channels.leaveChannel", "messages.deleteChatUser", "messages.deleteHistory"]),
@@ -53,6 +54,7 @@ CLIENT_OPERATIONS = {
     "upload_file": ("files.rs", ["upload.saveFilePart", "upload.saveBigFilePart"]),
     "send_message": ("messages.rs", ["messages.sendMessage", "messages.sendMedia"]),
     "send_message_with_options": ("messages.rs", ["messages.sendMessage", "messages.sendMedia"]),
+    "send_album": ("messages.rs", ["messages.sendMultiMedia", "messages.uploadMedia"]),
     "edit_message": ("messages.rs", ["messages.editMessage"]),
     "delete_messages": ("messages.rs", ["messages.deleteMessages", "channels.deleteMessages"]),
     "forward_messages": ("messages.rs", ["messages.forwardMessages"]),
@@ -84,6 +86,7 @@ REVIEWED_SOURCES = {
     "bots.rs": "f4a08646daa91467f4fa286a42436f308a51cce05476eed508fd4d3de925773d",
     "files.rs": "010c5b445a164d97956aa3f3241128ab3eb32b2f9992e692a1a90f98095d244e",
     "dialogs.rs": "2915d0db98551102bd6f5820669ec5365c14a5112c8a6383204c7a2c84c9fc48",
+    "qr_login.rs": "747549309e13c3bae923add9269db185c672188b2d3ed732742132e453795c82",
 }
 
 
@@ -140,8 +143,9 @@ def rebase(fragment: Tag | BeautifulSoup, origin: Path, destination: Path, outpu
 def availability_panel(method: dict, record: dict | None, level: int = 2) -> str:
     availability = effective_availability(method, record)
     label = LABELS[availability]
-    parts = [f'<aside class="availability" aria-label="Account availability"><h{level}>Usable by</h{level}>',
-             f'<p><strong>{escape(label)}</strong></p>']
+    parts = ['<aside class="availability" aria-label="Account availability">',
+             f'<p class="availability-label">Usable by: <strong>{escape(label)}</strong></p>',
+             '<details><summary>Sources and restrictions</summary>']
     if record:
         observed = LABELS[record["availability"]]
         if record.get("official_constructor") != method["constructor"]:
@@ -159,7 +163,7 @@ def availability_panel(method: dict, record: dict | None, level: int = 2) -> str
         parts.append(f'<p><a href="{escape(CACHE.source_url(method["name"]), quote=True)}">Official Telegram source</a> '
                      '· No cached source has been retrieved.</p>')
     parts.append('<p>Account category is only one requirement. Peer access, administrator rights, '
-                 'authorization state and parameter-specific restrictions still apply.</p></aside>')
+                 'authorization state and parameter-specific restrictions still apply.</p></details></aside>')
     return "".join(parts)
 
 
@@ -172,10 +176,10 @@ def client_availability(name: str, schema: dict, cache: dict, destination: Path,
         label = "Depends on the request"
         detail = 'Select the raw method below to inspect its documented user/bot requirements.'
     elif name in LOCAL_METHODS:
-        label = "Local operation · no account category requirement"
+        label = "Local operation"
         detail = 'This operation manages local state; it is not a Telegram account permission check.'
     elif name in LIFECYCLE_METHODS:
-        label = "Connection lifecycle · no user/bot restriction imposed locally"
+        label = "Connection lifecycle"
         detail = ('This starts or waits for the sender runtime. Starting a connection does not sign in an account; '
                   'subsequent RPC permissions depend on the request and authorization state.')
     elif name in CLIENT_OPERATIONS:
@@ -184,7 +188,7 @@ def client_availability(name: str, schema: dict, cache: dict, destination: Path,
         if len(permissions) == 1 and "unknown" not in permissions:
             label = LABELS[next(iter(permissions))] + " · primary RPCs"
         else:
-            label = "Depends on the operation · see raw requirements"
+            label = "Depends on operation"
         detail = ('Source-reviewed primary operations are listed below. This does not guarantee every combination '
                   'of peer, media, options or preparatory calls is available to both account types.<ul>')
         for operation in operations:
@@ -195,18 +199,65 @@ def client_availability(name: str, schema: dict, cache: dict, destination: Path,
         if name == "bot_sign_in":
             label = "Bot authorization flow"
             detail = '<p>This helper authorizes a bot using its bot token; it does not require an already-authorized account.</p>' + detail
+        elif name == "qr_login_step":
+            detail += '<p>Exports a login token and imports it when migrating DCs. A two-factor challenge also fetches password information; successful login uses the normal authorization-completion path.</p>'
+        elif name == "send_album":
+            detail += '<p>Uploaded or external media first uses <code>messages.uploadMedia</code>; the album is sent with <code>messages.sendMultiMedia</code>.</p>'
     else:
         label = "Not documented for this high-level method"
         detail = ('No complete source-reviewed user/bot mapping is cached for this helper. '
                   'Its signature and documentation below are generated from the current Rust API. '
                   'Inspect its source and the raw method reference before relying on account compatibility.')
-    return label, f'<aside class="availability"><h2>Usable by</h2><p><strong>{escape(label)}</strong></p><div>{detail}</div></aside>'
+    return label, f'<aside class="availability"><p class="availability-label">Usable by: <strong>{escape(label)}</strong></p><details><summary>Sources and restrictions</summary><div>{detail}</div></details></aside>'
 
 
 def table(headers: list[str], rows: list[list[str]]) -> str:
     head = "".join(f"<th scope=\"col\">{escape(value)}</th>" for value in headers)
     body = "".join("<tr>" + "".join(f"<td>{value}</td>" for value in row) + "</tr>" for row in rows)
     return f'<div class="table-scroll"><table class="method-parameters"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+
+
+def split_bounds(text: str) -> list[str]:
+    """Split comma-separated rendered Rust bounds outside nested delimiters."""
+    stack = []
+    pairs = {">": "<", ")": "(", "]": "[", "}": "{"}
+    parts = []
+    start = 0
+    for index, char in enumerate(text):
+        if char in "<([{":
+            stack.append(char)
+        elif char in pairs:
+            if char == ">" and index and text[index - 1] == "-":
+                continue
+            if not stack or stack.pop() != pairs[char]:
+                raise ValueError("Unbalanced rendered Rust bound")
+        elif char == "," and not stack:
+            parts.append(text[start:index].strip())
+            start = index + 1
+    if stack:
+        raise ValueError("Unterminated rendered Rust bound")
+    parts.append(text[start:].strip())
+    return [part for part in parts if part]
+
+
+def parameter_bounds(generics: str, suffix: str) -> dict[str, str]:
+    bounds = {}
+    declarations = []
+    generics = generics.strip()
+    if generics:
+        if not generics.startswith("<") or not generics.endswith(">"):
+            raise ValueError("Unrecognized rendered generic parameter list")
+        declarations.extend(split_bounds(generics[1:-1]))
+    where = re.search(r"\bwhere\b", suffix)
+    if where:
+        declarations.extend(split_bounds(suffix[where.end():]))
+    for declaration in declarations:
+        match = re.fullmatch(r"([A-Za-z_]\w*)\s*:\s*(.+)", declaration, re.S)
+        if match:
+            name, bound = match.groups()
+            bound = " ".join(bound.split())
+            bounds[name] = bounds[name] + " + " + bound if name in bounds else bound
+    return bounds
 
 
 def signature_parameters(signature: str) -> tuple[list[tuple[str, str]], str]:
@@ -254,6 +305,7 @@ def signature_parameters(signature: str) -> tuple[list[tuple[str, str]], str]:
             beginning = index + 1
     if end is None:
         raise ValueError("Unterminated rustdoc parameter list")
+    bounds = parameter_bounds(signature[function.end():start - 1], signature[end + 1:])
     params = []
     for item in items:
         if not item or item in ("self", "&self", "&mut self", "mut self"):
@@ -261,11 +313,53 @@ def signature_parameters(signature: str) -> tuple[list[tuple[str, str]], str]:
         name, separator, kind = item.partition(":")
         if not separator:
             raise ValueError(f"Unrecognized rustdoc parameter: {item}")
-        params.append((name.strip(), " ".join(kind.split())))
+        kind = " ".join(kind.split())
+        # Only expand a direct generic parameter. Replacing a generic inside a
+        # container/reference would alter its type relationships or Rust syntax.
+        if kind in bounds:
+            kind = "impl " + bounds[kind]
+        params.append((name.strip(), kind))
     returns = signature[end + 1:].strip()
     returns = returns[2:].strip() if returns.startswith("->") else "()"
     returns = re.split(r"\bwhere\b", returns, maxsplit=1)[0].strip()
     return params, " ".join(returns.split())
+
+
+def highlight_signature(block: Tag) -> None:
+    """Project Pygments keyword tokens onto text nodes without touching links."""
+    from pygments.lexers import RustLexer
+    from pygments.token import Keyword
+
+    text = block.get_text()
+    # The unprocessed API preserves CRLF in Rustdoc emitted on Windows.
+    tokens = list(RustLexer().get_tokens_unprocessed(text))
+    if "".join(value for _, _, value in tokens) != text:
+        raise ValueError("Signature lexer changed the rendered text")
+    ranges = []
+    for offset, token, value in tokens:
+        if token in Keyword:
+            ranges.append((offset, offset + len(value)))
+    offset = 0
+    for node in list(block.find_all(string=True)):
+        value = str(node)
+        start, end = offset, offset + len(value)
+        offset = end
+        matches = [(max(start, left) - start, min(end, right) - start)
+                   for left, right in ranges if left < end and right > start]
+        if not matches:
+            continue
+        fragment = BeautifulSoup("", "html.parser")
+        cursor = 0
+        for left, right in matches:
+            if left > cursor:
+                fragment.append(NavigableString(value[cursor:left]))
+            span = fragment.new_tag("span", attrs={"class": "k"})
+            span.string = value[left:right]
+            fragment.append(span)
+            cursor = right
+        if cursor < len(value):
+            fragment.append(NavigableString(value[cursor:]))
+        node.replace_with(*list(fragment.contents))
 
 
 def render_page(template: str, title: str, content: str, destination: Path, output: Path,
@@ -295,6 +389,8 @@ def render_page(template: str, title: str, content: str, destination: Path, outp
     from pygments import highlight
     from pygments.formatters import HtmlFormatter
     from pygments.lexers import RustLexer
+    for block in main.select("pre.method-signature code"):
+        highlight_signature(block)
     for block in main.select(".docblock pre.rust code, pre code.language-rust"):
         highlighted = highlight(block.get_text(), RustLexer(), HtmlFormatter(nowrap=True))
         block.clear()
@@ -312,7 +408,7 @@ def render_page(template: str, title: str, content: str, destination: Path, outp
         block.wrap(wrapper)
         wrapper.insert(0, toolbar)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(str(page), encoding="utf-8")
+    destination.write_text(str(page), encoding="utf-8", newline="")
 
 
 def inherent_methods(soup: BeautifulSoup) -> list[tuple[str, Tag, Tag | None]]:
@@ -334,15 +430,18 @@ def inherent_methods(soup: BeautifulSoup) -> list[tuple[str, Tag, Tag | None]]:
     return sorted(methods, key=lambda row: row[0])
 
 
-def raw_pages(output: Path) -> dict[str, Path]:
+def raw_pages(output: Path, method_names: set[str]) -> dict[str, Path]:
     """Discover raw structs using their canonical official link, not case guesses."""
     paths = {}
     root = output / "api" / "grammers_tl_types" / "functions"
     for path in root.rglob("struct.*.html"):
         text = path.read_text(encoding="utf-8")
-        match = re.search(r'href="https://core\.telegram\.org/method/([A-Za-z_0-9.]+)"', text)
-        if match:
-            paths[match[1]] = path
+        for match in re.finditer(r'href="https://core\.telegram\.org/method/([A-Za-z_0-9.]+)"', text):
+            # The injected provenance panel also links to a .md URL. Select the
+            # actual local method name so repeated enrichment remains valid.
+            if match[1] in method_names:
+                paths[match[1]] = path
+                break
     return paths
 
 
@@ -405,7 +504,7 @@ def enrich(output: Path, root: Path) -> dict:
         entries.append({"name": name, "category": "Client", "url": path.relative_to(output).as_posix(),
                         "availability": availability, "summary": summary})
 
-    raw_paths = raw_pages(output)
+    raw_paths = raw_pages(output, set(schema))
     missing = sorted(set(schema) - set(raw_paths))
     if missing:
         raise ValueError(f"Local schema methods missing from rustdoc: {', '.join(missing[:12])}")
