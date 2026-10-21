@@ -1,5 +1,15 @@
 # Dependencies
 
+## base64
+
+Optional under `qr-login`; encodes short-lived Telegram login tokens as unpadded
+base64url for explicit QR display. No image renderer or background polling is added.
+
+## rpassword
+
+Development-only helper for hidden terminal password input in the QR-login
+example. The blocking prompt is awaited through `tokio::task::spawn_blocking`.
+
 ## grammers-crypto
 
 Used for supporting logging in to accounts with 2-factor authentication enabled.

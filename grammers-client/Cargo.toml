@@ -14,6 +14,8 @@ categories = ["api-bindings"]
 edition = "2024"
 
 [features]
+dispatcher = []
+qr-login = ["dep:base64"]
 markdown = ["dep:pulldown-cmark"]
 html = ["dep:html5ever"]
 proxy = ["grammers-mtsender/proxy"]
@@ -26,6 +28,7 @@ session-import-files = ["session-import", "grammers-session/session-import-files
 default = ["fs"]
 
 [dependencies]
+base64 = { version = "0.22.1", optional = true }
 futures-util = { version = "0.3.32", default-features = false, features = [
     "alloc", "std"
 ] }
@@ -48,11 +51,20 @@ tracing.workspace = true
 url = { version = "2.5.8", optional = true }
 
 [dev-dependencies]
+rpassword = "7.5.4"
 tokio = { version = "1.52.3", default-features = false, features = [
     "signal",
 ] }
 tracing-subscriber.workspace = true
 toml = "1.1.2"
+
+[[example]]
+name = "dispatcher"
+required-features = ["dispatcher", "session-file"]
+
+[[example]]
+name = "qr_login"
+required-features = ["qr-login", "session-file"]
 
 [[example]]
 name = "ping"
@@ -64,7 +76,7 @@ required-features = ["grammers-session/sqlite-storage"]
 
 [[example]]
 name = "downloader"
-required-features = ["grammers-session/sqlite-storage"]
+required-features = ["grammers-session/sqlite-storage", "fs"]
 
 [[example]]
 name = "dialogs"

@@ -18,6 +18,8 @@ mod files;
 mod iter_buffer;
 mod messages;
 mod net;
+#[cfg(feature = "qr-login")]
+mod qr_login;
 mod runtime;
 mod updates;
 
@@ -30,5 +32,7 @@ pub use dialogs::DialogIter;
 pub use files::DownloadIter;
 pub use iter_buffer::IterBuffer;
 pub use messages::{GlobalSearchIter, MessageIter, SearchIter};
+#[cfg(feature = "qr-login")]
+pub use qr_login::{QrLogin, QrLoginToken};
 pub use updates::UpdateStream;
 pub use runtime::{ClientBuildError, ClientBuilder, LifecycleError, SessionSource};

@@ -198,7 +198,7 @@ impl Client {
         }
     }
 
-    async fn complete_login(
+    pub(super) async fn complete_login(
         &self,
         auth: tl::types::auth::Authorization,
     ) -> Result<User, InvocationError> {
