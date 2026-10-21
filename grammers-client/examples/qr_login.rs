@@ -7,7 +7,7 @@
 // except according to those terms.
 
 //! Explicit QR-login steps; run with `--features qr-login,session-file --example qr_login`.
-//! Set TELEGRAM_API_ID and TELEGRAM_API_HASH at runtime. Render the printed login
+//! Set TG_ID and TG_HASH at runtime. Render the printed login
 //! URL as a QR code using a trusted local UI. The URL is a short-lived credential.
 //! This example checks only when Enter is pressed; it does not poll Telegram.
 
@@ -34,7 +34,7 @@ async fn login(client: &Client) -> Result {
         println!("The saved session is already authorized.");
         return Ok(());
     }
-    let api_hash = env::var("TELEGRAM_API_HASH")?;
+    let api_hash = env::var("TG_HASH")?;
     loop {
         match client.qr_login_step(&api_hash, &[]).await {
             Ok(QrLogin::Display(token)) => {
@@ -78,7 +78,7 @@ async fn login(client: &Client) -> Result {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result {
-    let client = Client::builder(env::var("TELEGRAM_API_ID")?.parse()?)
+    let client = Client::builder(env::var("TG_ID")?.parse()?)
         .session(SessionSource::file("qr-login.session"))
         .build()
         .await?;

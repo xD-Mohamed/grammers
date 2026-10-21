@@ -24,7 +24,7 @@ login codes and two-factor passwords are hidden rather than echoed.
 | Example | Purpose | Required client features | Arguments / inputs |
 | --- | --- | --- | --- |
 | [ping](ping.rs) | Raw MTProto Ping through the managed client; connectivity only | none | `TG_ID`; no account or file |
-| [managed_client](managed_client.rs) | Builder settings, native string session, connectivity and Ctrl-C lifecycle | `session-string` | `TG_API_ID`, `TG_SESSION` (native secret) |
+| [managed_client](managed_client.rs) | Builder settings, native string session, connectivity and Ctrl-C lifecycle | `session-string` | `TG_ID`, `TG_SESSION` (native secret) |
 | [dialogs](dialogs.rs) | Interactive user login and paginated dialog iteration | `session-file` | `TG_ID`, `TG_HASH` |
 | [echo](echo.rs) | Bot echo with at most 16 concurrent handlers and graceful draining | `session-file` | `TG_ID`, `TG_HASH`, `TG_BOT_TOKEN` |
 | [inline-pagination](inline-pagination.rs) | Ordered bot callbacks, bounded payloads and checked arithmetic | `session-file` | Bot environment; send `/start` |
@@ -34,8 +34,8 @@ login codes and two-factor passwords are hidden rather than echoed.
 | [export_session](export_session.rs) | Local native SQLite-to-string export; never starts networking | `session-file`, `session-string` | `INPUT_SESSION --output NEW_FILE` or deliberate `--stdout` |
 | [send_options](send_options.rs) | Common optional message flags with `..Default::default()` | `session-string`, `fs` | `TG_ID` and `NATIVE_STRING_FILE`; sends to Saved Messages |
 | [error_handling](error_handling.rs) | Error categories and explicit server wait hints without automatic retries | none | `TG_ID`; unauthenticated Ping |
-| [dispatcher](dispatcher.rs) | Opt-in dispatcher and filters | `dispatcher`, `session-file` | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_BOT_TOKEN` |
-| [qr_login](qr_login.rs) | Opt-in QR authorization | `qr-login`, `session-file` | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` |
+| [dispatcher](dispatcher.rs) | Opt-in dispatcher and filters | `dispatcher`, `session-file` | `TG_ID`, `TG_HASH`, `TG_BOT_TOKEN` |
+| [qr_login](qr_login.rs) | Opt-in QR authorization | `qr-login`, `session-file` | `TG_ID`, `TG_HASH` |
 
 `fs` is a default feature; include it explicitly with `--no-default-features`.
 Use `--features session-file` for SQLite persistence. The builder defaults to
@@ -98,3 +98,19 @@ client.send_message_with_options(peer, "Quiet hello", SendOptions {
 The six listed options replace earlier values, even when `false` or `None`;
 text, media, entities, markup, rich content, and scheduling remain intact.
 Defaults match the existing message builder, including `link_preview: false`.
+
+Device metadata uses the same grouped pattern, with platform defaults for any
+omitted fields. The managed-client example demonstrates it:
+
+```rust
+use grammers_client::{Client, DeviceConfig};
+
+let client = Client::builder(api_id)
+    .device(DeviceConfig {
+        device_model: "Desktop application".into(),
+        app_version: "1.0".into(),
+        ..Default::default()
+    })
+    .build()
+    .await?;
+```

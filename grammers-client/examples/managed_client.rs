@@ -1,11 +1,11 @@
 //! Run an existing native session until Ctrl-C, without a manual SenderPool.
-//! Set TG_API_ID and TG_SESSION (a secret native session string) at runtime.
+//! Set TG_ID and TG_SESSION (a secret native session string) at runtime.
 //! Enable `session-string`; this example is not run by the test suite.
 use grammers_client::{Client, DeviceConfig, SessionSource};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_id = std::env::var("TG_API_ID")?.parse()?;
+    let api_id = std::env::var("TG_ID")?.parse()?;
     let session = std::env::var("TG_SESSION")?;
     let client = Client::builder(api_id)
         .session(SessionSource::native(session))

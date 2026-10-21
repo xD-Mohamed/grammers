@@ -8,7 +8,7 @@
 
 //! Sequential bot commands with an explicit fail-fast handler error policy.
 //! Run with `--features dispatcher,session-file --example dispatcher`.
-//! Set TELEGRAM_API_ID, TELEGRAM_API_HASH and TELEGRAM_BOT_TOKEN at runtime.
+//! Set TG_ID, TG_HASH and TG_BOT_TOKEN at runtime.
 
 use grammers_client::sender::UpdatesConfiguration;
 use grammers_client::{
@@ -22,10 +22,7 @@ type Result<T = ()> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 async fn receive(client: &Client) -> Result {
     if !client.is_authorized().await? {
         client
-            .bot_sign_in(
-                &env::var("TELEGRAM_BOT_TOKEN")?,
-                &env::var("TELEGRAM_API_HASH")?,
-            )
+            .bot_sign_in(&env::var("TG_BOT_TOKEN")?, &env::var("TG_HASH")?)
             .await?;
     }
     let mut updates = client
@@ -65,7 +62,7 @@ async fn receive(client: &Client) -> Result {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result {
-    let client = Client::builder(env::var("TELEGRAM_API_ID")?.parse()?)
+    let client = Client::builder(env::var("TG_ID")?.parse()?)
         .session(SessionSource::file("dispatcher.session"))
         .build()
         .await?;
