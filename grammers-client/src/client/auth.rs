@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::fmt;
+use std::{fmt, io};
 
 use grammers_crypto::two_factor_auth::{calculate_2fa, check_p_and_g};
 use grammers_mtsender::InvocationError;
@@ -61,9 +61,97 @@ pub struct LoginToken {
 }
 
 /// Password token needed to complete a 2FA login.
-#[derive(Debug)]
 pub struct PasswordToken {
     pub(crate) password: Box<tl::types::account::Password>,
+}
+
+impl fmt::Debug for PasswordToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PasswordToken").finish_non_exhaustive()
+    }
+}
+
+fn invalid_password_state() -> InvocationError {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "missing or invalid SRP password parameters; request fresh password information",
+    )
+    .into()
+}
+
+struct PasswordParameters<'a> {
+    salt1: &'a [u8],
+    salt2: &'a [u8],
+    p: &'a [u8],
+    g: &'a i32,
+}
+
+fn password_parameters(
+    password: &tl::types::account::Password,
+) -> Result<PasswordParameters<'_>, InvocationError> {
+    let algo = password
+        .current_algo
+        .as_ref()
+        .ok_or_else(invalid_password_state)?;
+    if matches!(algo, tl::enums::PasswordKdfAlgo::Unknown) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "unsupported password algorithm; update the client",
+        )
+        .into());
+    }
+    let params = utils::extract_password_parameters(algo);
+    let b = password.srp_b.as_ref().ok_or_else(invalid_password_state)?;
+    if !password.has_password
+        || password.srp_id.is_none()
+        || !(2..=7).contains(params.3)
+        || b.is_empty()
+        || b.len() > 256
+        || b.iter().all(|byte| *byte == 0)
+        || password.secure_random.is_empty()
+        || password.secure_random.len() > 256
+        || password.secure_random.iter().all(|byte| *byte == 0)
+    {
+        return Err(invalid_password_state());
+    }
+    if params.2.len() == 256 {
+        let mut padded_b = [0; 256];
+        padded_b[256 - b.len()..].copy_from_slice(b);
+        if padded_b.as_slice() >= params.2.as_slice() {
+            return Err(invalid_password_state());
+        }
+    }
+    Ok(PasswordParameters {
+        salt1: params.0,
+        salt2: params.1,
+        p: params.2,
+        g: params.3,
+    })
+}
+
+fn migration_dc(value: Option<u32>) -> Result<i32, InvocationError> {
+    value
+        .and_then(|value| i32::try_from(value).ok())
+        .filter(|dc| *dc > 0)
+        .ok_or(InvocationError::InvalidDc)
+}
+
+fn login_code_response(
+    response: tl::enums::auth::SentCode,
+) -> Result<tl::types::auth::SentCode, InvocationError> {
+    match response {
+        tl::enums::auth::SentCode::Code(code) => Ok(code),
+        tl::enums::auth::SentCode::Success(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "login code request already authorized the session; check authorization status",
+        )
+        .into()),
+        tl::enums::auth::SentCode::PaymentRequired(_) => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "login requires payment; complete login with an official Telegram client",
+        )
+        .into()),
+    }
 }
 
 impl PasswordToken {
@@ -119,7 +207,16 @@ impl Client {
         let update_state = self.invoke(&tl::functions::updates::GetState {}).await.ok();
 
         let user = User::from_raw(self, auth.user);
-        let auth = user.to_ref().await?.unwrap().auth;
+        let auth = user
+            .to_ref()
+            .await?
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "authorization response contains no usable user reference",
+                )
+            })?
+            .auth;
 
         self.0
             .session
@@ -194,7 +291,7 @@ impl Client {
             Ok(x) => x,
             Err(InvocationError::Rpc(err)) if err.code == 303 => {
                 let old_dc_id = self.0.session.home_dc_id()?;
-                let new_dc_id = err.value.unwrap() as i32;
+                let new_dc_id = migration_dc(err.value)?;
                 // Disconnect from current DC to cull the now-unused connection.
                 // This also gives a chance for the new home DC to export its authorization
                 // if there's a need to connect back to the old DC after having logged in.
@@ -207,9 +304,11 @@ impl Client {
 
         match result {
             tl::enums::auth::Authorization::Authorization(x) => self.complete_login(x).await,
-            tl::enums::auth::Authorization::SignUpRequired(_) => {
-                panic!("API returned SignUpRequired even though we're logging in as a bot");
-            }
+            tl::enums::auth::Authorization::SignUpRequired(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bot authorization unexpectedly requires sign-up",
+            )
+            .into()),
         }
     }
 
@@ -220,6 +319,11 @@ impl Client {
     /// After you obtain the code and it's inside your program (e.g. ask the user to enter it
     /// via the console's standard input), you will need to [`Client::sign_in`] to complete the
     /// process.
+    ///
+    /// Login flows requiring payment return [`InvocationError::Io`] with
+    /// [`io::ErrorKind::Unsupported`]; complete those flows with an official Telegram client.
+    /// If Telegram already authorized the session, an [`io::ErrorKind::InvalidData`] error
+    /// directs the caller to check [`Client::is_authorized`].
     ///
     /// # Examples
     ///
@@ -262,27 +366,17 @@ impl Client {
             .into(),
         };
 
-        use tl::enums::auth::SentCode as SC;
-
         let sent_code: tl::types::auth::SentCode = match self.invoke(&request).await {
-            Ok(x) => match x {
-                SC::Code(code) => code,
-                SC::Success(_) => panic!("should not have logged in yet"),
-                SC::PaymentRequired(_) => unimplemented!(),
-            },
+            Ok(x) => login_code_response(x)?,
             Err(InvocationError::Rpc(err)) if err.code == 303 => {
                 let old_dc_id = self.0.session.home_dc_id()?;
-                let new_dc_id = err.value.unwrap() as i32;
+                let new_dc_id = migration_dc(err.value)?;
                 // Disconnect from current DC to cull the now-unused connection.
                 // This also gives a chance for the new home DC to export its authorization
                 // if there's a need to connect back to the old DC after having logged in.
                 self.0.handle.disconnect_from_dc(old_dc_id);
                 self.0.session.set_home_dc_id(new_dc_id).await?;
-                match self.invoke(&request).await? {
-                    SC::Code(code) => code,
-                    SC::Success(_) => panic!("should not have logged in yet"),
-                    SC::PaymentRequired(_) => unimplemented!(),
-                }
+                login_code_response(self.invoke(&request).await?)?
             }
             Err(e) => return Err(e),
         };
@@ -378,6 +472,10 @@ impl Client {
     ///
     /// [`PasswordToken`] can be obtained from [`SignInError::PasswordRequired`] error after the
     /// [`Client::sign_in`] method fails.
+    /// Missing or invalid password state returns [`SignInError::Other`] containing
+    /// [`InvocationError::Io`] with [`io::ErrorKind::InvalidData`]. Unsupported algorithms
+    /// use [`io::ErrorKind::Unsupported`]. Invalid prime parameters are refreshed once before
+    /// being rejected. Prime and generator checks remain mandatory before calculating a proof.
     ///
     /// # Examples
     ///
@@ -419,33 +517,36 @@ impl Client {
         password: impl AsRef<[u8]>,
     ) -> Result<User, SignInError> {
         let mut password_info = password_token.password;
-        let current_algo = password_info.current_algo.clone().unwrap();
-        let mut params = utils::extract_password_parameters(&current_algo);
+        let mut params = password_parameters(&password_info).map_err(SignInError::Other)?;
 
         // Telegram sent us incorrect parameters, trying to get them again
-        if !check_p_and_g(params.2, params.3) {
+        if !check_p_and_g(params.p, params.g) {
             password_info = self
                 .get_password_information()
                 .await
                 .map_err(SignInError::Other)?
                 .password;
-            params =
-                utils::extract_password_parameters(password_info.current_algo.as_ref().unwrap());
-            if !check_p_and_g(params.2, params.3) {
-                panic!("Failed to get correct password information from Telegram")
+            params = password_parameters(&password_info).map_err(SignInError::Other)?;
+            if !check_p_and_g(params.p, params.g) {
+                return Err(SignInError::Other(invalid_password_state()));
             }
         }
 
-        let (salt1, salt2, p, g) = params;
+        let PasswordParameters { salt1, salt2, p, g } = params;
 
-        let g_b = password_info.srp_b.clone().unwrap();
+        let g_b = password_info
+            .srp_b
+            .clone()
+            .ok_or_else(|| SignInError::Other(invalid_password_state()))?;
         let a = password_info.secure_random.clone();
 
         let (m1, g_a) = calculate_2fa(salt1, salt2, p, g, g_b, a, password);
 
         let check_password = tl::functions::auth::CheckPassword {
             password: tl::enums::InputCheckPasswordSrp::Srp(tl::types::InputCheckPasswordSrp {
-                srp_id: password_info.srp_id.unwrap(),
+                srp_id: password_info
+                    .srp_id
+                    .ok_or_else(|| SignInError::Other(invalid_password_state()))?,
                 a: g_a.to_vec(),
                 m1: m1.to_vec(),
             }),
@@ -455,7 +556,9 @@ impl Client {
             Ok(tl::enums::auth::Authorization::Authorization(x)) => {
                 self.complete_login(x).await.map_err(SignInError::Other)
             }
-            Ok(tl::enums::auth::Authorization::SignUpRequired(_x)) => panic!("Unexpected result"),
+            Ok(tl::enums::auth::Authorization::SignUpRequired(_)) => {
+                Err(SignInError::SignUpRequired)
+            }
             Err(err) if err.is("PASSWORD_HASH_INVALID") => {
                 Err(SignInError::InvalidPassword(PasswordToken {
                     password: password_info,
@@ -493,5 +596,160 @@ impl Client {
     /// Signals all clients sharing the same sender pool to disconnect.
     pub fn disconnect(&self) {
         self.0.handle.quit();
+    }
+}
+
+#[cfg(test)]
+mod safety_tests {
+    use super::*;
+    use grammers_mtsender::SenderPool;
+    use grammers_session::storages::MemorySession;
+    use std::sync::Arc;
+
+    fn password_info() -> tl::types::account::Password {
+        tl::types::account::Password {
+            has_recovery: false,
+            has_secure_values: false,
+            has_password: true,
+            current_algo: None,
+            srp_b: None,
+            srp_id: None,
+            hint: Some("private-hint-fixture".into()),
+            email_unconfirmed_pattern: None,
+            new_algo: tl::enums::PasswordKdfAlgo::Unknown,
+            new_secure_algo: tl::enums::SecurePasswordKdfAlgo::Unknown,
+            secure_random: b"private-random-fixture".to_vec(),
+            pending_reset_date: None,
+            login_email_pattern: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_password_algorithm_returns_error_without_panicking() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 12345);
+        let client = Client::new(pool.handle);
+        let result = client
+            .check_password(PasswordToken::new(password_info()), b"unused")
+            .await;
+        assert!(
+            matches!(result, Err(SignInError::Other(InvocationError::Io(e))) if e.kind() == std::io::ErrorKind::InvalidData)
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_password_algorithm_returns_unsupported_without_panicking() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 12345);
+        let client = Client::new(pool.handle);
+        let mut info = password_info();
+        info.current_algo = Some(tl::enums::PasswordKdfAlgo::Unknown);
+        let result = client
+            .check_password(PasswordToken::new(info), b"unused")
+            .await;
+        assert!(
+            matches!(result, Err(SignInError::Other(InvocationError::Io(e))) if e.kind() == std::io::ErrorKind::Unsupported)
+        );
+    }
+
+    #[test]
+    fn password_token_debug_does_not_expose_password_state() {
+        let debug = format!("{:?}", PasswordToken::new(password_info()));
+        assert!(!debug.contains("private-hint-fixture"));
+        assert!(!debug.contains("secure_random"));
+    }
+    fn supported_password_info() -> tl::types::account::Password {
+        let mut info = password_info();
+        info.current_algo = Some(
+            tl::types::PasswordKdfAlgoSha256Sha256Pbkdf2Hmacsha512iter100000Sha256ModPow {
+                salt1: vec![1],
+                salt2: vec![2],
+                p: vec![255; 256],
+                g: 3,
+            }
+            .into(),
+        );
+        info.srp_b = Some(vec![1]);
+        info.srp_id = Some(0);
+        info
+    }
+
+    #[test]
+    fn malformed_password_fields_are_rejected_before_crypto() {
+        assert!(password_parameters(&supported_password_info()).is_ok());
+        for case in 0..10 {
+            let mut info = supported_password_info();
+            match case {
+                0 => info.srp_b = None,
+                1 => info.srp_id = None,
+                2 => info.srp_b = Some(vec![0]),
+                3 => info.srp_b = Some(vec![1; 257]),
+                4 => info.srp_b = Some(vec![255; 256]),
+                5 => info.secure_random.clear(),
+                6 => info.secure_random = vec![1; 257],
+                7 => info.has_password = false,
+                8 => info.secure_random = vec![0; 256],
+                _ => info.current_algo = Some(
+                    tl::types::PasswordKdfAlgoSha256Sha256Pbkdf2Hmacsha512iter100000Sha256ModPow {
+                        salt1: vec![],
+                        salt2: vec![],
+                        p: vec![255; 256],
+                        g: 8,
+                    }
+                    .into(),
+                ),
+            }
+            assert!(
+                matches!(password_parameters(&info), Err(InvocationError::Io(e)) if e.kind() == io::ErrorKind::InvalidData),
+                "case {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_zero_and_overflow_migration_dc_are_rejected() {
+        for value in [None, Some(0), Some(i32::MAX as u32 + 1), Some(u32::MAX)] {
+            assert!(matches!(
+                migration_dc(value),
+                Err(InvocationError::InvalidDc)
+            ));
+        }
+        assert_eq!(migration_dc(Some(2)).unwrap(), 2);
+    }
+
+    #[test]
+    fn payment_required_is_actionable_and_redacted() {
+        let result = login_code_response(
+            tl::types::auth::SentCodePaymentRequired {
+                store_product: "private-product".into(),
+                phone_code_hash: "private-hash".into(),
+                support_email_address: "private-email".into(),
+                support_email_subject: "private-subject".into(),
+                premium_days: 7,
+                currency: "USD".into(),
+                amount: 100,
+            }
+            .into(),
+        );
+        let Err(InvocationError::Io(error)) = result else {
+            panic!("expected payment-required error")
+        };
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert!(error.to_string().contains("official Telegram client"));
+        assert!(!format!("{error:?}").contains("private-"));
+    }
+
+    #[test]
+    fn unexpected_sent_code_success_does_not_create_login_token() {
+        let result = login_code_response(
+            tl::types::auth::SentCodeSuccess {
+                authorization: tl::types::auth::AuthorizationSignUpRequired {
+                    terms_of_service: None,
+                }
+                .into(),
+            }
+            .into(),
+        );
+        assert!(
+            matches!(result, Err(InvocationError::Io(error)) if error.kind() == io::ErrorKind::InvalidData)
+        );
     }
 }

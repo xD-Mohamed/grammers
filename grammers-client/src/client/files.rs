@@ -19,8 +19,7 @@ use tokio::sync::Mutex as AsyncMutex;
 #[cfg(feature = "fs")]
 use tokio::{
     fs,
-    io::{AsyncSeekExt, AsyncWriteExt},
-    sync::mpsc::unbounded_channel,
+    io::{AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt},
 };
 
 use super::Client;
@@ -32,6 +31,93 @@ pub const MAX_CHUNK_SIZE: i32 = 512 * 1024;
 const FILE_MIGRATE_ERROR: i32 = 303;
 const BIG_FILE_SIZE: usize = 10 * 1024 * 1024;
 const WORKER_COUNT: usize = 4;
+
+fn unsupported_cdn() -> InvocationError {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "Telegram redirected this file to a CDN; CDN downloads are not supported by this client",
+    )
+    .into()
+}
+
+fn migration_dc(value: Option<u32>) -> Result<i32, InvocationError> {
+    value
+        .and_then(|value| i32::try_from(value).ok())
+        .filter(|dc| *dc > 0)
+        .ok_or(InvocationError::InvalidDc)
+}
+
+#[cfg(feature = "fs")]
+fn download_bytes(response: tl::enums::upload::File) -> Result<Vec<u8>, InvocationError> {
+    match response {
+        tl::enums::upload::File::File(file) => Ok(file.bytes),
+        tl::enums::upload::File::CdnRedirect(_) => Err(unsupported_cdn()),
+    }
+}
+
+#[cfg(feature = "fs")]
+fn validate_download(size: usize, workers: usize) -> Result<(), io::Error> {
+    if workers == 0 || i64::try_from(size).is_err() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "downloads require at least one worker and a size within the signed 64-bit offset range",
+        ));
+    }
+    Ok(())
+}
+
+// Own each in-flight chunk future inside the download. Dropping this future, a failed
+// request, or a disk error drops every child future. No download worker or result queue outlives
+// the caller, and at most `workers` response chunks can be held while writing.
+#[cfg(feature = "fs")]
+async fn download_chunks<W, F, Fut>(
+    file: &mut W,
+    size: usize,
+    workers: usize,
+    fetch: F,
+) -> Result<(), InvocationError>
+where
+    W: AsyncWrite + AsyncSeek + Unpin,
+    F: Fn(i64) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<u8>, InvocationError>>,
+{
+    validate_download(size, workers)?;
+    let mut offsets = (0..size).step_by(MAX_CHUNK_SIZE as usize);
+    let mut pending = FuturesUnordered::new();
+    let chunk = |offset: usize| {
+        let request = fetch(offset as i64);
+        async move { (offset, request.await) }
+    };
+    for offset in offsets.by_ref().take(workers) {
+        pending.push(chunk(offset));
+    }
+    let mut position = 0;
+    while let Some((offset, result)) = pending.next().await {
+        let bytes = result?;
+        let expected = (size - offset).min(MAX_CHUNK_SIZE as usize);
+        if bytes.len() != expected {
+            return Err(io::Error::new(
+                if bytes.len() < expected {
+                    io::ErrorKind::UnexpectedEof
+                } else {
+                    io::ErrorKind::InvalidData
+                },
+                "downloaded chunk length does not match the known file size",
+            )
+            .into());
+        }
+        if offset as u64 != position {
+            file.seek(SeekFrom::Start(offset as u64)).await?;
+        }
+        file.write_all(&bytes).await?;
+        position = offset as u64 + bytes.len() as u64;
+        if let Some(offset) = offsets.next() {
+            pending.push(chunk(offset));
+        }
+    }
+    file.flush().await?;
+    Ok(())
+}
 
 /// Iterator returned by [`Client::iter_download`].
 pub struct DownloadIter {
@@ -121,9 +207,7 @@ impl DownloadIter {
 
                     Ok(Some(f.bytes))
                 }
-                Ok(File::CdnRedirect(_)) => {
-                    panic!("API returned File::CdnRedirect even though cdn_supported = false");
-                }
+                Ok(File::CdnRedirect(_)) => Err(unsupported_cdn()),
                 Err(InvocationError::Rpc(err)) if &err.name == "AUTH_KEY_UNREGISTERED" => {
                     match self.client.copy_auth_to_dc(dc).await {
                         Ok(_) => continue,
@@ -131,7 +215,7 @@ impl DownloadIter {
                     }
                 }
                 Err(InvocationError::Rpc(err)) if err.code == FILE_MIGRATE_ERROR => {
-                    dc = err.value.unwrap() as _;
+                    dc = migration_dc(err.value)?;
                     continue;
                 }
                 Err(e) => Err(e),
@@ -143,6 +227,8 @@ impl DownloadIter {
 /// Method implementations related to uploading or downloading files.
 impl Client {
     /// Returns a new iterator over the contents of a media document that will be downloaded.
+    ///
+    /// CDN redirects return [`InvocationError::Io`] with [`io::ErrorKind::Unsupported`].
     ///
     /// # Examples
     ///
@@ -199,6 +285,10 @@ impl Client {
     ///
     /// This is a small wrapper around [`Client::iter_download`] for the common case of
     /// wanting to save the file locally.
+    /// Large files use at most four concurrent chunk requests with bounded response storage.
+    /// Cancelling the download or encountering an error drops all chunk futures and leaves
+    /// a potentially incomplete destination file. Already accepted RPCs retain their normal
+    /// sender lifetime; cancellation does not replay them or roll back already issued writes.
     ///
     /// # Examples
     ///
@@ -230,16 +320,19 @@ impl Client {
         }
 
         let mut download = self.iter_download(downloadable);
-        Ok(Client::load(path, &mut download).await?)
+        Client::load(path, &mut download).await
     }
 
     #[cfg(feature = "fs")]
-    async fn load<P: AsRef<Path>>(path: P, download: &mut DownloadIter) -> Result<(), io::Error> {
+    async fn load<P: AsRef<Path>>(
+        path: P,
+        download: &mut DownloadIter,
+    ) -> Result<(), InvocationError> {
         let mut file = fs::File::create(path).await?;
-        while let Some(chunk) = download.next().await.map_err(io::Error::other)? {
+        while let Some(chunk) = download.next().await? {
             file.write_all(&chunk).await?;
         }
-
+        file.flush().await?;
         Ok(())
     }
 
@@ -253,100 +346,37 @@ impl Client {
         workers: usize,
         dc_id: i32,
     ) -> Result<(), InvocationError> {
-        // Allocate
-        let mut file = fs::File::create(path).await.map_err(InvocationError::Io)?;
-        file.set_len(size as u64)
-            .await
-            .map_err(InvocationError::Io)?;
-        file.seek(SeekFrom::Start(0))
-            .await
-            .map_err(InvocationError::Io)?;
+        validate_download(size, workers)?;
+        let mut file = fs::File::create(path).await?;
+        file.set_len(size as u64).await?;
 
-        // Start workers
-        let (tx, mut rx) = unbounded_channel();
-        let part_index = Arc::new(std::sync::atomic::AtomicI64::new(0));
-        let mut tasks = vec![];
-        for _ in 0..workers {
-            let location = location.clone();
-            let tx = tx.clone();
-            let part_index = part_index.clone();
+        download_chunks(&mut file, size, workers, |offset| {
             let client = self.clone();
-            let task = tokio::task::spawn(async move {
-                let mut retry_offset = None;
+            let location = location.clone();
+            async move {
                 let mut task_dc = dc_id;
+                let request = tl::functions::upload::GetFile {
+                    precise: true,
+                    cdn_supported: false,
+                    location,
+                    offset,
+                    limit: MAX_CHUNK_SIZE,
+                };
                 loop {
-                    // Calculate file offset
-                    let offset: i64 = {
-                        if let Some(offset) = retry_offset {
-                            retry_offset = None;
-                            offset
-                        } else {
-                            let i = part_index.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            MAX_CHUNK_SIZE as i64 * i
+                    match client.invoke_in_dc(task_dc, &request).await {
+                        Ok(response) => return download_bytes(response),
+                        Err(InvocationError::Rpc(err)) if err.name == "AUTH_KEY_UNREGISTERED" => {
+                            client.copy_auth_to_dc(task_dc).await?;
                         }
-                    };
-                    if offset >= size as i64 {
-                        break;
-                    }
-                    // Fetch from telegram
-                    let request = &tl::functions::upload::GetFile {
-                        precise: true,
-                        cdn_supported: false,
-                        location: location.clone(),
-                        offset,
-                        limit: MAX_CHUNK_SIZE,
-                    };
-                    match client.invoke_in_dc(task_dc, request).await {
-                        Ok(tl::enums::upload::File::File(file)) => {
-                            tx.send((offset as u64, file.bytes)).unwrap();
+                        Err(InvocationError::Rpc(err)) if err.code == FILE_MIGRATE_ERROR => {
+                            task_dc = migration_dc(err.value)?;
                         }
-                        Ok(tl::enums::upload::File::CdnRedirect(_)) => {
-                            panic!(
-                                "API returned File::CdnRedirect even though cdn_supported = false"
-                            );
-                        }
-                        Err(InvocationError::Rpc(err)) if &err.name == "AUTH_KEY_UNREGISTERED" => {
-                            match client.copy_auth_to_dc(task_dc).await {
-                                Ok(_) => {
-                                    retry_offset = Some(offset);
-                                    continue;
-                                }
-                                Err(e) => return Err(e),
-                            }
-                        }
-                        Err(InvocationError::Rpc(err)) => {
-                            if err.code == FILE_MIGRATE_ERROR {
-                                task_dc = err.value.unwrap() as _;
-                                retry_offset = Some(offset);
-                                continue;
-                            }
-                            return Err(InvocationError::Rpc(err));
-                        }
-                        Err(e) => return Err(e),
+                        Err(error) => return Err(error),
                     }
                 }
-                Ok::<(), InvocationError>(())
-            });
-            tasks.push(task);
-        }
-        drop(tx);
-
-        // File write loop
-        let mut pos = 0;
-        while let Some((offset, data)) = rx.recv().await {
-            if offset != pos {
-                file.seek(SeekFrom::Start(offset)).await?;
             }
-            file.write_all(&data).await?;
-            pos = offset + data.len() as u64;
-        }
-
-        // Check if all tasks finished succesfully
-        for task in tasks {
-            let res = task.await.map_err(io::Error::other)?;
-            res?;
-        }
-        Ok(())
+        })
+        .await
     }
 
     /// Uploads an async stream to Telegram servers.
@@ -570,5 +600,316 @@ impl<'a, S: AsyncRead + Unpin> PartStream<'a, S> {
         let res = Ok(Some((lock.current_part, bytes)));
         lock.current_part += 1;
         res
+    }
+}
+
+#[cfg(all(test, feature = "fs"))]
+mod safety_tests {
+    use super::*;
+    use grammers_mtsender::SenderPool;
+    use grammers_session::storages::MemorySession;
+
+    fn location() -> tl::enums::InputFileLocation {
+        tl::types::InputDocumentFileLocation {
+            id: 1,
+            access_hash: 0,
+            file_reference: Vec::new(),
+            thumb_size: String::new(),
+        }
+        .into()
+    }
+
+    #[tokio::test]
+    async fn zero_download_workers_cannot_report_success_for_unwritten_file() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 12345);
+        let client = Client::new(pool.handle);
+        let path =
+            std::env::temp_dir().join(format!("grammers-zero-workers-{}", generate_random_id()));
+        let result = client
+            .download_media_concurrent(location(), 4, &path, 0, 2)
+            .await;
+        let _ = fs::remove_file(path).await;
+        assert!(
+            matches!(result, Err(InvocationError::Io(e)) if e.kind() == io::ErrorKind::InvalidInput)
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_parallel_download_drops_all_worker_clients() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 12345);
+        // Keep the runner alive but never run it: each worker remains pending on its RPC.
+        let client = Client::new(pool.handle);
+        let path =
+            std::env::temp_dir().join(format!("grammers-cancel-download-{}", generate_random_id()));
+        let task_client = client.clone();
+        let task_path = path.clone();
+        let task = tokio::spawn(async move {
+            task_client
+                .download_media_concurrent(
+                    location(),
+                    MAX_CHUNK_SIZE as usize * 8,
+                    task_path,
+                    WORKER_COUNT,
+                    2,
+                )
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while Arc::strong_count(&client.0) < WORKER_COUNT + 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("all download workers started");
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        let count = Arc::strong_count(&client.0);
+        drop(pool.runner);
+        let _ = fs::remove_file(path).await;
+        assert_eq!(
+            count, 1,
+            "download cancellation must drop every worker-owned client"
+        );
+    }
+    #[test]
+    fn cdn_redirect_returns_unsupported_without_exposing_key_material() {
+        let response = tl::types::upload::FileCdnRedirect {
+            dc_id: 2,
+            file_token: b"secret-token".to_vec(),
+            encryption_key: vec![7; 32],
+            encryption_iv: vec![8; 16],
+            file_hashes: Vec::new(),
+        }
+        .into();
+        let Err(InvocationError::Io(error)) = download_bytes(response) else {
+            panic!("expected unsupported CDN error")
+        };
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        assert!(error.to_string().contains("CDN"));
+        assert!(!format!("{error:?}").contains("secret-token"));
+    }
+
+    #[tokio::test]
+    async fn chunk_results_preserve_offsets_and_exact_final_size() {
+        let chunk_size = MAX_CHUNK_SIZE as usize;
+        let size = chunk_size * 5 + 3;
+        let mut file = std::io::Cursor::new(Vec::new());
+        download_chunks(&mut file, size, WORKER_COUNT, |offset| async move {
+            if offset == 0 {
+                tokio::task::yield_now().await;
+            }
+            Ok(vec![
+                (offset as usize / chunk_size + 1) as u8;
+                (size - offset as usize).min(chunk_size)
+            ])
+        })
+        .await
+        .unwrap();
+        let bytes = file.into_inner();
+        assert_eq!(bytes.len(), size);
+        for (index, chunk) in bytes.chunks(chunk_size).enumerate() {
+            assert!(chunk.iter().all(|byte| *byte == index as u8 + 1));
+        }
+    }
+
+    #[tokio::test]
+    async fn short_or_oversized_chunks_cannot_leave_silent_gaps() {
+        for (len, kind) in [
+            (3, io::ErrorKind::UnexpectedEof),
+            (5, io::ErrorKind::InvalidData),
+        ] {
+            let mut file = std::io::Cursor::new(Vec::new());
+            let result =
+                download_chunks(
+                    &mut file,
+                    4,
+                    WORKER_COUNT,
+                    |_| async move { Ok(vec![1; len]) },
+                )
+                .await;
+            assert!(matches!(result, Err(InvocationError::Io(error)) if error.kind() == kind));
+            assert!(file.into_inner().is_empty());
+        }
+    }
+
+    struct ActiveRequest(Arc<std::sync::atomic::AtomicUsize>);
+    impl ActiveRequest {
+        fn new(count: &Arc<std::sync::atomic::AtomicUsize>) -> Self {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Self(count.clone())
+        }
+    }
+    impl Drop for ActiveRequest {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn worker_failure_drops_other_pending_requests_and_preserves_error() {
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut file = std::io::Cursor::new(Vec::new());
+        let result = download_chunks(
+            &mut file,
+            MAX_CHUNK_SIZE as usize * 8,
+            WORKER_COUNT,
+            |offset| {
+                let guard = ActiveRequest::new(&count);
+                async move {
+                    let _guard = guard;
+                    if offset == 0 {
+                        return Err(InvocationError::Dropped("fixture request failed"));
+                    }
+                    std::future::pending::<Result<Vec<u8>, InvocationError>>().await
+                }
+            },
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(InvocationError::Dropped("fixture request failed"))
+        ));
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    struct FailingWriter {
+        fail_on_flush: bool,
+    }
+    impl AsyncWrite for FailingWriter {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            bytes: &[u8],
+        ) -> std::task::Poll<io::Result<usize>> {
+            if self.fail_on_flush {
+                return std::task::Poll::Ready(Ok(bytes.len()));
+            }
+            std::task::Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "fixture disk error",
+            )))
+        }
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            if self.fail_on_flush {
+                return std::task::Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "fixture flush failure",
+                )));
+            }
+            std::task::Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+    impl AsyncSeek for FailingWriter {
+        fn start_seek(self: std::pin::Pin<&mut Self>, _: SeekFrom) -> io::Result<()> {
+            Ok(())
+        }
+        fn poll_complete(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<io::Result<u64>> {
+            std::task::Poll::Ready(Ok(0))
+        }
+    }
+
+    #[tokio::test]
+    async fn disk_failure_drops_pending_requests_without_result_channel_panics() {
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let result = download_chunks(
+            &mut FailingWriter {
+                fail_on_flush: false,
+            },
+            MAX_CHUNK_SIZE as usize * 8,
+            WORKER_COUNT,
+            |offset| {
+                let guard = ActiveRequest::new(&count);
+                async move {
+                    let _guard = guard;
+                    if offset == 0 {
+                        return Ok(vec![1; MAX_CHUNK_SIZE as usize]);
+                    }
+                    std::future::pending::<Result<Vec<u8>, InvocationError>>().await
+                }
+            },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(InvocationError::Io(error)) if error.kind() == io::ErrorKind::PermissionDenied)
+        );
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn pending_chunk_requests_are_bounded() {
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let high_water = std::sync::atomic::AtomicUsize::new(0);
+        let mut file = std::io::Cursor::new(Vec::new());
+        download_chunks(&mut file, MAX_CHUNK_SIZE as usize * 8, WORKER_COUNT, |_| {
+            let guard = ActiveRequest::new(&count);
+            high_water.fetch_max(
+                count.load(std::sync::atomic::Ordering::SeqCst),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            async move {
+                let _guard = guard;
+                Ok(vec![1; MAX_CHUNK_SIZE as usize])
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            high_water.load(std::sync::atomic::Ordering::SeqCst),
+            WORKER_COUNT
+        );
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+    #[tokio::test]
+    async fn final_flush_failure_is_returned_to_the_caller() {
+        let result = download_chunks(
+            &mut FailingWriter {
+                fail_on_flush: true,
+            },
+            4,
+            WORKER_COUNT,
+            |_| async { Ok(vec![1; 4]) },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(InvocationError::Io(error)) if error.kind() == io::ErrorKind::PermissionDenied)
+        );
+    }
+
+    #[tokio::test]
+    async fn sequential_download_preserves_structured_error_kind() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 12345);
+        let client = Client::new(pool.handle);
+        let mut download = DownloadIter {
+            client,
+            done: false,
+            size: None,
+            variant: DownloadIterVariant::PreFailed(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "fixture unsupported download",
+            )),
+            dc_id: None,
+        };
+        let path =
+            std::env::temp_dir().join(format!("grammers-download-error-{}", generate_random_id()));
+        let result = Client::load(&path, &mut download).await;
+        let _ = fs::remove_file(path).await;
+        assert!(
+            matches!(result, Err(InvocationError::Io(error)) if error.kind() == io::ErrorKind::Unsupported)
+        );
     }
 }
