@@ -8,8 +8,10 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::fs;
+use std::io;
 use std::net::AddrParseError;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use libsql::{named_params, params};
@@ -42,6 +44,12 @@ pub enum SqliteSessionError {
     AddrParse(std::net::AddrParseError),
     Sql(libsql::Error),
     InvalidAuthKeyLength(usize),
+    /// The native file could not be opened or inspected. Paths are not retained.
+    Io(io::ErrorKind),
+    /// The file is not an empty database or a supported native session schema.
+    UnsupportedSchema,
+    /// Native file validation requires a closed, stable, checkpointed database.
+    UnsafeSource,
 }
 
 impl std::error::Error for SqliteSessionError {}
@@ -54,6 +62,13 @@ impl fmt::Display for SqliteSessionError {
             SqliteSessionError::Sql(err) => write!(f, "{err}"),
             SqliteSessionError::InvalidAuthKeyLength(actual) => {
                 write!(f, "invalid auth_key length: expected 256, got {actual}")
+            }
+            SqliteSessionError::Io(_) => f.write_str("cannot access native session file"),
+            SqliteSessionError::UnsupportedSchema => f.write_str(
+                "unsupported native session schema; use the explicit importer for foreign sessions",
+            ),
+            SqliteSessionError::UnsafeSource => {
+                f.write_str("native session file must be closed and stable without active sidecars")
             }
         }
     }
@@ -68,6 +83,12 @@ impl From<AddrParseError> for SqliteSessionError {
 impl From<libsql::Error> for SqliteSessionError {
     fn from(x: libsql::Error) -> Self {
         Self::Sql(x)
+    }
+}
+
+impl From<io::Error> for SqliteSessionError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error.kind())
     }
 }
 
@@ -234,6 +255,45 @@ impl Database {
 }
 
 impl SqliteSession {
+    /// Opens only an empty database or a supported native grammers session file.
+    ///
+    /// Creates a missing file. Existing files are inspected using an immutable,
+    /// read-only connection before opening them for writes. Foreign schemas,
+    /// unsupported versions, views, triggers and active journals are rejected.
+    /// Use the explicitly named foreign-session importers for other libraries.
+    ///
+    /// The file must stay closed and stable during this call; concurrent file
+    /// replacement or modification is unsupported. This guard does not recover
+    /// interrupted journals. The legacy [`Self::open`] remains available when
+    /// application-controlled storage requires ordinary SQLite recovery.
+    ///
+    /// # Errors
+    /// Returns a sanitized schema/source/I/O error if preflight fails, or an
+    /// ordinary storage error if opening or reading the validated session fails.
+    pub async fn open_native(path: impl AsRef<Path>) -> Result<Self, SqliteSessionError> {
+        let path = native_path(path.as_ref())?;
+        let before = native_source(&path)?;
+        let flags =
+            libsql::OpenFlags::SQLITE_OPEN_READ_ONLY | libsql::OpenFlags::from_bits_retain(0x40); // SQLITE_OPEN_URI
+        let database = libsql::Builder::new_local(native_immutable_uri(&path)?)
+            .flags(flags)
+            .build()
+            .await
+            .map_err(|_| SqliteSessionError::UnsupportedSchema)?;
+        let connection = database
+            .connect()
+            .map_err(|_| SqliteSessionError::UnsupportedSchema)?;
+        validate_native_schema(&connection)
+            .await
+            .map_err(|_| SqliteSessionError::UnsupportedSchema)?;
+        drop(connection);
+        drop(database);
+        if before != native_source(&path)? {
+            return Err(SqliteSessionError::UnsafeSource);
+        }
+        Self::open(path).await
+    }
+
     /// Open a connection to the SQLite database at `path`,
     /// creating one if it doesn't exist.
     pub async fn open<P: AsRef<Path>>(path: P) -> Result<Self, SqliteSessionError> {
@@ -275,6 +335,144 @@ impl SqliteSession {
             }),
         })
     }
+}
+
+fn native_path(path: &Path) -> Result<PathBuf, SqliteSessionError> {
+    // create_new never truncates or overwrites a file that appeared meanwhile.
+    if let Err(error) = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        && error.kind() != io::ErrorKind::AlreadyExists
+    {
+        return Err(error.into());
+    }
+    Ok(fs::canonicalize(path)?)
+}
+
+fn native_source(path: &Path) -> Result<(u64, Option<std::time::SystemTime>), SqliteSessionError> {
+    let metadata = fs::metadata(path)?;
+    if !metadata.is_file() {
+        return Err(SqliteSessionError::Io(io::ErrorKind::InvalidInput));
+    }
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut sidecar = path.as_os_str().to_owned();
+        sidecar.push(suffix);
+        match fs::metadata(sidecar) {
+            Ok(metadata) if metadata.len() != 0 || !metadata.is_file() => {
+                return Err(SqliteSessionError::UnsafeSource);
+            }
+            Ok(_) => (),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok((metadata.len(), metadata.modified().ok()))
+}
+
+fn native_immutable_uri(path: &Path) -> Result<String, SqliteSessionError> {
+    let path = path
+        .to_str()
+        .ok_or(SqliteSessionError::Io(io::ErrorKind::InvalidInput))?;
+    #[cfg(windows)]
+    let path = path
+        .strip_prefix(r"\\?\")
+        .unwrap_or(path)
+        .replace('\\', "/");
+    if path.starts_with("//") || path.starts_with("UNC/") {
+        return Err(SqliteSessionError::Io(io::ErrorKind::InvalidInput));
+    }
+    let mut uri = String::from("file:");
+    if !path.starts_with('/') {
+        uri.push('/');
+    }
+    use std::fmt::Write as _;
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"/:-._~".contains(&byte) {
+            uri.push(char::from(byte));
+        } else {
+            write!(&mut uri, "%{byte:02X}").expect("writing a string cannot fail");
+        }
+    }
+    uri.push_str("?mode=ro&immutable=1");
+    Ok(uri)
+}
+
+async fn validate_native_schema(connection: &libsql::Connection) -> libsql::Result<()> {
+    let invalid = || libsql::Error::InvalidColumnType;
+    let mut version = connection.query("PRAGMA user_version", ()).await?;
+    let version = version.next().await?.ok_or_else(invalid)?.get::<i64>(0)?;
+    let mut objects = connection
+        .query(
+            "SELECT count(*) FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'",
+            (),
+        )
+        .await?;
+    let count = objects.next().await?.ok_or_else(invalid)?.get::<i64>(0)?;
+    if version == 0 && count == 0 {
+        return Ok(());
+    }
+    if version != VERSION || count != 5 {
+        return Err(invalid());
+    }
+    let mut tables = connection.query("SELECT count(*) FROM pragma_table_list WHERE schema='main' AND type='table' AND name IN ('dc_home','dc_option','peer_info','update_state','channel_state')", ()).await?;
+    if tables.next().await?.ok_or_else(invalid)?.get::<i64>(0)? != 5 {
+        return Err(invalid());
+    }
+    // Comparing bounded metadata avoids materializing arbitrary schema text.
+    type Column = (&'static str, &'static str, i64, i64);
+    const TABLES: &[(&str, &[Column])] = &[
+        ("dc_home", &[("dc_id", "INTEGER", 1, 1)]),
+        (
+            "dc_option",
+            &[
+                ("dc_id", "INTEGER", 1, 1),
+                ("ipv4", "TEXT", 1, 0),
+                ("ipv6", "TEXT", 1, 0),
+                ("auth_key", "BLOB", 0, 0),
+            ],
+        ),
+        (
+            "peer_info",
+            &[
+                ("peer_id", "INTEGER", 1, 1),
+                ("hash", "INTEGER", 0, 0),
+                ("subtype", "INTEGER", 0, 0),
+            ],
+        ),
+        (
+            "update_state",
+            &[
+                ("pts", "INTEGER", 1, 0),
+                ("qts", "INTEGER", 1, 0),
+                ("date", "INTEGER", 1, 0),
+                ("seq", "INTEGER", 1, 0),
+            ],
+        ),
+        (
+            "channel_state",
+            &[("peer_id", "INTEGER", 1, 1), ("pts", "INTEGER", 1, 0)],
+        ),
+    ];
+    for (table, columns) in TABLES {
+        let mut rows = connection.query("SELECT CASE WHEN octet_length(name)<32 THEN name END, CASE WHEN octet_length(type)<16 THEN type END, \"notnull\", pk, hidden, dflt_value IS NULL FROM pragma_table_xinfo(?) ORDER BY cid LIMIT 6", params![*table]).await?;
+        for (name, kind, not_null, primary) in *columns {
+            let row = rows.next().await?.ok_or_else(invalid)?;
+            if row.get::<String>(0)? != *name
+                || row.get::<String>(1)? != *kind
+                || row.get::<i64>(2)? != *not_null
+                || row.get::<i64>(3)? != *primary
+                || row.get::<i64>(4)? != 0
+                || row.get::<i64>(5)? != 1
+            {
+                return Err(invalid());
+            }
+        }
+        if rows.next().await?.is_some() {
+            return Err(invalid());
+        }
+    }
+    Ok(())
 }
 
 impl Session for SqliteSession {
@@ -649,10 +847,211 @@ impl Session for SqliteSession {
 #[cfg(test)]
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use {DcOption, KNOWN_DC_OPTIONS, PeerInfo, Session, UpdateState};
 
     use super::*;
+
+    struct NativeFixture(PathBuf);
+
+    impl NativeFixture {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "grammers-native-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> PathBuf {
+            self.0.join("synthetic # % session.sqlite")
+        }
+    }
+
+    impl Drop for NativeFixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn native_open_rejects_foreign_database_without_mutation() {
+        for schema in [
+            "CREATE TABLE version (number INTEGER PRIMARY KEY); INSERT INTO version VALUES (3); CREATE TABLE sessions (dc_id INTEGER PRIMARY KEY, api_id INTEGER, test_mode INTEGER, auth_key BLOB, date INTEGER, user_id INTEGER, is_bot INTEGER);",
+            "CREATE TABLE version (version INTEGER PRIMARY KEY); INSERT INTO version VALUES (8); CREATE TABLE sessions (dc_id INTEGER PRIMARY KEY, server_address TEXT, port INTEGER, auth_key BLOB, takeout_id INTEGER);",
+        ] {
+            let fixture = NativeFixture::new();
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let database = libsql::Builder::new_local(fixture.path())
+                        .build()
+                        .await
+                        .unwrap();
+                    let connection = database.connect().unwrap();
+                    connection.execute_batch(schema).await.unwrap();
+                    drop(connection);
+                    drop(database);
+                    let before = std::fs::read(fixture.path()).unwrap();
+                    assert!(matches!(
+                        SqliteSession::open_native(fixture.path()).await,
+                        Err(SqliteSessionError::UnsupportedSchema)
+                    ));
+                    assert_eq!(std::fs::read(fixture.path()).unwrap(), before);
+                    assert_eq!(std::fs::read_dir(&fixture.0).unwrap().count(), 1);
+                });
+        }
+    }
+
+    #[test]
+    fn native_open_creates_and_reopens_native_storage() {
+        let fixture = NativeFixture::new();
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let session = SqliteSession::open_native(fixture.path()).await.unwrap();
+                session.set_home_dc_id(4).await.unwrap();
+                session
+                    .set_dc_option(&DcOption {
+                        auth_key: Some([42; 256]),
+                        ..KNOWN_DC_OPTIONS[0].clone()
+                    })
+                    .await
+                    .unwrap();
+                drop(session);
+                let before = std::fs::read(fixture.path()).unwrap();
+                let session = SqliteSession::open_native(fixture.path()).await.unwrap();
+                assert_eq!(session.home_dc_id().unwrap(), 4);
+                assert_eq!(
+                    session
+                        .dc_option(KNOWN_DC_OPTIONS[0].id)
+                        .unwrap()
+                        .unwrap()
+                        .auth_key,
+                    Some([42; 256])
+                );
+                drop(session);
+                assert_eq!(std::fs::read(fixture.path()).unwrap(), before);
+            });
+    }
+
+    #[test]
+    fn native_open_accepts_existing_empty_database() {
+        let fixture = NativeFixture::new();
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let database = libsql::Builder::new_local(fixture.path())
+                    .build()
+                    .await
+                    .unwrap();
+                let connection = database.connect().unwrap();
+                connection.execute("VACUUM", ()).await.unwrap();
+                drop(connection);
+                drop(database);
+                drop(SqliteSession::open_native(fixture.path()).await.unwrap());
+            });
+    }
+
+    #[test]
+    fn native_open_rejects_wrong_version_schema_and_corruption_unchanged() {
+        for mutation in [
+            "PRAGMA user_version=2",
+            "DROP TABLE peer_info",
+            "DROP TABLE peer_info; CREATE VIEW peer_info AS SELECT 1 AS peer_id, 2 AS hash, 3 AS subtype",
+            "ALTER TABLE peer_info RENAME COLUMN hash TO wrong_column",
+            "CREATE TRIGGER unexpected AFTER INSERT ON peer_info BEGIN DELETE FROM dc_home; END",
+        ] {
+            let fixture = NativeFixture::new();
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let session = SqliteSession::open_native(fixture.path()).await.unwrap();
+                    session
+                        .database
+                        .lock()
+                        .await
+                        .0
+                        .execute_batch(mutation)
+                        .await
+                        .unwrap();
+                    drop(session);
+                    let before = std::fs::read(fixture.path()).unwrap();
+                    assert!(matches!(
+                        SqliteSession::open_native(fixture.path()).await,
+                        Err(SqliteSessionError::UnsupportedSchema)
+                    ));
+                    assert_eq!(std::fs::read(fixture.path()).unwrap(), before);
+                    std::fs::write(fixture.path(), b"synthetic not a SQLite database").unwrap();
+                    assert!(matches!(
+                        SqliteSession::open_native(fixture.path()).await,
+                        Err(SqliteSessionError::UnsupportedSchema)
+                    ));
+                    assert_eq!(
+                        std::fs::read(fixture.path()).unwrap(),
+                        b"synthetic not a SQLite database"
+                    );
+                });
+        }
+    }
+
+    #[test]
+    fn native_open_rejects_sidecars_without_recovery() {
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let fixture = NativeFixture::new();
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    drop(SqliteSession::open_native(fixture.path()).await.unwrap());
+                    let mut sidecar = fixture.path().into_os_string();
+                    sidecar.push(suffix);
+                    std::fs::write(&sidecar, b"synthetic unfinished journal").unwrap();
+                    let before = std::fs::read(fixture.path()).unwrap();
+                    assert!(matches!(
+                        SqliteSession::open_native(fixture.path()).await,
+                        Err(SqliteSessionError::UnsafeSource)
+                    ));
+                    assert_eq!(std::fs::read(fixture.path()).unwrap(), before);
+                    assert_eq!(
+                        std::fs::read(&sidecar).unwrap(),
+                        b"synthetic unfinished journal"
+                    );
+                });
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_open_preserves_literal_backslash_in_unix_path() {
+        let fixture = NativeFixture::new();
+        let path = fixture.0.join("literal\\backslash.sqlite");
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let session = SqliteSession::open_native(&path).await.unwrap();
+                session.set_home_dc_id(3).await.unwrap();
+                drop(session);
+                assert_eq!(
+                    SqliteSession::open_native(path)
+                        .await
+                        .unwrap()
+                        .home_dc_id()
+                        .unwrap(),
+                    3
+                );
+            });
+    }
 
     #[test]
     fn cache_peers_reports_row_error_and_commits_other_peers() {
