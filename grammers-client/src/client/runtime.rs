@@ -446,6 +446,7 @@ impl ClientBuilder {
                 task: None,
                 updates: Some(pool.updates),
                 stopping: false,
+                connection: None,
             }),
             completion,
             shutdown_timeout: self.shutdown_timeout,
@@ -516,6 +517,23 @@ impl std::error::Error for LifecycleError {
 
 type Completion = Result<(), LifecycleError>;
 type SharedJoin = Shared<BoxFuture<'static, Completion>>;
+
+// The watch lock linearizes the first terminal reason. Publish a timeout before
+// aborting so a woken join waiter cannot mistake that cancellation for its cause.
+fn publish_completion(
+    completion: &watch::Sender<Option<Completion>>,
+    result: Completion,
+) -> Completion {
+    completion.send_if_modified(|current| {
+        if current.is_some() {
+            return false;
+        }
+        *current = Some(result.clone());
+        true
+    });
+    completion.borrow().clone().unwrap_or(result)
+}
+
 struct RunningTask {
     abort: AbortHandle,
     join: SharedJoin,
@@ -525,12 +543,20 @@ struct LifecycleState {
     task: Option<RunningTask>,
     updates: Option<mpsc::Receiver<UpdatesLike>>,
     stopping: bool,
+    // No Client/ClientInner capture: an unpolled or sleeping shared check must
+    // not create a reference cycle that keeps the owned runner alive.
+    connection: Option<SharedJoin>,
 }
 pub(crate) struct ManagedLifecycle {
     handle: SenderPoolHandle,
     state: Mutex<LifecycleState>,
     completion: watch::Sender<Option<Completion>>,
     shutdown_timeout: Duration,
+}
+impl ManagedLifecycle {
+    async fn wait_for_join(&self, join: SharedJoin) -> Completion {
+        publish_completion(&self.completion, join.await)
+    }
 }
 impl Drop for ManagedLifecycle {
     fn drop(&mut self) {
@@ -580,18 +606,19 @@ impl Client {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(_)) | Err(_) => Err(LifecycleError::RunnerPanicked),
             };
-            completion.send_replace(Some(result.clone()));
-            result
+            publish_completion(&completion, result)
         });
         let abort = task.abort_handle();
+        let completion = managed.completion.clone();
         let join = async move {
-            task.await.unwrap_or_else(|e| {
+            let result = task.await.unwrap_or_else(|e| {
                 Err(if e.is_panic() {
                     LifecycleError::RunnerPanicked
                 } else {
                     LifecycleError::RunnerCancelled
                 })
-            })
+            });
+            publish_completion(&completion, result)
         }
         .boxed()
         .shared();
@@ -599,43 +626,100 @@ impl Client {
         Ok(())
     }
 
-    /// Start the runner and check home-DC connectivity with an MTProto ping.
+    /// Start the runner and share one home-DC startup ping with concurrent callers.
     /// A successful ping is not proof that the session is logged into an account.
     pub async fn connect(&self) -> Result<(), LifecycleError> {
         self.start().await?;
-        self.invoke(&grammers_tl_types::functions::Ping { ping_id: 0 })
-            .await
-            .map(|_| ())
-            .map_err(|e| LifecycleError::Connectivity(Arc::new(e)))
+        let managed = self.managed()?;
+        let (connection, join) = {
+            let mut state = managed.state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.stopping {
+                return Err(LifecycleError::AlreadyStopped);
+            }
+            let connection = state
+                .connection
+                .get_or_insert_with(|| {
+                    let session = Arc::clone(&self.0.session);
+                    let handle = self.0.handle.clone();
+                    async move {
+                        let dc = session
+                            .home_dc_id()
+                            .map_err(|e| LifecycleError::Connectivity(Arc::new(e.into())))?;
+                        handle
+                            .invoke_in_dc(dc, &grammers_tl_types::functions::Ping { ping_id: 0 })
+                            .await
+                            .map(|_| ())
+                            .map_err(|e| LifecycleError::Connectivity(Arc::new(e)))
+                    }
+                    .boxed()
+                    .shared()
+                })
+                .clone();
+            let join = state
+                .task
+                .as_ref()
+                .ok_or(LifecycleError::AlreadyStopped)?
+                .join
+                .clone();
+            (connection, join)
+        };
+        let result = tokio::select! {
+            biased;
+            terminal = managed.wait_for_join(join) => terminal.and(Err(LifecycleError::AlreadyStopped)),
+            result = connection.clone() => result,
+        };
+        if matches!(&result, Err(LifecycleError::Connectivity(e)) if e.category() == grammers_mtsender::InvocationErrorCategory::Overloaded)
+        {
+            let mut state = managed.state.lock().unwrap_or_else(|e| e.into_inner());
+            if state
+                .connection
+                .as_ref()
+                .is_some_and(|current| current.ptr_eq(&connection))
+            {
+                state.connection = None;
+            }
+        }
+        result
     }
 
     /// Connect, then wait until another clone stops the client or its runner fails.
-    /// Connectivity failures stop the client. Cancelling this waiter leaves a
+    /// Startup is shared with concurrent callers. Connectivity failures stop the
+    /// client, except local admission overload, which leaves existing work running.
+    /// Cancelling this waiter leaves a
     /// runner owned by surviving client clones; the last clone's drop aborts it.
     pub async fn run(&self) -> Result<(), LifecycleError> {
         self.start().await?;
-        if let Err(error) = self.connect().await {
-            let was_stopping = self
-                .managed()?
-                .state
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .stopping;
-            self.stop().await?;
-            return if was_stopping { Ok(()) } else { Err(error) };
-        }
-        let join = self
-            .managed()?
+        let managed = self.managed()?;
+        let join = managed
             .state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .task
             .as_ref()
-            .map(|task| task.join.clone());
-        match join {
-            Some(join) => join.await,
-            None => Ok(()),
+            .map(|task| task.join.clone())
+            .ok_or(LifecycleError::AlreadyStopped)?;
+        let connected = tokio::select! {
+            biased;
+            terminal = managed.wait_for_join(join.clone()) => return terminal,
+            result = self.connect() => result,
+        };
+        if let Err(error) = connected {
+            if matches!(&error, LifecycleError::Connectivity(e) if e.category() == grammers_mtsender::InvocationErrorCategory::Overloaded)
+            {
+                return Err(error);
+            }
+            {
+                let state = managed.state.lock().unwrap_or_else(|e| e.into_inner());
+                // A closed reply can be secondary to a runner panic. Let its
+                // joined result establish that cause instead of masking it.
+                let closed = matches!(&error, LifecycleError::Connectivity(e) if e.category() == grammers_mtsender::InvocationErrorCategory::Closed);
+                if !state.stopping && !closed {
+                    let _ = publish_completion(&managed.completion, Err(error));
+                }
+            }
+            return self.stop().await;
         }
+        managed.wait_for_join(join).await
     }
 
     /// Run until shutdown resolves, or until the runner ends. Always await stop
@@ -665,6 +749,7 @@ impl Client {
         let task = {
             let mut state = managed.state.lock().unwrap_or_else(|e| e.into_inner());
             state.stopping = true;
+            state.connection = None;
             managed.handle.quit();
             drop(state.runner.take());
             state
@@ -673,18 +758,15 @@ impl Client {
                 .map(|task| (task.abort.clone(), task.join.clone()))
         };
         let Some((abort, join)) = task else {
-            managed.completion.send_replace(Some(Ok(())));
-            return Ok(());
+            return publish_completion(&managed.completion, Ok(()));
         };
-        match tokio::time::timeout(timeout, join.clone()).await {
-            Ok(result) => managed.completion.borrow().clone().unwrap_or(result),
+        match tokio::time::timeout(timeout, managed.wait_for_join(join.clone())).await {
+            Ok(result) => result,
             Err(_) => {
+                let _ =
+                    publish_completion(&managed.completion, Err(LifecycleError::ShutdownTimeout));
                 abort.abort();
-                let _ = join.await;
-                managed
-                    .completion
-                    .send_replace(Some(Err(LifecycleError::ShutdownTimeout)));
-                Err(LifecycleError::ShutdownTimeout)
+                managed.wait_for_join(join).await
             }
         }
     }
@@ -733,6 +815,185 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Own the real parked runner in a task stalled before queue processing.
+    // This keeps admission and cancellation real without contacting Telegram.
+    async fn stalled_client() -> (Client, AbortHandle) {
+        let client = Client::builder(1)
+            .max_pending_requests(1)
+            .build()
+            .await
+            .unwrap();
+        let runner = client
+            .managed()
+            .unwrap()
+            .state
+            .lock()
+            .unwrap()
+            .runner
+            .take()
+            .unwrap();
+        assert!(client.0.handle.activate());
+        let task = tokio::spawn(async move {
+            let _runner = runner;
+            std::future::pending::<Completion>().await
+        });
+        let abort = task.abort_handle();
+        let join = async move { task.await.unwrap_or(Err(LifecycleError::RunnerCancelled)) }
+            .boxed()
+            .shared();
+        client.managed().unwrap().state.lock().unwrap().task = Some(RunningTask {
+            abort: abort.clone(),
+            join,
+        });
+        (client, abort)
+    }
+
+    #[tokio::test]
+    async fn concurrent_run_and_timeout_stop_share_the_terminal_reason() {
+        let (client, task) = stalled_client().await;
+        let mut run = std::pin::pin!(client.run());
+        assert!(run.as_mut().now_or_never().is_none());
+        let mut stop = std::pin::pin!(client.stop_with_timeout(Duration::ZERO));
+        assert!(stop.as_mut().now_or_never().is_none());
+        while !task.is_finished() {
+            assert!(stop.as_mut().now_or_never().is_none());
+            tokio::task::yield_now().await;
+        }
+        // Force the run waiter to observe the shared join before the stopper resumes.
+        let run_result = run.await;
+        let stop_result = stop.await;
+        assert!(
+            matches!(run_result, Err(LifecycleError::ShutdownTimeout)),
+            "{run_result:?}"
+        );
+        assert!(matches!(stop_result, Err(LifecycleError::ShutdownTimeout)));
+    }
+
+    #[tokio::test]
+    async fn concurrent_stop_deadlines_share_the_first_terminal_reason() {
+        let (client, task) = stalled_client().await;
+        let mut long = std::pin::pin!(client.stop_with_timeout(Duration::from_secs(60)));
+        assert!(long.as_mut().now_or_never().is_none());
+        let mut short = std::pin::pin!(client.stop_with_timeout(Duration::ZERO));
+        assert!(short.as_mut().now_or_never().is_none());
+        while !task.is_finished() {
+            assert!(short.as_mut().now_or_never().is_none());
+            tokio::task::yield_now().await;
+        }
+        let long_result = long.await;
+        let short_result = short.await;
+        assert!(
+            matches!(long_result, Err(LifecycleError::ShutdownTimeout)),
+            "{long_result:?}"
+        );
+        assert!(matches!(short_result, Err(LifecycleError::ShutdownTimeout)));
+    }
+
+    #[tokio::test]
+    async fn timeout_does_not_overwrite_an_authoritative_runner_failure() {
+        let (client, _) = stalled_client().await;
+        client
+            .managed()
+            .unwrap()
+            .completion
+            .send_replace(Some(Err(LifecycleError::RunnerPanicked)));
+        assert!(matches!(
+            client.stop_with_timeout(Duration::ZERO).await,
+            Err(LifecycleError::RunnerPanicked)
+        ));
+        assert!(matches!(
+            client.stop().await,
+            Err(LifecycleError::RunnerPanicked)
+        ));
+    }
+
+    #[tokio::test]
+    async fn concurrent_run_waiters_share_one_startup_request() {
+        let (client, _) = stalled_client().await;
+        {
+            let mut first = std::pin::pin!(client.run());
+            assert!(first.as_mut().now_or_never().is_none());
+            let mut second = std::pin::pin!(client.run());
+            assert!(second.as_mut().now_or_never().is_none());
+            assert_eq!(client.status().admission_rejections, 0);
+            assert!(!client.status().stopping);
+        }
+        assert!(matches!(
+            client.stop_with_timeout(Duration::ZERO).await,
+            Err(LifecycleError::ShutdownTimeout)
+        ));
+    }
+
+    #[tokio::test]
+    async fn startup_overload_does_not_stop_existing_traffic() {
+        let (client, _) = stalled_client().await;
+        {
+            let mut traffic =
+                std::pin::pin!(client.invoke(&grammers_tl_types::functions::Ping { ping_id: 1 }));
+            assert!(traffic.as_mut().now_or_never().is_none());
+            let mut run = std::pin::pin!(client.run());
+            let result = run.as_mut().now_or_never();
+            assert!(
+                matches!(result, Some(Err(LifecycleError::Connectivity(ref e))) if e.category() == grammers_mtsender::InvocationErrorCategory::Overloaded),
+                "{result:?}"
+            );
+            assert!(!client.status().stopping);
+            assert!(traffic.as_mut().now_or_never().is_none());
+        }
+        let _ = client.stop_with_timeout(Duration::ZERO).await;
+    }
+
+    #[tokio::test]
+    async fn startup_failure_is_shared_with_other_run_and_stop_waiters() {
+        let session = Arc::new(MemorySession::default());
+        session.set_home_dc_id(999).await.unwrap();
+        let client = Client::builder(1)
+            .session(SessionSource::storage(session))
+            .build()
+            .await
+            .unwrap();
+        let (first, second) = tokio::join!(client.run(), client.run());
+        for result in [first, second, client.stop().await] {
+            assert!(
+                matches!(result, Err(LifecycleError::Connectivity(ref e)) if matches!(e.as_ref(), InvocationError::InvalidDc)),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_wakes_run_during_a_long_startup_retry_sleep() {
+        struct SlowRetry(Arc<tokio::sync::Notify>);
+        impl RetryPolicy for SlowRetry {
+            fn should_retry(
+                &self,
+                _: &grammers_mtsender::RetryContext,
+            ) -> std::ops::ControlFlow<(), Duration> {
+                self.0.notify_one();
+                std::ops::ControlFlow::Continue(Duration::from_secs(3600))
+            }
+        }
+        let began = Arc::new(tokio::sync::Notify::new());
+        let session = Arc::new(MemorySession::default());
+        session.set_home_dc_id(999).await.unwrap();
+        let client = Client::builder(1)
+            .session(SessionSource::storage(session))
+            .retry_policy(SlowRetry(Arc::clone(&began)))
+            .build()
+            .await
+            .unwrap();
+        let clone = client.clone();
+        let mut run = tokio::spawn(async move { clone.run().await });
+        began.notified().await;
+        client.stop().await.unwrap();
+        let result = tokio::time::timeout(Duration::from_millis(100), &mut run).await;
+        if result.is_err() {
+            run.abort();
+            let _ = run.await;
+        }
+        assert!(matches!(result, Ok(Ok(Ok(())))), "{result:?}");
+    }
 
     #[test]
     fn memory_build_is_offline_and_start_reports_missing_runtime() {
