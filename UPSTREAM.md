@@ -34,7 +34,9 @@ for exported Pyrogram/Telethon strings and standard gotd Loader JSON. See
 [in-memory example](grammers-client/examples/import_session.rs).
 Applications may adopt it instead of manual conversion; nothing changes their
 session or peer-cache configuration automatically. Importing does not prove
-that Telegram will accept the key. SQLite files and tdata are outside this API.
+that Telegram will accept the key. The separate `session-import-files` feature
+adds explicitly typed Pyrogram/Telethon SQLite and gotd file readers; tdata
+remains unsupported.
 
 No consuming application's manifest, lockfile, source, sessions or deployment
 was changed. In the read-only downstream check, no use of `media_ttl` was found;
@@ -46,37 +48,67 @@ validation scope. No authenticated RPC or application deployment ran.
 
 Initial Codeberg baseline: `82eba650098b54e4c2cb9de83fdab7ea2d21a957`.
 
-The working `main` branch comes directly from Codeberg, with its full history
-and licenses intact. This is an independently maintained Git fork hosted on
+The `main` branch retains Codeberg's full history and licenses. This is an independently maintained Git fork hosted on
 GitHub; GitHub does not support native fork relationships to Codeberg repositories.
-Codeberg is the source for future updates, using the commands below rather than
+Codeberg remains a source of reviewed fixes and updates, using the commands below rather than
 GitHub's **Sync fork** button. The archived GitHub repository is not used.
 
 ## Remotes and branches
 
 - `origin`: https://github.com/xD-Mohamed/grammers.git
 - `upstream`: https://codeberg.org/Lonami/grammers.git
-- `main`: our working branch, tracking `origin/main`.
+- `main`: verified fork integration branch, tracking `origin/main`.
+- `codex/*`: focused implementation and upstream review branches.
 - `upstream/master`: canonical upstream development.
 
 ## Bring in upstream changes
 
-Start with a clean working tree. From this checkout:
+Start with a clean working tree. Inspect upstream before choosing a merge or
+cherry-picking a self-contained fix. Perform integration on a review branch:
 
 ```sh
 git switch main
 git fetch upstream --tags
 git log --oneline main..upstream/master
+git switch -c codex/upstream-review
 git merge upstream/master
-cargo test --workspace
-cargo check --workspace --all-targets
-git push origin main
+cargo fmt --all -- --check
+cargo test --locked --release --workspace --all-features
+cargo check --locked --workspace --all-targets --all-features
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --release -p grammers-session --no-default-features --features session-import -- --test-threads=1
+cargo test --locked --release -p grammers-session --no-default-features -- --test-threads=1
+git push -u origin codex/upstream-review
 ```
 
-Resolve any merge conflicts and finish validation before pushing. Keep fork
-changes in small, focused commits so upstream updates remain easy to review.
+Resolve conflicts, review the complete diff, and pass the CI checks before
+integrating the review branch into `main`. Never resolve conflicts by blindly
+taking all upstream or all fork files. Keep fork changes in focused commits.
+Review dependency changes in the committed workspace `Cargo.lock` explicitly.
 Performance changes need release benchmarks and integration checks; successful
 compilation alone does not establish lower CPU use or better latency.
+
+## Compatibility and release policy
+
+- Treat upstream as a source, not an automatic deployment. A merge does not update consumers.
+- Review schema changes separately from handwritten APIs. Compare constructors,
+  flags, request/response shapes and the advertised layer; regenerate through
+  the existing build pipeline and compile all examples. Never copy a newer
+  layer number onto an older schema.
+- Preserve the contracts listed in `AGENTS.md`: raw request compatibility,
+  update suppression, session-import isolation, lifetime tracking, cancellation,
+  wire validation, routing and no replay after an uncertain response.
+- Run Windows and Linux CI and the memory-only feature checks. Build warnings
+  fail the release gate; runtime errors remain visible and actionable.
+- Record new APIs, changed behavior and remaining limitations in `CHANGELOG.md`.
+  Use fork-specific tags for reproducible consumer revisions. A fork tag does
+  not imply publication under the upstream crates.io package names.
+- Keep docs.rs links identified as upstream release documentation. Generate
+  this checkout's complete reference with `cargo doc --workspace --all-features
+  --no-deps`; new fork APIs may not exist on docs.rs.
+- Do not claim live authorization, deployment, performance, or panic freedom
+  from offline tests. Keep integrity checks and errors even when they reject a
+  server response; hiding a diagnostic is not a stability improvement.
 
 The original Apache-2.0/MIT licensing and attribution are preserved. See
 [PERFORMANCE.md](PERFORMANCE.md) for the fork's implementation changes, measured

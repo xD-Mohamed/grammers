@@ -6,9 +6,9 @@ license = "MIT OR Apache-2.0"
 description = """
 Different session storages for Telegram data.
 """
-homepage = "https://codeberg.org/Lonami/grammers"
-documentation = "https://docs.rs/grammers-session"
-repository = "https://codeberg.org/Lonami/grammers"
+homepage = "https://github.com/xD-Mohamed/grammers"
+documentation = "https://xd-mohamed.github.io/grammers/api/grammers_session/"
+repository = "https://github.com/xD-Mohamed/grammers"
 keywords = ["telegram", "tl"]
 categories = []
 edition = "2024"
@@ -38,3 +38,7 @@ sha2 = { version = "0.10", optional = true }
 [dev-dependencies]
 toml = "1.1.2"
 tokio = { version = "1.52.3", default-features = false, features = ["sync", "rt"] }
+
+[[example]]
+name = "session_string_demo"
+required-features = ["session-string"]

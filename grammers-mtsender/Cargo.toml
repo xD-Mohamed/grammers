@@ -6,9 +6,9 @@ license = "MIT OR Apache-2.0"
 description = """
 A sender implementation using the Mobile Transport Protocol.
 """
-homepage = "https://codeberg.org/Lonami/grammers"
-documentation = "https://docs.rs/grammers-mtsender"
-repository = "https://codeberg.org/Lonami/grammers"
+homepage = "https://github.com/xD-Mohamed/grammers"
+documentation = "https://xd-mohamed.github.io/grammers/api/grammers_mtsender/"
+repository = "https://github.com/xD-Mohamed/grammers"
 keywords = ["api", "mtproto", "telegram", "tl"]
 categories = ["api-bindings", "network-programming"]
 edition = "2024"

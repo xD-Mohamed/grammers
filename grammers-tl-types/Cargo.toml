@@ -6,9 +6,9 @@ license = "MIT OR Apache-2.0"
 description = """
 Rust definitions for Telegram's API types and functions.
 """
-homepage = "https://codeberg.org/Lonami/grammers"
-documentation = "https://docs.rs/grammers-tl-types"
-repository = "https://codeberg.org/Lonami/grammers"
+homepage = "https://github.com/xD-Mohamed/grammers"
+documentation = "https://xd-mohamed.github.io/grammers/api/grammers_tl_types/"
+repository = "https://github.com/xD-Mohamed/grammers"
 keywords = ["telegram", "tl"]
 categories = ["data-structures", "encoding"]
 edition = "2024"

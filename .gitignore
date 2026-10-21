@@ -1,10 +1,14 @@
 **/target
 **/*.rs.bk
-Cargo.lock
+# Keep the workspace lockfile for reproducible fork builds and CI.
 *.session
+*.session-*
+*.session.*
+__pycache__/
 
 # examples/ file to test changes, might contain sensitive information
 testbed.rs
 
 # scraped docs
 *.json
+!docs/telegram-methods.json

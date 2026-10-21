@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Set up grammers, choose a session source, manage client lifetime, and handle Telegram errors.">
+  <title>grammers documentation</title>
+  <link rel="icon" type="image/png" href="assets/logo.png">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="syntax.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to documentation</a>
+  <header class="header">
+    <a class="wordmark" href="./"><img src="assets/logo.png" width="32" height="32" alt="">grammers<span>docs</span></a>
+    <form class="search" action="api/grammers_client/" role="search">
+      <label for="api-search" class="sr-only">Search the API</label>
+      <input id="api-search" name="search" type="search" placeholder="Search the API…" autocomplete="off">
+      <button type="submit" aria-label="Search">↵</button>
+    </form>
+    <nav aria-label="Project links">
+      <a class="glass small" href="api/grammers_client/">API reference <span aria-hidden="true">↗</span></a>
+      <a class="source-link" href="https://github.com/xD-Mohamed/grammers"><img src="assets/github.svg" alt="" width="18" height="18">GitHub</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <details class="navigation" open>
+        <summary>Documentation</summary>
+        <nav aria-label="Documentation sections">
+          <p class="nav-label">Introduction</p>
+          <a href="#start">Quick start</a>
+          <p class="nav-label">Guides</p>
+          <a href="#sessions">Sessions</a>
+          <a href="#lifecycle">Start, stop, run</a>
+          <a href="#configuration">Configuration</a>
+          <a href="#messages">Messages</a>
+          <a href="#errors">Errors</a>
+          <a href="#updates">Updates</a>
+          <a href="#files">Files</a>
+          <a href="#features">Feature flags</a>
+          <a href="#architecture">Crates</a>
+          <a href="#development">Development</a>
+          <p class="nav-label">API reference</p>
+          <a href="methods.html">Available methods</a>
+          <a href="api/grammers_client/client/struct.Client.html">Client methods</a>
+          <a href="api/grammers_client/">Client types</a>
+          <a href="api/grammers_session/">Session formats</a>
+          <a href="api/grammers_mtsender/">Connection and errors</a>
+          <a href="api/grammers_tl_types/">Raw Telegram API</a>
+        </nav>
+      </details>
+      <div class="sidebar-footer">
+        <a href="https://github.com/xD-Mohamed/grammers/tree/main/grammers-client/examples">Browse examples ↗</a>
+        <a href="https://github.com/xD-Mohamed/grammers/blob/main/CHANGELOG.md">Changelog ↗</a>
+      </div>
+    </aside>
+    <main id="main">
+      <section id="start" class="intro">
+        <p class="eyebrow">Getting started</p>
+        <h1>grammers</h1>
+        <p class="lead">Choose a session, configure the connection, and start. The managed client owns its sender tasks; the low-level API remains available when you need it.</p>
+        <h2>Install from this fork</h2>
+        <p>Use Git dependencies to get the fork APIs. Pin a reviewed commit with <code>rev</code> in a deployed application; <code>main</code> follows the verified integration branch.</p>
+        <div class="code"><div class="code-top"><span>Cargo.toml</span><button type="button" class="copy">Copy</button></div><pre><code class="language-toml">[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+
+[dependencies.grammers-client]
+git = "https://github.com/xD-Mohamed/grammers"
+branch = "main"
+features = ["session-file", "session-string", "session-import-files"]</code></pre></div>
+        <h2>Open a client</h2>
+        <p>Opening the configuration reads local storage. Network work starts separately. An existing session can be reused; an empty session still needs login.</p>
+        <div class="code"><div class="code-top"><span>Rust</span><button type="button" class="copy">Copy</button></div><pre><code>use grammers_client::{Client, SessionSource};
+
+#[tokio::main]
+async fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error + Send + Sync&gt;&gt; {
+    let api_id = std::env::var("TG_ID")?.parse()?;
+    let client = Client::builder(api_id)
+        .session(SessionSource::file("account.session"))
+        .build()
+        .await?;
+
+    client.start().await?;
+    let authorized = client.is_authorized().await;
+    let stopped = client.stop().await;
+    let authorized = authorized?;
+    stopped?;
+    println!("Authorized: {authorized}");
+    Ok(())
+}</code></pre></div>
+        <p>The <a href="https://github.com/xD-Mohamed/grammers/tree/main/grammers-client/examples">compiled examples</a> cover complete flows. A successful local build does not verify live account authorization.</p>
+      </section>
+
+      <section id="sessions">
+        <p class="eyebrow">Storage and portability</p>
+        <h2>Choose the format explicitly</h2>
+        <p>A filename and a session string are different inputs. The builder uses the selected decoder; it does not guess a format from arbitrary text.</p>
+        <div class="table-wrap"><table><thead><tr><th>Source</th><th>Use</th></tr></thead><tbody>
+          <tr><td><code>SessionSource::file(path)</code></td><td>This fork's SQLite session, opened or created for persistence.</td></tr>
+          <tr><td><code>SessionSource::memory()</code></td><td>Temporary in-memory storage.</td></tr>
+          <tr><td><code>SessionSource::native(text)</code></td><td>A <code>grammers:1:</code> portable session string.</td></tr>
+          <tr><td><code>SessionSource::pyrogram(text)</code></td><td>An exported Pyrogram or compatible Kurigram string.</td></tr>
+          <tr><td><code>SessionSource::telethon(text)</code></td><td>A Telethon v1 StringSession.</td></tr>
+          <tr><td><code>SessionSource::pyrogram_file(path)</code></td><td>A supported Pyrogram/Kurigram SQLite session, read only.</td></tr>
+          <tr><td><code>SessionSource::telethon_file(path)</code></td><td>A supported Telethon SQLite session, read only.</td></tr>
+          <tr><td><code>SessionSource::gotd_file(path)</code></td><td>A gotd Loader v1 JSON file, read only.</td></tr>
+        </tbody></table></div>
+        <p>Imported strings and foreign files become independent in-memory sessions. The source file is not migrated or overwritten. Unsupported database versions and unsafe active-journal states produce a clear error.</p>
+        <p>Native file sources also check the schema before writing. Open a closed, stable database without active SQLite sidecars. The lower-level <code>SqliteSession::open</code> remains available for application-controlled recovery of a known native database after an interrupted write.</p>
+        <h3>Export the native format</h3>
+        <p>Export works with every supported source, including Pyrogram, Telethon, and gotd. It reads the client's current session and returns a native string directly.</p>
+        <div class="code"><div class="code-top"><span>Rust</span><button type="button" class="copy">Copy</button></div><pre><code>let session: String = client.export_session_string()?;
+let restored = Client::builder(api_id)
+    .session(SessionSource::native(session))
+    .build()
+    .await?;</code></pre></div>
+        <div class="format"><span>Native v1</span><code>grammers:1:&lt;base64url payload and checksum&gt;</code></div>
+        <p>The string contains the home DC's key, exact endpoints, and IP-family preference. It does not include peer caches, update checkpoints, or other DC keys. It is a login credential, not an encrypted backup. Use <code>export_session_secret()</code> when you want a wrapper with redacted <code>Debug</code> instead of a plain string.</p>
+        <p>For decoder APIs and supported file versions, see the <a href="api/grammers_session/">session reference</a>. The application's API ID always comes from your configuration, never from missing imported metadata.</p>
+      </section>
+
+      <section id="lifecycle">
+        <p class="eyebrow">Ownership</p>
+        <h2>Start, stop, run</h2>
+        <div class="table-wrap"><table><thead><tr><th>Method</th><th>Behavior</th></tr></thead><tbody>
+          <tr><td><code>build().await</code></td><td>Validate settings and prepare local storage. No network or background runner.</td></tr>
+          <tr><td><code>start().await</code></td><td>Start the shared network driver once. Calls from clones share the same lifecycle.</td></tr>
+          <tr><td><code>stop().await</code></td><td>Stop accepting work and wait for shutdown. Repeated calls are safe.</td></tr>
+          <tr><td><code>run().await</code></td><td>Start, establish the home connection, then wait for stop or a terminal failure.</td></tr>
+          <tr><td><code>run_until(future).await</code></td><td>Run until a shutdown future resolves, then stop cleanly.</td></tr>
+        </tbody></table></div>
+        <div class="code"><div class="code-top"><span>Wait for Ctrl+C</span><button type="button" class="copy">Copy</button></div><pre><code>client.run_until(async {
+    let _ = tokio::signal::ctrl_c().await;
+}).await?;</code></pre></div>
+        <p><code>stop</code> is terminal. Build another client from the same session to restart. This prevents requests queued before shutdown from being replayed in a new connection lifetime. Existing manually driven <code>SenderPool</code> clients remain supported.</p>
+      </section>
+
+      <section id="configuration">
+        <p class="eyebrow">Settings</p>
+        <h2>Keep ordinary setup in the builder</h2>
+        <p>Group device information in <code>DeviceConfig</code>. Every field has a default. Set connection controls separately, without manually constructing a sender pool.</p>
+        <div class="code"><div class="code-top"><span>Rust</span><button type="button" class="copy">Copy</button></div><pre><code>use grammers_client::DeviceConfig;
+
+let client = Client::builder(api_id)
+    .session(SessionSource::file("account.session"))
+    .device(DeviceConfig {
+        device_model: "Desktop client".into(),
+        app_version: env!("CARGO_PKG_VERSION").into(),
+        ..Default::default()
+    })
+    .build()
+    .await?;</code></pre></div>
+        <p>Request limits apply to SDK-owned work, including requests already sent. Canceling a caller does not pretend that its request disappeared from the network. IPv6 imports must use a compatible explicit preference.</p>
+      </section>
+
+      <section id="messages">
+        <p class="eyebrow">Messages</p>
+        <h2>Supply the essentials</h2>
+        <p>A recipient and text are enough for a plain message. Advanced formatting and media remain available through <code>InputMessage</code>.</p>
+        <div class="code"><div class="code-top"><span>Rust</span><button type="button" class="copy">Copy</button></div><pre><code>client.send_message(peer, "Hello").await?;</code></pre></div>
+        <h3>Set only the options you need</h3>
+        <div class="code"><div class="code-top"><span>Rust</span><button type="button" class="copy">Copy</button></div><pre><code>use grammers_client::SendOptions;
+
+client.send_message_with_options(peer, "Hello", SendOptions {
+    silent: true,
+    ..Default::default()
+}).await?;</code></pre></div>
+        <p><code>SendOptions</code> covers silent/background sending, draft clearing, link previews, media order, and reply IDs. Defaults match a plain <code>InputMessage</code>, including link previews disabled. Applying options preserves text, entities, media, markup, and scheduling, while replacing the six listed option fields.</p>
+        <a class="text-link" href="api/grammers_client/message/struct.SendOptions.html">Read the options reference ↗</a>
+      </section>
+
+      <section id="errors">
+        <p class="eyebrow">Failure handling</p>
+        <h2>Handle the error, keep the cause</h2>
+        <p>RPC errors retain their Telegram code, name, and optional value. Category helpers distinguish waiting, authorization, capacity, transport, protocol, and storage failures without parsing a display string.</p>
+        <div class="code"><div class="code-top"><span>Rust</span><button type="button" class="copy">Copy</button></div><pre><code>if let Err(error) = client.is_authorized().await {
+    if let Some(wait) = error.retry_after() {
+        eprintln!("Telegram requested a wait of {} seconds", wait.as_secs());
+    } else {
+        eprintln!("Request failed: {error}");
+    }
+}</code></pre></div>
+        <p>A disconnected socket does not prove a request was never sent. Do not automatically replay a state-changing operation after an uncertain response. Keep runtime diagnostics enabled; a warning-free build does not mean network errors cannot occur.</p>
+      </section>
+
+      <section id="updates">
+        <p class="eyebrow">Events</p>
+        <h2>Own the update stream</h2>
+        <p>The update receiver has one owner. Create a stream, process events in order, and synchronize its state before orderly shutdown. Catch-up requires the necessary peers in the session cache.</p>
+        <div class="code"><div class="code-top"><span>Rust</span><button type="button" class="copy">Copy</button></div><pre><code>use grammers_client::sender::UpdatesConfiguration;
+
+client.start().await?;
+let receiver = client.take_updates()?;
+let mut updates = client.stream_updates(
+    receiver,
+    UpdatesConfiguration { catch_up: true },
+).await?;
+
+// Process updates.next().await? in your application's loop.
+updates.sync_update_state().await?;
+client.stop().await?;</code></pre></div>
+        <p>For command handling and filters, use the optional dispatcher. Raw updates and direct RPC access remain available for Telegram features without a high-level helper.</p>
+      </section>
+
+      <section id="files">
+        <p class="eyebrow">Transfers</p>
+        <h2>Bounded work, explicit failures</h2>
+        <p>Uploads support async streams. Large downloads use a bounded set of owned chunk futures. Canceling a download stops further scheduling, and failed chunks or filesystem writes return errors instead of leaving detached workers.</p>
+        <p>A canceled download may leave a partial destination file, and an operating-system write already issued cannot be rolled back by dropping a future. CDN redirects currently return an explicit unsupported error; complete CDN support is not advertised.</p>
+        <a class="text-link" href="api/grammers_client/client/struct.DownloadIter.html">Read the transfer API ↗</a>
+      </section>
+
+      <section id="features">
+        <p class="eyebrow">Build only what you need</p>
+        <h2>Feature flags</h2>
+        <div class="table-wrap"><table><thead><tr><th>Client feature</th><th>Capability</th></tr></thead><tbody>
+          <tr><td><code>fs</code></td><td>Filesystem transfer helpers, enabled by default.</td></tr>
+          <tr><td><code>session-file</code></td><td>Native SQLite session source.</td></tr>
+          <tr><td><code>session-string</code></td><td>Native portable session string encoding and decoding.</td></tr>
+          <tr><td><code>session-import</code></td><td>Pyrogram, Telethon, and gotd in-memory imports.</td></tr>
+          <tr><td><code>session-import-files</code></td><td>Explicit foreign session file readers.</td></tr>
+          <tr><td><code>dispatcher</code></td><td>Composable update filters and sequential handlers.</td></tr>
+          <tr><td><code>qr-login</code></td><td>High-level QR login token flow.</td></tr>
+          <tr><td><code>markdown</code>, <code>html</code></td><td>Message formatting parsers.</td></tr>
+          <tr><td><code>proxy</code></td><td>SOCKS5 proxy configuration.</td></tr>
+        </tbody></table></div>
+        <p>The session crate also supports independent memory-only builds. A native session string does not require SQLite or external-import dependencies.</p>
+      </section>
+
+      <section id="architecture">
+        <p class="eyebrow">Workspace</p>
+        <h2>Crates</h2>
+        <img class="architecture" src="assets/architecture-dark.png" alt="Main dependencies: client uses sender and session; sender uses MTProto; MTProto uses crypto; session uses TL types, generated through TL generator and parser." loading="lazy" width="1706" height="922">
+        <p>This diagram shows the main layers. The generated reference documents every public module and the complete interfaces.</p>
+        <div class="crate-links">
+          <a href="api/grammers_client/">Client ↗</a><a href="api/grammers_session/">Session ↗</a>
+          <a href="api/grammers_mtsender/">Sender ↗</a><a href="api/grammers_mtproto/">MTProto ↗</a>
+          <a href="api/grammers_crypto/">Crypto ↗</a><a href="api/grammers_tl_types/">TL types ↗</a>
+          <a href="api/grammers_tl_gen/">TL generator ↗</a><a href="api/grammers_tl_parser/">TL parser ↗</a>
+        </div>
+      </section>
+
+      <section id="development">
+        <p class="eyebrow">Maintaining this fork</p>
+        <h2>Review changes before release</h2>
+        <p>Upstream fixes and schema changes enter review branches. Compatibility tests protect the fork's cancellation, routing, session, and wire-format behavior. CI checks Windows, Linux, optional builds, examples, and strict Clippy.</p>
+        <div class="actions">
+          <a class="glass" href="https://github.com/xD-Mohamed/grammers/blob/main/CONTRIBUTING.md">Contribute ↗</a>
+          <a class="text-link" href="https://github.com/xD-Mohamed/grammers/blob/main/UPSTREAM.md">Upstream policy ↗</a>
+        </div>
+        <p class="footnote">Based on <a href="https://codeberg.org/Lonami/grammers">Lonami's grammers</a>. Original history and MIT / Apache-2.0 licenses are retained. See <a href="https://github.com/xD-Mohamed/grammers/blob/main/PERFORMANCE.md">performance notes</a> for measurements and their limits.</p>
+      </section>
+      <footer>grammers <span>·</span> <a href="https://github.com/xD-Mohamed/grammers">Source</a> <span>·</span> <a href="api/grammers_client/">API</a></footer>
+    </main>
+    <aside class="page-toc"><!-- PAGE_TOC --></aside>
+  </div>
+  <div class="sr-only" id="copy-status" aria-live="polite"></div>
+</body>
+</html>

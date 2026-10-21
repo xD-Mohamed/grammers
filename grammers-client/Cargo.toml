@@ -6,9 +6,9 @@ license = "MIT OR Apache-2.0"
 description = """
 A high level client to interact with Telegram's API.
 """
-homepage = "https://codeberg.org/Lonami/grammers"
-documentation = "https://docs.rs/grammers-client"
-repository = "https://codeberg.org/Lonami/grammers"
+homepage = "https://github.com/xD-Mohamed/grammers"
+documentation = "https://xd-mohamed.github.io/grammers/api/grammers_client/"
+repository = "https://github.com/xD-Mohamed/grammers"
 keywords = ["mtproto", "telegram", "tl"]
 categories = ["api-bindings"]
 edition = "2024"
@@ -51,6 +51,7 @@ tracing.workspace = true
 url = { version = "2.5.8", optional = true }
 
 [dev-dependencies]
+base64 = "0.22.1"
 rpassword = "7.5.4"
 tokio = { version = "1.52.3", default-features = false, features = [
     "signal",

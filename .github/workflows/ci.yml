@@ -1,0 +1,63 @@
+name: Rust checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+      - name: No compiler or Clippy warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: API documentation
+        if: runner.os == 'Linux'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --workspace --all-features --no-deps
+      - name: Offline release tests and doctests
+        run: cargo test --locked --release --workspace --all-features
+      - name: Memory-only session importer
+        if: runner.os == 'Linux'
+        run: cargo test --locked --release -p grammers-session --no-default-features --features session-import -- --test-threads=1
+      - name: Memory-only native strings
+        if: runner.os == 'Linux'
+        run: cargo test --locked --release -p grammers-session --no-default-features --features session-string -- --test-threads=1
+      - name: Foreign file import isolation
+        if: runner.os == 'Linux'
+        run: cargo test --locked --release -p grammers-session --no-default-features --features session-import-files -- --test-threads=1
+      - name: Memory-only session storage
+        if: runner.os == 'Linux'
+        run: cargo test --locked --release -p grammers-session --no-default-features -- --test-threads=1
+      - name: Minimal client and documentation
+        if: runner.os == 'Linux'
+        run: cargo test --locked --release -p grammers-client --no-default-features
+      - name: Optional client helpers
+        if: runner.os == 'Linux'
+        run: cargo test --locked --release -p grammers-client --no-default-features --features dispatcher,qr-login --lib

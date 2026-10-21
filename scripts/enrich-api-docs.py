@@ -69,7 +69,7 @@ CLIENT_OPERATIONS = {
     "search_all_messages": ("messages.rs", ["messages.searchGlobal"]),
 }
 LOCAL_METHODS = {"new", "with_configuration", "builder", "disconnect", "stop", "stop_with_timeout",
-                 "take_updates", "status", "events", "export_session_string", "parse_invite_link"}
+                 "take_updates", "status", "events", "export_session_string", "export_session_secret", "parse_invite_link"}
 LIFECYCLE_METHODS = {"start", "connect", "run", "run_until"}
 GENERIC_METHODS = {"invoke", "invoke_in_dc"}
 
@@ -82,7 +82,7 @@ REVIEWED_SOURCES = {
     "chats.rs": "8df215c9d9235fd9587e51a12e9f20601ff616b765b8caa667d357434f2c4196",
     "messages.rs": "9e767216806d14c6d89b30c8fcdbe7eb83e2d0f52825fe5c826a8449d1fd151b",
     "net.rs": "c76b228b49067da0327a86c12b3e7dfdc7d8f833b92f1ba554785a447e67949b",
-    "runtime.rs": "f83d455873f12986da0f9685646c6b6ef76ac6a6b6f2967bbb63c6e02fac489c",
+    "runtime.rs": "a3e26c96a5a381664f4548847479683009c581fc7542aed7908f34290f5d99e9",
     "bots.rs": "f4a08646daa91467f4fa286a42436f308a51cce05476eed508fd4d3de925773d",
     "files.rs": "010c5b445a164d97956aa3f3241128ab3eb32b2f9992e692a1a90f98095d244e",
     "dialogs.rs": "2915d0db98551102bd6f5820669ec5365c14a5112c8a6383204c7a2c84c9fc48",

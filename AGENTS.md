@@ -1,5 +1,84 @@
 # grammers fork
 
+## Managed client and portable sessions (2026-10-21)
+
+The ordinary client now supports `Client::builder(api_id)`, grouped
+`DeviceConfig`, explicit `SessionSource`, and `start/connect/run/run_until/stop`.
+Build performs local preparation only; start is lazy and connect performs a
+fresh home-DC Ping, not an account-authorization check. Concurrent run waiters
+share startup and one terminal outcome. Stop is terminal; build a new client to
+restart. Never reopen a stopped request channel or replay work from an old
+lifetime. Keep the legacy externally managed constructors available.
+
+Managed defaults are 1024 SDK-owned pending requests, 30-second initialization,
+and 10-second shutdown. Low-level ConnectionParams retains its prior unlimited
+default. Capacity travels with the invocation permit and is released before
+response wakeup; cancelling a caller must not release sent capacity. Keep
+original errors, typed categories, cumulative counters and bounded events.
+Checked runners contain unwinds and still tear down children; the process panic
+hook and non-unwinding aborts remain outside this guarantee. On connection
+failure determine the current home DC, including after QR migration.
+
+`session-string` independently provides the native `grammers:1:` format: 454
+ASCII characters, fixed bounded binary payload, exact home DC/endpoints/IP
+preference/key, and a SHA-256 corruption checksum. It is unencrypted and is not
+a complete SQLite backup. No peer cache, update state or other-DC keys are
+exported. Keep diagnostics redacted and credential extraction explicit.
+`Client::export_session_string()` returns `String` directly from any supported
+source; `export_session_secret()` retains the optional redacted wrapper.
+
+`session-import-files` adds explicit read-only Pyrogram v3/Kurigram v7,
+Telethon SQLite v7/v8 and gotd Loader v1 file readers. Never auto-detect arbitrary
+strings, migrate source databases, or overwrite existing sessions. Require
+closed, stable local sources; reject nonempty WAL/SHM/journals. Use immutable
+read-only SQLite, bound TEXT/BLOB selection before materialization, and preserve
+Unix literal backslashes when encoding URI paths. Existing string decoders
+remain file/network-free. Keep all format dependencies optional and preserve
+the existing API-ID-zero, home-key-only and exact endpoint rules below.
+Managed native file sources use `SqliteSession::open_native` to validate the
+schema read-only before opening it for writes. Require a closed, stable file;
+reject foreign schemas and active sidecars without modifying them. Legacy
+`SqliteSession::open` remains available for application-controlled recovery.
+
+Parallel downloads own bounded chunk futures; cancellation must not detach
+workers. Preserve learned file DCs and finite rejection recovery. Partial files
+can remain after cancellation, and issued OS writes cannot be rolled back.
+CDN redirects are explicit Unsupported errors, not full CDN support.
+
+`SendOptions::default()` matches existing InputMessage defaults (including
+link_preview=false). Applying options changes only its six documented fields
+and preserves rich payloads. Dispatcher handlers are sequential with explicit
+errors; QR steps have bounded migration, explicit token display, redacted Debug,
+and no hidden polling. Examples use TG_* runtime variables and awaited cleanup.
+
+Documentation is built by `scripts/build-docs.py` for GitHub Pages. Rustdoc is
+the API source; generated method pages use local signatures/types and a cached
+official Telegram availability snapshot. Unknown or mismatched constructors
+must remain explicit. `refresh-telegram-docs.py` refreshes missing/new schema
+methods by default; full refresh is explicit. Do not infer permissions from
+namespaces or replace local types with a different online schema version.
+
+Verified locally on Rust 1.94.1: 511 release all-feature workspace tests/doctests
+passed (30 ignored), all-target/all-feature check, strict Clippy and warning-free
+Rustdoc. Optional session builds passed: importer 54, native strings 38, file
+imports 73, memory-only 32; minimal client 107 and optional-helper library 54.
+Documentation generation has 17 offline tests and validates links across 923
+method pages. Windows/Linux CI is configured; do not claim a hosted run passed
+without observing it. No live authorization or consumer deployment was used.
+Follow-up regressions passed: 25 managed-runtime, 7 native-codec and 5 native
+file-guard tests, plus strict client/session all-target/all-feature Clippy.
+
+The dependency lock now uses Tokio 1.54.0 and stable glass_pumpkin 2.0.0. Highest
+declared dependency Rust requirement is 1.89; that is metadata, not a tested
+MSRV. The historical 1.87-compatible syntax notes below are not a claim that
+current dependencies build on 1.87. PERFORMANCE.md records fresh offline
+benchmarks, including measurable route overhead; do not claim universal gains.
+
+Canonical upstream was refreshed and remains `633d7fe`, layer 230. Upstream
+intake goes through a review branch and compatibility checks, not an automatic
+merge into main. Keep this fork's package links and generated docs distinct from
+the upstream crates.io/docs.rs release.
+
 Current integration (2026-10-18): canonical Codeberg through `633d7fe` is
 merged (layer 230 unchanged). Keep new InputAudio/InputVideo/TimeToLive support,
 including the upstream `media_ttl(Option<TimeToLive>)` API; UPSTREAM.md records

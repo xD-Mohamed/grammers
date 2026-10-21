@@ -1,125 +1,188 @@
-# gramme.rs
+<p align="center"><img src="assets/logo.png" alt="grammers" width="88"></p>
+<h1 align="center">grammers</h1>
+<p align="center">A Rust Telegram client with managed lifecycle, explicit session sources, and typed errors.</p>
 
-A set of Rust crates to interact with Telegram's API, hence the name *(tele)gramme.rs*.
+<p align="center">
+  <a href="https://xd-mohamed.github.io/grammers/"><img src="assets/button-docs.svg" alt="Documentation" height="44"></a>
+  <a href="https://xd-mohamed.github.io/grammers/api/grammers_client/"><img src="assets/button-api.svg" alt="API reference" height="44"></a>
+  <a href="grammers-client/examples/README.md"><img src="assets/button-examples.svg" alt="Examples" height="44"></a>
+  <a href="CHANGELOG.md"><img src="assets/button-changelog.svg" alt="Changelog" height="44"></a>
+</p>
 
-## Current status
+This independently maintained fork builds on [Lonami's grammers](https://codeberg.org/Lonami/grammers). It keeps the raw MTProto APIs and adds an easier client interface, portable sessions, bounded work, and observable shutdown.
 
-It works! The high-level interface is slowly taking shape, and it can already be used to [build
-real projects], such as [RSS bots].
+## Install
 
-For an up-to-date taste on how the library looks like, refer to the [client examples] folder.
+Use this repository for the fork APIs. For deployments, pin a reviewed commit with `rev` instead of following `main`.
 
-For the API reference, please refer to <https://docs.rs/grammers-client/>.
+```toml
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+
+[dependencies.grammers-client]
+git = "https://github.com/xD-Mohamed/grammers"
+branch = "main"
+features = ["session-file", "session-string", "session-import-files"]
+```
+
+## Quick start
+
+```rust
+use grammers_client::{Client, SessionSource};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let api_id = std::env::var("TG_ID")?.parse()?;
+    let client = Client::builder(api_id)
+        .session(SessionSource::file("account.session"))
+        .receive_updates(false)
+        .build()
+        .await?;
+
+    client.run_until(tokio::signal::ctrl_c()).await?;
+    Ok(())
+}
+```
+
+This RPC-only example reuses a native SQLite session and disables update delivery. An empty session still needs login; connectivity is not proof of authorization. See the [examples](grammers-client/examples/README.md) for login, messages, updates, and transfers.
+
+| Method | Behavior |
+| --- | --- |
+| `build().await` | Validate settings and prepare local storage, without network activity. |
+| `start().await` | Start the shared driver once; connections remain lazy. |
+| `connect().await` | Start and check home-DC connectivity. |
+| `run().await` | Connect, then wait for stop or terminal failure. |
+| `run_until(future).await` | Run until a shutdown future resolves, then await stop. |
+| `stop().await` | Stop accepting work and await bounded shutdown. |
+
+Clones share the same lifecycle. Stop is terminal and idempotent; build another client from the same storage to restart. Existing externally managed `SenderPool` clients remain supported.
+
+## Sessions
+
+Choose a format explicitly. Strings are never guessed to be paths, and foreign session files are never migrated or overwritten.
+
+| Source | Constructor |
+| --- | --- |
+| Native SQLite file | `SessionSource::file("account.session")` |
+| Native string | `SessionSource::native(text)` |
+| Pyrogram / compatible Kurigram string | `SessionSource::pyrogram(text)` |
+| Telethon v1 string | `SessionSource::telethon(text)` |
+| Pyrogram / Kurigram SQLite file | `SessionSource::pyrogram_file(path)` |
+| Telethon SQLite file | `SessionSource::telethon_file(path)` |
+| gotd Loader v1 JSON file | `SessionSource::gotd_file(path)` |
+| gotd Loader v1 JSON text | `SessionSource::gotd(text)` |
+| Temporary memory | `SessionSource::memory()` |
+| Custom storage | `SessionSource::storage(Arc::new(storage))` |
+
+Foreign formats import into independent memory storage. SQLite versions are validated, and active journals are rejected instead of reading stale credentials. See [session formats](grammers-session/README.md) for exact compatibility and direct parsers such as `parse_telethon_string`.
+
+Export the native format from a client with a home-DC key, including clients opened from Pyrogram, Telethon, or gotd:
+
+```rust
+let session: String = client.export_session_string()?;
+let restored = Client::builder(api_id)
+    .session(SessionSource::native(session))
+    .build()
+    .await?;
+```
+
+The shape is `grammers:1:<base64url payload and checksum>`, currently 454 ASCII characters. It preserves the home key, exact IPv4/IPv6 endpoints, and address preference. It excludes other-DC keys, peer caches, and update checkpoints. Treat the returned string as a credential; use `export_session_secret()` instead when you want a wrapper with redacted `Debug`. The application's API ID always comes from your configuration.
+
+An [offline demonstration](grammers-session/examples/session_string_demo.rs) prints a synthetic string and verifies its round-trip without reading credentials or contacting Telegram.
+
+## Configuration
+
+Device settings are grouped and optional. Omitted values retain platform defaults.
+
+```rust
+use grammers_client::{Client, DeviceConfig, SessionSource};
+
+let client = Client::builder(api_id)
+    .session(SessionSource::file("account.session"))
+    .device(DeviceConfig {
+        device_model: "My application".into(),
+        app_version: env!("CARGO_PKG_VERSION").into(),
+        ..Default::default()
+    })
+    .max_pending_requests(1024)
+    .build()
+    .await?;
+```
+
+Managed defaults: 30-second connection initialization, 10-second shutdown, and 1024 queued/in-flight requests. The default retry policy respects short Telegram waits without automatically replaying I/O failures. Configure IPv6, proxy, updates, and retry policy when needed; advanced callers can supply `ConnectionParams`.
+
+## Messages and errors
+
+Ordinary messages need only a recipient and text:
+
+```rust
+client.send_message(peer, "Hello").await?;
+```
+
+Optional settings support defaults:
+
+```rust
+use grammers_client::SendOptions;
+
+client.send_message_with_options(peer, "Hello", SendOptions {
+    silent: true,
+    ..Default::default()
+}).await?;
+```
+
+`InvocationError::category()`, `retry_after()`, and `is_flood_wait()` help applications handle failures without parsing display text. Original errors remain available. `Client::status()` and `events()` expose connection, admission, overflow, and termination information without request bodies or credentials.
+
+A timeout or missing reply does not prove a request was never sent. Sent requests retain their SDK reservations until protocol retirement or teardown. Do not blindly retry state-changing operations after uncertain failures.
+
+## Features
+
+| Feature | Adds |
+| --- | --- |
+| `fs` (default) | Filesystem transfer helpers |
+| `session-file` | Native SQLite source |
+| `session-string` | Native portable session import/export |
+| `session-import` | Pyrogram, Telethon, and gotd text decoders |
+| `session-import-files` | Explicit read-only foreign file imports |
+| `dispatcher` | Composable filters and sequential handlers |
+| `qr-login` | QR login steps and 2FA integration |
+| `markdown`, `html` | Message formatting parsers |
+| `proxy` | SOCKS5 support |
+| `parse_invite_link` | Invite-link parsing |
+
+Memory-only session builds do not require SQLite. Native strings and external importers are independently optional.
 
 ## Crates
 
-![Diagram depicting the crate hierarchy](assets/crate-hierarchy.svg)
+<img src="assets/architecture-dark.png" alt="Main crate dependencies" width="100%">
 
-* **[grammers-client]**: high-level API. Depends on:
-  * `grammers-tl-types` to both [invoke requests] and wrap [raw types].
-  * `grammers-session` to persist home [datacenter], logged-in user and [cache peers].
-  * `grammers-mtsender` to connect to Telegram's servers and exchange messages.
-  * `grammers-crypto` to support [Two-Factor Authentication] logins.
-* **[grammers-mtsender]**: network connection to Telegram. Depends on:
-  * `grammers-tl-types` to initialize the connection and offer an ergonomic [RPC interface].
-  * `grammers-session` to persist the DC configuration and corresponding [Authorization Key]s.
-  * `grammers-mtproto` to serialize messages and manage the connection state.
-  * `grammers-crypto` for efficient buffer usage.
-* **[grammers-session]**: session storages for the client. Depends on:
-  * `grammers-tl-types` to provide a more ergonomic interface over peers.
-* **[grammers-mtproto]**: implementation of the [Mobile Transport Protocol]. Depends on:
-  * `grammers-tl-types` to invoke and parse the core messages of the protocol.
-  * `grammers-crypto` to encrypt the communication with Telegram.
-* **[grammers-tl-types]**: generated Rust types for a certain layer. Depends on:
-  * `grammers-tl-gen` to generate the Rust code that makes up the crate itself.
-  * `grammers-tl-parser` to parse the TL files with all definitions used by Telegram.
-* **[grammers-crypto]**: cryptography-related methods.
-* **[grammers-tl-gen]**: Rust code generator from TL definitions. Depends on:
-  * `grammers-tl-parser` to compose functions referencing the parsed definition types.
-* **[grammers-tl-parser]**: a [Type Language] parser.
+| Crate | Responsibility |
+| --- | --- |
+| [grammers-client](grammers-client/) | Managed client, messages, media, login, and updates |
+| [grammers-session](grammers-session/) | Storage, portable strings, and explicit imports |
+| [grammers-mtsender](grammers-mtsender/) | Connections, routing, request lifetime, retry policies |
+| [grammers-mtproto](grammers-mtproto/) | MTProto framing and protocol state |
+| [grammers-crypto](grammers-crypto/) | Cryptographic primitives and authentication helpers |
+| [grammers-tl-types](grammers-tl-types/) | Generated Telegram types and RPC functions |
+| [grammers-tl-gen](grammers-tl-gen/) | Rust generation from TL definitions |
+| [grammers-tl-parser](grammers-tl-parser/) | TL schema parsing |
 
-## Security
+The diagram shows the main dependencies. The [API reference](https://xd-mohamed.github.io/grammers/api/grammers_client/) is generated automatically for the workspace's public methods, types, traits, and examples.
 
-It is recommended to always use [cargo-crev] to verify the trustworthiness of each of your
-dependencies, including this one.
+## Development
 
-As far as I know, this code has not been audited, so if, for any reason, you're using this crate
-where security is critical, I strongly encourage you to review at least `grammers-crypto` and the
-authentication part of `grammers-mtproto`. I am not a security expert, although I trust my code
-enough to use it myself.
+```sh
+cargo fmt --all -- --check
+cargo test --locked --release --workspace --all-features
+cargo check --locked --workspace --all-targets --all-features
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+```
 
-If you know about some published audit for this crate, please let me know, so that I can link it
-here and review the issues found.
+GitHub Actions checks Windows/Linux and optional builds. GitHub Pages regenerates the guide and complete Rust reference on updates to `main`. Build locally with `python scripts/build-docs.py`.
+
+Install the build-only documentation tools with `python -m pip install -r docs/requirements.txt`. Method pages are generated from Rustdoc; Telegram account-availability metadata is cached with provenance and refreshed for new schema methods. Where official metadata is missing or does not match the local constructor, the reference says so.
+
+See [contributing](CONTRIBUTING.md), [upstream policy](UPSTREAM.md), [changes](CHANGELOG.md), and [performance notes](PERFORMANCE.md). Upstream changes enter review branches. Offline checks do not establish live authorization, deployment, or universal performance gains. CDN redirects currently return a clear unsupported error; full CDN transfers are not implemented.
 
 ## License
 
-All the libraries and binaries contained in this repository are licensed under either of
-
-* Apache License, Version 2.0 ([LICENSE-APACHE] or
-  http://www.apache.org/licenses/LICENSE-2.0)
-
-* MIT license ([LICENSE-MIT] or http://opensource.org/licenses/MIT)
-
-at your option.
-
-## Contribution
-
-Thank you for considering to contribute! I'll try my best to provide quick, constructive feedback
-on your issues or pull requests. Please do call me out if you think my behaviour is not acceptable
-at any time. I will try to keep the discussion as technical as possible. Similarly, I will not
-tolerate poor behaviour from your side towards other people (including myself).
-
-**Please only submit issues and pull requests authored entirely by you or other fellow humans.**
-If you don't feel capable of authoring code yourself, I encourage you to still try, as I believe
-that's the best way to learn and get better. If you're still not comfortable, please submit a
-feature-request instead, for discussion, so that someone else can implement it instead.
-
-You may use translation assistance if writing English is also not something you're comfortable with.
-But please choose a translation tool that doesn't overly try to rewrite and twist your thoughts.
-Browsers like Firefox have a decently good offline translator built-in that you may use.
-
-It is recommended to run these commands to make the Git experience a bit nicer:
-
-```sh
-git config --local blame.ignoreRevsFile .git-blame-ignore-revs
-cp pre-commit .git/hooks/
-```
-
-If you don't have the time to [contribute code], you may contribute by [reporting issues] or
-feature ideas. Please note that every feature added will increase maintenance burden on my part,
-so be mindful when suggesting things. It may be possible that your idea could exist as its own
-crate, offered as [extensions to grammers].
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
-dual licensed as above, without any additional terms or conditions.
-
-[build real projects]: https://codeberg.org/Lonami/grammers/wiki/Real-world-projects
-[RSS bots]: https://codeberg.org/Lonami/srsrssrsbot
-[client examples]: grammers-client/examples
-[Mobile Transport Protocol]: https://core.telegram.org/mtproto
-[Type Language]: https://core.telegram.org/mtproto/TL
-[grammers-client]: grammers-client/
-[grammers-crypto]: grammers-crypto/
-[grammers-mtproto]: grammers-mtproto/
-[grammers-mtsender]: grammers-mtsender/
-[grammers-session]: grammers-session/
-[grammers-tl-gen]: grammers-tl-gen/
-[grammers-tl-parser]: grammers-tl-parser/
-[grammers-tl-types]: grammers-tl-types/
-[invoke requests]: https://core.telegram.org/methods
-[raw types]: https://core.telegram.org/schema
-[datacenter]: https://core.telegram.org/api/datacenter
-[cache peers]: https://core.telegram.org/api/peers
-[Two-Factor Authentication]: https://core.telegram.org/api/srp
-[RPC interface]: https://core.telegram.org/api/invoking
-[Authorization Key]: https://core.telegram.org/mtproto/auth_key
-[scrape-docs]: bin/scrape-docs/
-[tl-to-json]: bin/tl-to-json/
-[tl-json]: https://core.telegram.org/schema/json
-[cargo-crev]: https://crates.io/crates/cargo-crev
-[LICENSE-APACHE]: LICENSE-APACHE
-[LICENSE-MIT]: LICENSE-MIT
-[contribute code]: https://codeberg.org/Lonami/srsrssrsbot/pulls
-[reporting issues]: https://codeberg.org/Lonami/srsrssrsbot/issues/new
-[extensions to grammers]: https://codeberg.org/Lonami/grammers/wiki/Client-extensions
+MIT or Apache-2.0, at your option. Original upstream history, authorship, and notices are retained. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
