@@ -68,32 +68,35 @@ required-features = ["qr-login", "session-file"]
 
 [[example]]
 name = "ping"
-required-features = ["grammers-session/sqlite-storage"]
 
 [[example]]
 name = "echo"
-required-features = ["grammers-session/sqlite-storage"]
+required-features = ["session-file"]
 
 [[example]]
 name = "downloader"
-required-features = ["grammers-session/sqlite-storage", "fs"]
+required-features = ["session-file", "fs"]
 
 [[example]]
 name = "dialogs"
-required-features = ["grammers-session/sqlite-storage"]
+required-features = ["session-file"]
 
 [[example]]
 name = "inline-pagination"
-required-features = ["grammers-session/sqlite-storage"]
+required-features = ["session-file"]
 
 [[example]]
 name = "send_album"
-required-features = ["grammers-session/sqlite-storage"]
+required-features = ["session-file"]
 
 [[example]]
 name = "import_session"
-required-features = ["grammers-session/session-import"]
+required-features = ["session-string", "session-import-files", "fs"]
 
 [[example]]
 name = "managed_client"
 required-features = ["session-string"]
+
+[[example]]
+name = "export_session"
+required-features = ["session-file", "session-string"]

@@ -6,50 +6,67 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Connect with an existing exported session entirely in memory.
-//!
-//! Set TELEGRAM_SESSION and TELEGRAM_API_ID in your environment, then run:
-//! cargo run -p grammers-client --example import_session --features grammers-session/session-import
-//! This example never writes a session file or logs the session string.
+//! Read an explicitly selected session format into memory and check authorization.
+//! cargo run -p grammers-client --example import_session --features session-string,session-import-files -- FORMAT INPUT_FILE [--ipv6]
+//! FORMAT: native, pyrogram-string, telethon-string, gotd-file, pyrogram-file, telethon-file.
+//! Source files are not modified; no login is attempted and no session is saved.
+mod support;
+use grammers_client::{Client, SessionSource, client::ClientConfiguration};
+use std::{path::PathBuf, time::Duration};
+use support::Result;
 
-use std::{env, error::Error, sync::Arc, time::Duration};
-
-use grammers_client::{Client, client::ClientConfiguration};
-use grammers_mtsender::{ConnectionParams, SenderPool};
-use grammers_session::import::ImportedSession;
-
-async fn run() -> Result<(), Box<dyn Error>> {
-    let exported = env::var("TELEGRAM_SESSION")
-        .map_err(|_| "TELEGRAM_SESSION is missing or is not valid Unicode")?;
-    let api_id: i32 = env::var("TELEGRAM_API_ID")?.parse()?;
-    if api_id <= 0 {
-        return Err("TELEGRAM_API_ID must be positive".into());
-    }
-    let imported = ImportedSession::parse(&exported)?;
-    let params = ConnectionParams {
-        use_ipv6: imported.prefer_ipv6(),
-        connection_timeout: Some(Duration::from_secs(15)),
-        ..Default::default()
-    };
-    let session = Arc::new(imported.into_memory_session());
-    let SenderPool { runner, handle, .. } = SenderPool::with_configuration(session, api_id, params);
-    let client = Client::with_configuration(
-        handle.clone(),
-        ClientConfiguration {
-            auto_cache_peers: false,
-        },
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result {
+    let mut args = std::env::args().skip(1);
+    let format = args
+        .next()
+        .ok_or("Usage: import_session FORMAT INPUT_FILE [--ipv6]")?;
+    let path = PathBuf::from(
+        args.next()
+            .ok_or("Input file is required; do not pass session text in argv")?,
     );
-    let pool_task = tokio::spawn(runner.run());
-    let result = tokio::time::timeout(Duration::from_secs(30), client.is_authorized()).await;
-    handle.quit();
-    pool_task.await?;
-    println!("Session authorized: {}", result??);
-    Ok(())
-}
-
-fn main() -> Result<(), Box<dyn Error>> {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(run())
+    let ipv6 = match args.next().as_deref() {
+        None => false,
+        Some("--ipv6") => true,
+        Some(_) => return Err("Only --ipv6 is accepted after INPUT_FILE".into()),
+    };
+    if args.next().is_some() {
+        return Err("Too many arguments".into());
+    }
+    let source = match format.as_str() {
+        "native" | "pyrogram-string" | "telethon-string" => {
+            // Read secret text from a file, never command-line arguments or logs.
+            let text = tokio::fs::read_to_string(&path).await?;
+            match format.as_str() {
+                "native" => SessionSource::native(text.trim()),
+                "pyrogram-string" => SessionSource::pyrogram(text.trim()),
+                _ => SessionSource::telethon(text.trim()),
+            }
+        }
+        "gotd-file" => SessionSource::gotd_file(path),
+        "pyrogram-file" => SessionSource::pyrogram_file(path),
+        "telethon-file" => SessionSource::telethon_file(path),
+        _ => return Err("Unknown format; choose native, pyrogram-string, telethon-string, gotd-file, pyrogram-file or telethon-file".into()),
+    };
+    let mut builder = Client::builder(support::api_id()?)
+        .session(source)
+        .receive_updates(false)
+        .connection_timeout(Duration::from_secs(15))
+        .client_configuration(ClientConfiguration {
+            auto_cache_peers: false,
+        });
+    // Omit the override for native strings so their exact saved preference survives.
+    if ipv6 {
+        builder = builder.ipv6(true);
+    }
+    let client = builder.build().await?;
+    let result = async {
+        client.start().await?;
+        let authorized =
+            tokio::time::timeout(Duration::from_secs(30), client.is_authorized()).await??;
+        println!("Session authorized: {authorized}");
+        Ok(())
+    }
+    .await;
+    support::finish(&client, result).await
 }

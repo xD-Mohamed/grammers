@@ -1,97 +1,31 @@
-//! Example to print the ID and title of all the dialogs.
-//!
-//! The `TG_ID` and `TG_HASH` environment variables must be set (learn how to do it for
-//! [Windows](https://ss64.com/nt/set.html) or [Linux](https://ss64.com/bash/export.html))
-//! to Telegram's API ID and API hash respectively.
-//!
-//! Then, run it as:
-//!
-//! ```sh
-//! cargo run --example dialogs
-//! ```
+//! Log in interactively and list dialog titles and IDs.
+//! cargo run -p grammers-client --example dialogs --features session-file
+mod support;
+#[path = "support/user_login.rs"]
+mod user_login;
+use grammers_client::{Client, SessionSource};
+use support::Result;
 
-use std::env;
-use std::io::{self, BufRead as _, Write as _};
-use std::sync::Arc;
-
-use grammers_client::{Client, SignInError};
-use grammers_mtsender::SenderPool;
-use grammers_session::storages::SqliteSession;
-use tokio::runtime;
-use tracing::info;
-
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-const SESSION_FILE: &str = "dialogs.session";
-
-fn prompt(message: &str) -> Result<String> {
-    let stdout = io::stdout();
-    let mut stdout = stdout.lock();
-    stdout.write_all(message.as_bytes())?;
-    stdout.flush()?;
-
-    let stdin = io::stdin();
-    let mut stdin = stdin.lock();
-
-    let mut line = String::new();
-    stdin.read_line(&mut line)?;
-    Ok(line)
-}
-
-async fn async_main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .without_time()
-        .init();
-
-    let api_id = env!("TG_ID").parse().expect("TG_ID invalid");
-
-    let session = Arc::new(SqliteSession::open(SESSION_FILE).await?);
-
-    let SenderPool { runner, handle, .. } = SenderPool::new(Arc::clone(&session), api_id);
-    let client = Client::new(handle);
-    drop(tokio::spawn(runner.run()));
-
-    if !client.is_authorized().await? {
-        info!("Signing in...");
-        let phone = prompt("Enter your phone number (international format): ")?;
-        let token = client.request_login_code(&phone, env!("TG_HASH")).await?;
-        let code = prompt("Enter the code you received: ")?;
-        let signed_in = client.sign_in(&token, &code).await;
-        match signed_in {
-            Err(SignInError::PasswordRequired(password_token)) => {
-                // Note: this `prompt` method will echo the password in the console.
-                //       Real code might want to use a better way to handle this.
-                let hint = password_token.hint().unwrap_or("None");
-                let prompt_message = format!("Enter the password (hint {}): ", &hint);
-                let password = prompt(prompt_message.as_str())?;
-
-                client
-                    .check_password(password_token, password.trim())
-                    .await?;
-            }
-            Ok(_) => (),
-            Err(e) => panic!("{}", e),
-        };
-        info!("Signed in!");
-    }
-
-    let mut dialogs = client.iter_dialogs();
-
-    info!("Showing up to {} dialogs:", dialogs.total().await?);
-    while let Some(dialog) = dialogs.next().await? {
-        let peer = dialog.peer();
-        info!("- {: >10} {}", peer.id(), peer.name().unwrap_or_default());
-    }
-
-    // `runner.run()`'s task will be dropped (and disconnect occur) once the runtime exits.
-    Ok(())
-}
-
-fn main() -> Result<()> {
-    runtime::Builder::new_current_thread()
-        .enable_all()
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result {
+    let client = Client::builder(support::api_id()?)
+        .session(SessionSource::file("dialogs.session"))
         .build()
-        .unwrap()
-        .block_on(async_main())
+        .await?;
+    let result = async {
+        client.start().await?;
+        user_login::sign_in(&client).await?;
+        let mut dialogs = client.iter_dialogs();
+        println!("Up to {} dialogs:", dialogs.total().await?);
+        while let Some(dialog) = dialogs.next().await? {
+            println!(
+                "{} {}",
+                dialog.peer().id(),
+                dialog.peer().name().unwrap_or_default()
+            );
+        }
+        Ok(())
+    }
+    .await;
+    support::finish(&client, result).await
 }

@@ -1,153 +1,62 @@
-//! Example to download all messages and media from a peer.
-//!
-//! The `TG_ID` and `TG_HASH` environment variables must be set (learn how to do it for
-//! [Windows](https://ss64.com/nt/set.html) or [Linux](https://ss64.com/bash/export.html))
-//! to Telegram's API ID and API hash respectively.
-//!
-//! Then, run it as:
-//!
-//! ```sh
-//! cargo run --example downloader -- PEER_NAME
-//! ```
-//!
-//! Messages will be printed to stdout, and media will be saved in the `target/` folder locally, named
-//! message-[MSG_ID].[EXT]
+//! Download a peer's messages/media to an explicitly selected output directory.
+//! cargo run -p grammers-client --example downloader --features session-file -- PEER OUTPUT_DIR
+mod support;
+#[path = "support/user_login.rs"]
+mod user_login;
+use grammers_client::{Client, SessionSource, media::Media};
+use std::path::PathBuf;
+use support::Result;
 
-use std::io::{BufRead, Write};
-use std::path::Path;
-use std::sync::Arc;
-use std::{env, io};
-
-use grammers_client::media::Media;
-use grammers_client::{Client, SignInError};
-use grammers_mtsender::SenderPool;
-use grammers_session::storages::SqliteSession;
-use mime::Mime;
-use mime_guess::mime;
-use tokio::runtime;
-use tracing::info;
-
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
-
-const SESSION_FILE: &str = "downloader.session";
-
-async fn async_main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
-        .without_time()
-        .init();
-
-    let api_id = env!("TG_ID").parse().expect("TG_ID invalid");
-    let peer_name = env::args().nth(1).expect("peer name missing");
-
-    let session = Arc::new(SqliteSession::open(SESSION_FILE).await?);
-
-    let SenderPool { runner, handle, .. } = SenderPool::new(Arc::clone(&session), api_id);
-    let client = Client::new(handle);
-    drop(tokio::spawn(runner.run()));
-
-    if !client.is_authorized().await? {
-        info!("Signing in...");
-        let phone = prompt("Enter your phone number (international format): ")?;
-        let token = client.request_login_code(&phone, env!("TG_HASH")).await?;
-        let code = prompt("Enter the code you received: ")?;
-        let signed_in = client.sign_in(&token, &code).await;
-        match signed_in {
-            Err(SignInError::PasswordRequired(password_token)) => {
-                // Note: this `prompt` method will echo the password in the console.
-                //       Real code might want to use a better way to handle this.
-                let hint = password_token.hint().unwrap();
-                let prompt_message = format!("Enter the password (hint {}): ", &hint);
-                let password = prompt(prompt_message.as_str())?;
-
-                client
-                    .check_password(password_token, password.trim())
-                    .await?;
-            }
-            Ok(_) => (),
-            Err(e) => panic!("{}", e),
-        };
-        info!("Signed in!");
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result {
+    let mut args = std::env::args().skip(1);
+    let peer_name = args.next().ok_or("Usage: downloader PEER OUTPUT_DIR")?;
+    let destination = PathBuf::from(args.next().ok_or("Usage: downloader PEER OUTPUT_DIR")?);
+    if args.next().is_some() {
+        return Err("Usage: downloader PEER OUTPUT_DIR".into());
     }
-
-    let maybe_peer = client
-        .resolve_username(peer_name.as_str())
-        .await?
-        .ok_or("no peer with username")?
-        .to_ref()
-        .await?;
-
-    let peer = maybe_peer.unwrap_or_else(|| panic!("Peer {peer_name} could not be found"));
-
-    let mut messages = client.iter_messages(peer);
-
-    info!(
-        "Peer {} has {} total messages.",
-        peer_name,
-        messages.total().await.unwrap()
-    );
-
-    let mut counter = 0;
-
-    while let Some(msg) = messages.next().await? {
-        counter += 1;
-        info!("Message {}:{}", msg.id(), msg.text());
-        if let Some(media) = msg.media() {
-            let dest = format!(
-                "target/message-{}{}",
-                &msg.id().to_string(),
-                get_file_extension(&media)
-            );
-            client
-                .download_media(&media, &Path::new(dest.as_str()))
-                .await
-                .expect("Error downloading message");
-        }
-    }
-
-    info!("Downloaded {counter} messages");
-
-    // `runner.run()`'s task will be dropped (and disconnect occur) once the runtime exits.
-    Ok(())
-}
-
-fn main() -> Result<()> {
-    runtime::Builder::new_current_thread()
-        .enable_all()
+    let client = Client::builder(support::api_id()?)
+        .session(SessionSource::file("downloader.session"))
         .build()
-        .unwrap()
-        .block_on(async_main())
-}
-
-fn get_file_extension(media: &Media) -> String {
-    match media {
-        Media::Photo(_) => ".jpg".to_string(),
-        Media::Sticker(sticker) => get_mime_extension(sticker.document.mime_type()),
-        Media::Document(document) => get_mime_extension(document.mime_type()),
-        Media::Contact(_) => ".vcf".to_string(),
-        _ => String::new(),
+        .await?;
+    let result = async {
+        client.start().await?;
+        user_login::sign_in(&client).await?;
+        let peer = client
+            .resolve_username(&peer_name)
+            .await?
+            .ok_or("No peer with this username")?
+            .to_ref()
+            .await?
+            .ok_or("Peer access hash is unavailable")?;
+        tokio::fs::create_dir_all(&destination).await?;
+        let mut messages = client.iter_messages(peer);
+        println!("Up to {} messages", messages.total().await?);
+        while let Some(message) = messages.next().await? {
+            println!("{}: {}", message.id(), message.text());
+            if let Some(media) = message.media() {
+                let path =
+                    destination.join(format!("message-{}{}", message.id(), extension(&media)));
+                client.download_media(&media, &path).await?;
+            }
+        }
+        Ok(())
     }
+    .await;
+    support::finish(&client, result).await
 }
 
-fn get_mime_extension(mime_type: Option<&str>) -> String {
-    mime_type
-        .map(|m| {
-            let mime: Mime = m.parse().unwrap();
-            format!(".{}", mime.subtype())
-        })
+fn extension(media: &Media) -> String {
+    let mime = match media {
+        Media::Photo(_) => return ".jpg".into(),
+        Media::Sticker(sticker) => sticker.document.mime_type(),
+        Media::Document(document) => document.mime_type(),
+        Media::Contact(_) => return ".vcf".into(),
+        _ => None,
+    };
+    // Use the MIME database's known extensions, never server-provided path text.
+    mime.and_then(mime_guess::get_mime_extensions_str)
+        .and_then(|extensions| extensions.first())
+        .map(|extension| format!(".{extension}"))
         .unwrap_or_default()
-}
-
-fn prompt(message: &str) -> Result<String> {
-    let stdout = io::stdout();
-    let mut stdout = stdout.lock();
-    stdout.write_all(message.as_bytes())?;
-    stdout.flush()?;
-
-    let stdin = io::stdin();
-    let mut stdin = stdin.lock();
-
-    let mut line = String::new();
-    stdin.read_line(&mut line)?;
-    Ok(line)
 }
