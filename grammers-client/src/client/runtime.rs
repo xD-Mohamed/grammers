@@ -130,7 +130,7 @@ impl SessionSource {
             Source::Storage(session) => Ok((session, None)),
             #[cfg(feature = "session-file")]
             Source::File(path) => {
-                let session = grammers_session::storages::SqliteSession::open(path)
+                let session = grammers_session::storages::SqliteSession::open_native(path)
                     .await
                     .map_err(|e| ClientBuildError::Storage(Box::new(e)))?;
                 Ok((erase(Arc::new(session)), None))
@@ -850,10 +850,36 @@ impl Client {
         self.0.handle.events()
     }
 
-    /// Export the home-DC authorization and exact endpoint as a credential.
-    /// This synchronous operation does not include peer cache or update state.
+    /// Export the current session as a native `grammers:1:` string.
+    ///
+    /// Works with every supported session source, including imported Pyrogram,
+    /// Telethon and gotd sessions. The returned string preserves the current home
+    /// DC's key, endpoints and address preference; it can be passed directly to
+    /// [`SessionSource::native`]. Peer cache and update state are not included.
+    /// This synchronous, local operation performs no network authorization.
+    ///
+    /// The returned `String` is an unencrypted account credential. Use
+    /// [`Self::export_session_secret`] when redacted `Debug` output is preferred.
+    ///
+    /// # Errors
+    /// Returns a sanitized error if the current home DC/key is missing, invalid,
+    /// or cannot be read. Avoid mutating session storage concurrently with export.
     #[cfg(feature = "session-string")]
     pub fn export_session_string(
+        &self,
+    ) -> Result<String, grammers_session::native::SessionStringError> {
+        self.export_session_secret()
+            .map(|secret| secret.into_inner())
+    }
+
+    /// Export the current native credential in a wrapper with redacted `Debug`.
+    ///
+    /// This has the same format, source support and errors as
+    /// [`Self::export_session_string`]. Extract the unencrypted text explicitly
+    /// with [`grammers_session::native::SessionString::expose_secret`] or
+    /// [`grammers_session::native::SessionString::into_inner`].
+    #[cfg(feature = "session-string")]
+    pub fn export_session_secret(
         &self,
     ) -> Result<grammers_session::native::SessionString, grammers_session::native::SessionStringError>
     {
@@ -1303,6 +1329,107 @@ mod tests {
 
     #[cfg(feature = "session-string")]
     #[tokio::test]
+    async fn session_export_returns_a_string_and_offers_redacted_storage() {
+        let session = Arc::new(MemorySession::default());
+        let home = session.home_dc_id().unwrap();
+        let mut dc = session.dc_option(home).unwrap().unwrap();
+        dc.auth_key = Some([17; 256]);
+        session.set_dc_option(&dc).await.unwrap();
+        let client = Client::builder(1)
+            .session(SessionSource::storage(session))
+            .build()
+            .await
+            .unwrap();
+        let text: String = client.export_session_string().unwrap();
+        assert!(text.starts_with("grammers:1:"));
+        let secret = client.export_session_secret().unwrap();
+        assert_eq!(secret.expose_secret(), text);
+        assert_eq!(format!("{secret:?}"), "SessionString([REDACTED])");
+        client.stop().await.unwrap();
+
+        let empty = Client::builder(1).build().await.unwrap();
+        assert!(matches!(
+            empty.export_session_string(),
+            Err(grammers_session::native::SessionStringError::MissingAuthKey)
+        ));
+        empty.stop().await.unwrap();
+    }
+
+    #[cfg(all(feature = "session-string", feature = "session-import"))]
+    #[tokio::test]
+    async fn foreign_sources_export_to_reusable_native_strings() {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+
+        // Entirely synthetic credentials and documentation-only IP addresses.
+        let key = [17; 256];
+        let mut pyrogram = vec![2];
+        pyrogram.extend_from_slice(&0_u32.to_be_bytes()); // absent source API ID
+        pyrogram.push(0); // production mode
+        pyrogram.extend_from_slice(&key);
+        pyrogram.extend_from_slice(&123_456_u64.to_be_bytes());
+        pyrogram.push(0); // user account
+
+        let mut telethon = vec![2];
+        telethon.extend_from_slice(
+            &"2001:db8::2"
+                .parse::<std::net::Ipv6Addr>()
+                .unwrap()
+                .octets(),
+        );
+        telethon.extend_from_slice(&8443_u16.to_be_bytes());
+        telethon.extend_from_slice(&key);
+        let gotd = format!(
+            r#"{{"Version":1,"Data":{{"DC":2,"Addr":"192.0.2.3:8080","AuthKey":"{}","Config":{{"TestMode":true}}}}}}"#,
+            STANDARD.encode(key)
+        );
+        let sources = [
+            (
+                SessionSource::pyrogram(URL_SAFE_NO_PAD.encode(pyrogram)),
+                false,
+            ),
+            (
+                SessionSource::telethon(format!("1{}", URL_SAFE_NO_PAD.encode(telethon))),
+                true,
+            ),
+            (SessionSource::gotd(gotd), false),
+        ];
+
+        for (source, ipv6) in sources {
+            let client = Client::builder(12345)
+                .session(source)
+                .ipv6(ipv6)
+                .build()
+                .await
+                .unwrap();
+            let home = client.0.session.home_dc_id().unwrap();
+            let original = client.0.session.dc_option(home).unwrap().unwrap();
+            assert_eq!(original.auth_key, Some(key));
+            let text: String = client.export_session_string().unwrap();
+            let decoded = grammers_session::native::NativeSession::parse(&text).unwrap();
+            assert_eq!(decoded.prefer_ipv6(), ipv6);
+            let data = decoded.into_session_data();
+            assert_eq!(data.dc_options.len(), 1);
+            assert_eq!(data.dc_options.get(&home), Some(&original));
+
+            let restored = Client::builder(12345)
+                .session(SessionSource::native(text.clone()))
+                .build()
+                .await
+                .unwrap();
+            assert_eq!(restored.0.session.home_dc_id().unwrap(), home);
+            assert_eq!(restored.0.session.dc_option(home).unwrap(), Some(original));
+            assert_eq!(restored.0.handle.prefers_ipv6(), ipv6);
+            assert_eq!(restored.export_session_string().unwrap(), text);
+            assert_eq!(client.status().active_connections, 0);
+            assert_eq!(restored.status().active_connections, 0);
+            client.stop().await.unwrap();
+            restored.stop().await.unwrap();
+        }
+    }
+
+    #[cfg(feature = "session-string")]
+    #[tokio::test]
     async fn native_builder_preserves_preference_and_legacy_export() {
         let session = Arc::new(MemorySession::default());
         let dc_id = session.home_dc_id().unwrap();
@@ -1319,7 +1446,7 @@ mod tests {
             .unwrap();
         assert!(client.0.handle.prefers_ipv6());
         assert_eq!(
-            client.export_session_string().unwrap().expose_secret(),
+            client.export_session_string().unwrap(),
             text.expose_secret()
         );
         assert!(matches!(
@@ -1340,7 +1467,7 @@ mod tests {
         );
         let legacy = Client::new(pool.handle);
         assert_eq!(
-            legacy.export_session_string().unwrap().expose_secret(),
+            legacy.export_session_string().unwrap(),
             text.expose_secret()
         );
         assert!(matches!(

@@ -106,6 +106,38 @@ fn native_preserves_test_routes_and_missing_unused_endpoint() {
 }
 
 #[test]
+fn native_preserves_ipv6_import_placeholder_without_making_it_routable() {
+    let mut dc = route();
+    dc.ipv4 = "0.0.0.0:8443".parse().unwrap();
+    let native = NativeSession::from_session(&source(dc.clone()), true).unwrap();
+    let mut expected = payload();
+    expected[12..16].fill(0);
+    assert_eq!(native.encode().expose_secret(), wire(expected.clone()));
+    assert_eq!(
+        NativeSession::parse(&wire(expected.clone()))
+            .unwrap()
+            .into_session_data()
+            .dc_options,
+        [(dc.id, dc.clone())].into()
+    );
+    assert_eq!(
+        NativeSession::from_session(&source(dc), false).unwrap_err(),
+        SessionStringError::InvalidEndpoint
+    );
+    expected[5] = 0; // selecting the IPv4 placeholder must still fail
+    assert_eq!(
+        NativeSession::parse(&wire(expected.clone())).unwrap_err(),
+        SessionStringError::InvalidEndpoint
+    );
+    expected[5] = 1;
+    expected[18..34].fill(0); // IPv6 must be usable, not another placeholder
+    assert_eq!(
+        NativeSession::parse(&wire(expected)).unwrap_err(),
+        SessionStringError::InvalidEndpoint
+    );
+}
+
+#[test]
 fn parser_rejects_malformed_headers_routes_and_keys_even_with_valid_checksum() {
     for (index, value, expected) in [
         (0, b'X', SessionStringError::InvalidHeader),
@@ -126,8 +158,14 @@ fn parser_rejects_malformed_headers_routes_and_keys_even_with_valid_checksum() {
             SessionStringError::InvalidDc
         );
     }
-    for range in [12..16, 16..18, 18..34, 34..36] {
+    for (range, prefer_ipv6) in [
+        (12..16, false),
+        (16..18, false),
+        (18..34, true),
+        (34..36, true),
+    ] {
         let mut p = payload();
+        p[5] = u8::from(prefer_ipv6);
         p[range].fill(0);
         assert_eq!(
             NativeSession::parse(&wire(p)).unwrap_err(),

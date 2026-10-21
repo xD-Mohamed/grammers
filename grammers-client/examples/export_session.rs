@@ -45,11 +45,11 @@ async fn main() -> Result {
                     options.mode(0o600);
                 }
                 let mut file = options.open(path)?;
-                file.write_all(exported.expose_secret().as_bytes())?;
+                file.write_all(exported.as_bytes())?;
                 file.sync_all()?;
             } else {
                 let mut stdout = std::io::stdout().lock();
-                stdout.write_all(exported.expose_secret().as_bytes())?;
+                stdout.write_all(exported.as_bytes())?;
                 stdout.write_all(b"\n")?;
                 stdout.flush()?;
             }

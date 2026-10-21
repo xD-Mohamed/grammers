@@ -39,6 +39,8 @@
 //!
 //! The unused endpoint may be the unavailable sentinel (unspecified address,
 //! zero port, and zero IPv6 flow/scope). The preferred endpoint must be present.
+//! When IPv6 is preferred, an unspecified IPv4 placeholder may retain a nonzero
+//! port from a foreign import; it is preserved but can never be selected.
 //! Other endpoints must have a nonzero port and a non-unspecified, non-multicast
 //! address; IPv4 broadcast is also rejected. Custom and test DCs are supported.
 //! The complete string is 454 ASCII bytes; inputs over 1024 bytes are rejected
@@ -259,7 +261,9 @@ impl NativeSession {
         if key.iter().all(|&b| b == 0) {
             return Err(SessionStringError::InvalidAuthKey);
         }
-        let ipv4_absent = dc.ipv4.ip().is_unspecified() && dc.ipv4.port() == 0;
+        // IPv6-only imports retain the source port on an unspecified IPv4
+        // placeholder. Preserve it without ever treating it as a usable route.
+        let ipv4_absent = dc.ipv4.ip().is_unspecified() && (dc.ipv4.port() == 0 || prefer_ipv6);
         let ipv6_absent = dc.ipv6.ip().is_unspecified()
             && dc.ipv6.port() == 0
             && dc.ipv6.flowinfo() == 0
