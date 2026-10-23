@@ -805,6 +805,7 @@ name = "grammers-mtsender"
 version = "0.10.0"
 dependencies = [
  "bytes",
+ "flate2",
  "grammers-crypto",
  "grammers-mtproto",
  "grammers-session",
@@ -812,6 +813,8 @@ dependencies = [
  "hickory-resolver",
  "locate-locale",
  "os_info",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
  "socks5-server",
  "tokio",
  "tokio-socks",

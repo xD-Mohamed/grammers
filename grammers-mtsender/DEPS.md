@@ -68,3 +68,15 @@ SOCKS5 proxy support.
 ## socks5-server
 
 Used to test for SOCKS5 proxy support.
+
+## sha1
+
+Used by the loopback measurement test's local responder to derive the auth key ID.
+
+## sha2
+
+Used by the loopback measurement test's local responder for MTProto 2.0 message keys.
+
+## flate2
+
+Used by the loopback measurement test's local responder to gzip-pack replies.
