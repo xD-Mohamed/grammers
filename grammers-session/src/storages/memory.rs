@@ -6,7 +6,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::collections::HashMap;
 use std::fmt;
+use std::net::{SocketAddrV4, SocketAddrV6};
 use std::sync::{Mutex, MutexGuard};
 
 use crate::types::{ChannelState, DcOption, PeerId, PeerInfo, UpdateState, UpdatesState};
@@ -19,14 +21,73 @@ use crate::{BoxFuture, Session, SessionData};
 ///
 /// Logging in has a very high cost in terms of flood wait errors,
 /// so the state really should be persisted by other means.
-#[derive(Default)]
-pub struct MemorySession(Mutex<SessionData>);
+pub struct MemorySession(Mutex<MemoryData>);
+
+/// [`SessionData`] with compact datacenter options. Usually only the home
+/// datacenter has a key, and an inline `Option<[u8; 256]>` costs 257 bytes
+/// for every option; applications holding many sessions pay that per option.
+struct MemoryData {
+    home_dc: i32,
+    dc_options: Vec<StoredDcOption>,
+    peer_infos: HashMap<PeerId, PeerInfo>,
+    updates_state: UpdatesState,
+}
+
+/// One datacenter option, under the key it was stored with.
+struct StoredDcOption {
+    key: i32,
+    id: i32,
+    ipv4: SocketAddrV4,
+    ipv6: SocketAddrV6,
+    auth_key: Option<Box<[u8; 256]>>,
+}
+
+impl StoredDcOption {
+    fn new(key: i32, option: &DcOption) -> Self {
+        Self {
+            key,
+            id: option.id,
+            ipv4: option.ipv4,
+            ipv6: option.ipv6,
+            auth_key: option.auth_key.map(Box::new),
+        }
+    }
+
+    fn to_option(&self) -> DcOption {
+        DcOption {
+            id: self.id,
+            ipv4: self.ipv4,
+            ipv6: self.ipv6,
+            auth_key: self.auth_key.as_deref().copied(),
+        }
+    }
+}
+
+impl Default for MemorySession {
+    fn default() -> Self {
+        Self::from(SessionData::default())
+    }
+}
 
 impl From<SessionData> for MemorySession {
     /// Constructs a memory session from the entirety of the session data,
     /// unlike the blanket `From` implementation which cannot import all values
     fn from(session_data: SessionData) -> Self {
-        Self(Mutex::new(session_data))
+        let SessionData {
+            home_dc,
+            dc_options,
+            peer_infos,
+            updates_state,
+        } = session_data;
+        Self(Mutex::new(MemoryData {
+            home_dc,
+            dc_options: dc_options
+                .iter()
+                .map(|(key, option)| StoredDcOption::new(*key, option))
+                .collect(),
+            peer_infos,
+            updates_state,
+        }))
     }
 }
 
@@ -47,7 +108,7 @@ impl fmt::Display for MemorySessionError {
 
 impl MemorySession {
     /// Lock the session data, mapping a poisoned mutex into [`MemorySessionError`].
-    fn data(&self) -> Result<MutexGuard<'_, SessionData>, MemorySessionError> {
+    fn data(&self) -> Result<MutexGuard<'_, MemoryData>, MemorySessionError> {
         self.0.lock().map_err(|_| MemorySessionError::Poisoned)
     }
 }
@@ -67,15 +128,26 @@ impl Session for MemorySession {
     }
 
     fn dc_option(&self, dc_id: i32) -> Result<Option<DcOption>, MemorySessionError> {
-        Ok(self.data()?.dc_options.get(&dc_id).cloned())
+        Ok(self
+            .data()?
+            .dc_options
+            .iter()
+            .find(|option| option.key == dc_id)
+            .map(StoredDcOption::to_option))
     }
 
     fn set_dc_option(&self, dc_option: &DcOption) -> BoxFuture<'_, Result<(), MemorySessionError>> {
-        let dc_option = dc_option.clone();
+        let stored = StoredDcOption::new(dc_option.id, dc_option);
         Box::pin(async move {
-            self.data()?
+            let mut data = self.data()?;
+            match data
                 .dc_options
-                .insert(dc_option.id, dc_option.clone());
+                .iter_mut()
+                .find(|option| option.key == stored.key)
+            {
+                Some(existing) => *existing = stored,
+                None => data.dc_options.push(stored),
+            }
             Ok(())
         })
     }
@@ -233,6 +305,42 @@ mod tests {
                     session.peer(PeerId::self_user()).await.unwrap(),
                     Some(identity)
                 );
+            });
+    }
+
+    #[test]
+    fn compact_dc_options_round_trip_session_data() {
+        let mut data = SessionData::default();
+        let mut keyed = data.dc_options[&2].clone();
+        keyed.auth_key = Some([3; 256]);
+        data.dc_options.insert(2, keyed.clone());
+        // An entry stored under a different key keeps that key, as in a map.
+        let mut foreign = data.dc_options[&5].clone();
+        foreign.id = 9;
+        data.dc_options.insert(5, foreign.clone());
+        let expected = data.dc_options.clone();
+        let session = MemorySession::from(data);
+        for (key, option) in &expected {
+            assert_eq!(session.dc_option(*key).unwrap().as_ref(), Some(option));
+        }
+        assert_eq!(session.dc_option(9).unwrap(), None);
+
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let mut replaced = keyed.clone();
+                replaced.auth_key = None;
+                session.set_dc_option(&replaced).await.unwrap();
+                assert_eq!(session.dc_option(2).unwrap(), Some(replaced));
+                let mut added = keyed;
+                added.id = 203;
+                added.auth_key = Some([4; 256]);
+                session.set_dc_option(&added).await.unwrap();
+                assert_eq!(session.dc_option(203).unwrap(), Some(added));
+                assert_eq!(session.dc_option(5).unwrap(), Some(foreign.clone()));
+                session.set_dc_option(&foreign).await.unwrap();
+                assert_eq!(session.dc_option(9).unwrap(), Some(foreign));
             });
     }
 
