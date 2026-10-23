@@ -1,5 +1,20 @@
 # grammers fork
 
+## Per-session footprint and AES-IGE (2026-10-23)
+
+Applications may hold many pools, so idle per-session state matters.
+Keep long-lived futures (`run_sender`, runner `run`/`run_checked`) as plain
+functions returning `async move` blocks: `async fn` stores by-value arguments
+twice. Keep connection setup boxed inside the runner. Socket buffers start at
+1 KiB and keep grown capacity. Pool/connection queues use `queue.rs`, which
+allocates on use; preserve cancel-safe receive, drain-after-close, dropping
+queued items with the receiver and returning rejected items. The `PoolEvent`
+buffer is created by the first subscriber. `MemorySession` stores DC options
+compactly (boxed key) behind the unchanged public `DcOption`/`SessionData`.
+AES-IGE runs inside the cipher backend closure and must stay byte-identical to
+the reference test implementation. `tests/loopback.rs` measures heap/RPC cost
+locally; see PERFORMANCE.md for figures and the AuthKey/DcOption review.
+
 ## Managed client and portable sessions (2026-10-21)
 
 The ordinary client now supports `Client::builder(api_id)`, grouped
@@ -154,7 +169,7 @@ Never add credentials, application session files, user inventories or unrelated
 application source to this public repository. Push only when authorized by the
 user's task. This checkout's publication policy is separate from sibling projects.
 
-## Polling-oriented changes
+## Repeated raw invocations and buffers
 
 See PERFORMANCE.md for changes and reproducible benchmarks. Preserve the legacy
 Vec-based raw invocation API alongside the shared RequestBody API. Never mutate
@@ -180,7 +195,7 @@ Verified baseline for this patch:272 default-feature and289 all-feature workspac
 tests/doctests passed; all-target/all-feature check passed;168 consumer release
 tests passed with local overrides. Three isolated release microbenchmarks passed.
 No consumer deployment or account authorization was performed. These measurements
-do not establish VPS CPU savings or a cause for prior connection-timeout bursts.
+do not establish server CPU savings or explain any connection-timeout behavior.
 
 ## Reused ACK/results and warm connection routing
 

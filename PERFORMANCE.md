@@ -1,5 +1,104 @@
 # Library efficiency and fork changes
 
+## Per-session footprint and AES-IGE (2026-10-23)
+
+`grammers-mtsender/tests/loopback.rs` adds an ignored end-to-end harness: a
+minimal MTProto 2.0 responder on 127.0.0.1 (abridged framing, real AES-IGE and
+SHA-256, a fixed ~270-byte request and a fixed reply of 12 TL objects, plain or
+gzip-packed) and pools with update delivery disabled, invoked through tracked
+raw calls on established routes. A counting allocator excludes the responder
+threads. No Telegram endpoint, account or credential is involved.
+
+Per-session client heap, 400 pools with one connection each after nine RPCs:
+28,976 B at baseline `b19f352`, 8,328 B now. Largest baseline items and what
+replaced them:
+
+- Runner task 4,992 B: connection setup (`InitConnection`, key/config handling)
+  was inlined in every idle runner's state machine. It is now boxed for the
+  duration of setup only.
+- Write/read buffers 4,168/4,096 B: start at 1 KiB plus leading header space.
+  Growth is unchanged (receive doubles up to the existing hard limit) and the
+  grown capacity is kept, so steady memory is never above the old start size
+  for connections whose packets fit it and identical for larger packets.
+- Request queue block 3,360 B, connection queue block 2,336 B, plus a 512 B
+  cache-padded header each: Tokio's unbounded channel preallocates 32 slots.
+  `queue.rs` stores items in a `VecDeque` behind a mutex and grows only when
+  used (288-320 B after first use). Semantics kept: receive is cancel-safe,
+  `close` still drains queued items, dropping the receiver drops queued items
+  (retiring their permits) and a rejected send returns the item for fallback.
+  `CheckRetry` errors are boxed so the rare variant does not widen slots.
+- DC options 2,424 B: `MemorySession` stores five `DcOption`s each with an
+  inline `Option<[u8; 256]>`. It now keeps a small vector with a boxed key
+  (about 536 B in total). The public `DcOption`/`SessionData` types and their
+  serialized forms are unchanged; reads still return an owned `DcOption`.
+- Event buffer 2,048 B: the 64-slot `PoolEvent` broadcast buffer is created by
+  the first `events()` subscription. Broadcast receivers only observe events
+  sent after subscribing, so earlier events were never observable either.
+- Connection future 1,592 B → 888 B and runner future 1,504 B → 936 B: an
+  `async fn` keeps a second copy of its by-value arguments (656 B `Sender`,
+  280 B runner). These are now plain functions returning `async move` blocks;
+  a regression test bounds both sizes.
+
+Per-RPC allocations stayed at 2.00 (response channel and owned reply body).
+The replacement queue costs the same as Tokio's channel in an isolated task
+handoff (current-thread median 1,348 ns vs 1,339 ns; two workers 15,654 ns vs
+16,206 ns), so the memory reduction does not add per-RPC work.
+
+AES-IGE now runs inside the cipher's backend closure (`encrypt_with_backend`/
+`decrypt_with_backend`): CPU-feature dispatch happens once per buffer and the
+chaining values stay in registers. The mode is still strictly sequential and
+output is byte-identical to the previous implementation (checked against it for
+0-16 KiB buffers, plus the existing MTProto vectors). Medians of eight
+alternating rounds:
+
+| Buffer | Default build, per-block → closure | `target-cpu=native`, per-block → closure |
+|---:|---:|---:|
+| 448 B encrypt | 1,643.5 → 604.9 ns | 642.4 → 570.7 ns |
+| 2,096 B encrypt | 7,596.5 → 2,573.6 ns | 2,919.0 → 2,526.2 ns |
+| 2,096 B decrypt | 6,389.1 → 2,549.0 ns | 3,045.4 → 2,510.4 ns |
+
+End-to-end loopback, native build, client on one current-thread runtime with 16
+concurrent callers over 64 pools, 24 alternating samples per side, medians of
+the saturated client thread:
+
+| Reply | Baseline user / cycles per RPC | Current user / cycles per RPC |
+|---|---:|---:|
+| 1,592 B plain | 8.86 us / 105,992 | 7.93 us / 108,871 |
+| 528 B gzip | 8.04 us / 106,876 | 7.94 us / 105,623 |
+
+User time is lower, but total client-thread cycles did not change beyond this
+host's run-to-run noise (about ±3%; an earlier session measured -5.1% and -1.5%
+cycles for similar replies). Windows loopback kernel time (about 16 us/RPC)
+dominates these totals and is not representative of Linux; user time includes
+Tokio/mio and syscall entry. Claim only the component gains above.
+Rejected after measurement: separate encrypt/decrypt AES key schedules (42.5 vs
+42.8-44.9 ns, no gain). Not changed: per-message `getrandom` padding costs
+47 ns on Windows; on Linux it is a syscall unless glibc provides the vDSO path,
+and that cost was not measured here.
+
+AuthKey/DcOption review: each connection owns one `AuthKey` inside `Encrypted`
+and every encrypt/decrypt borrows it; no per-message key copy exists. Key
+bytes are copied only on cold paths (`dc_option` reads during connection setup
+and config updates, persisting a new key). `AuthKey: Clone` is not used on any
+hot path. Removing it, or splitting the key out of the public `DcOption`, would
+be breaking changes without a measured performance benefit beyond the memory
+already recovered inside `MemorySession`; key bytes would still be copied
+through `[u8; 256]` values, `Sender::auth_key()` and session storage/export, so
+neither change alone limits in-memory copies. An `Arc<AuthKey>` shared with
+session storage would save 256 B per session and change public constructors.
+
+Reproduce (Windows/Linux; the cycle column is Windows-only):
+
+```sh
+cargo test --locked --release -p grammers-mtsender --test loopback -- --ignored --nocapture --test-threads=1
+cargo test --locked --release -p grammers-crypto --lib benchmark_ -- --ignored --nocapture --test-threads=1
+cargo test --locked --release -p grammers-mtsender --lib benchmark_queue_handoff -- --ignored --nocapture
+```
+
+These are local component and loopback measurements on Windows 11, AMD Ryzen 9
+9900X3D, rustc 1.94.1. They are not process RSS, Linux CPU or Telegram latency
+measurements.
+
 ## General library audit (2026-10-18)
 
 Merged canonical Codeberg through `633d7fe` before applying general library
@@ -86,7 +185,7 @@ all-feature check and strict Clippy passed. Without SQLite, importer tests passe
 51 tests/doctests (one benchmark ignored); the minimal memory library passed 28
 tests (one ignored). All 15 selected local benchmarks passed, including the nine
 existing preservation checks.
-No authenticated Telegram test, consumer change, VPS deployment or live speed
+No authenticated Telegram test, consumer change, deployment or live speed
 measurement was performed. Session import is optional and has no request-path
 cost when disabled; see [session documentation](grammers-session/README.md).
 
@@ -286,7 +385,7 @@ comparisons alternate execution order and report the median of ten samples.
 | Allocate initial zeroed receive buffer | 5,449 ns / 1,056,768 B | 53.3 ns / 4,096 B |
 
 The last row is an isolated construction loop, not network connection throughput.
-These are not full RPC timings or a forecast of VPS CPU savings. Shared-body use
+These are not full RPC timings or a forecast of server CPU savings. Shared-body use
 requires adopting the new API; other internal changes apply through existing APIs.
 
 Reproduce without contacting Telegram:
@@ -355,7 +454,7 @@ Windows release medians (eight alternating samples):
 Routing includes a shared body, response channel, trivial four-byte response and
 task scheduling, but no sockets/encryption/Telegram. The baseline keeps routes
 uncached and forwards through the pool task. These component timings do not predict
-complete RPC latency, Linux CPU reduction or claim wins. Response-channel and owned
+complete RPC latency or Linux CPU reduction. Response-channel and owned
 reply allocations still exist; the complete request is not allocation-free.
 
 Validation: 297 all-feature workspace tests/doctests passed, 19 ignored;
