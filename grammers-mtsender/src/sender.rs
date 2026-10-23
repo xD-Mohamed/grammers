@@ -40,7 +40,10 @@ use crate::net::{NetStream, ServerAddr};
 /// so to account for the transports' own overhead, we add a few extra
 /// kilobytes to the maximum data size.
 const MAXIMUM_DATA: usize = (1024 * 1024) + (8 * 1024);
-const INITIAL_BUFFER_SIZE: usize = 4 * 1024;
+/// Initial socket buffers. Typical requests and replies fit; larger packets grow
+/// them (receive up to [`MAXIMUM_DATA`]) and the grown capacity is kept.
+const INITIAL_READ_BUFFER_SIZE: usize = 1024;
+const INITIAL_WRITE_BUFFER_SIZE: usize = 1024;
 
 /// How much leading space should be reserved in a buffer to avoid moving memory.
 const LEADING_BUFFER_SPACE: usize = mtp::MAX_TRANSPORT_HEADER_LEN
@@ -225,9 +228,12 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             requests: vec![],
             ping_timer: Box::pin(sleep_until(Instant::now() + PING_DELAY)),
 
-            read_buffer: vec![0; INITIAL_BUFFER_SIZE],
+            read_buffer: vec![0; INITIAL_READ_BUFFER_SIZE],
             read_tail: 0,
-            write_buffer: DequeBuffer::with_capacity(INITIAL_BUFFER_SIZE, LEADING_BUFFER_SPACE),
+            write_buffer: DequeBuffer::with_capacity(
+                INITIAL_WRITE_BUFFER_SIZE,
+                LEADING_BUFFER_SPACE,
+            ),
             write_head: 0,
         })
     }
@@ -1509,8 +1515,8 @@ mod optimization_tests {
     #[tokio::test]
     async fn receive_buffer_grows_for_fragmented_packets_and_keeps_the_hard_limit() {
         let (mut sender, mut peer) = pair().await;
-        assert_eq!(sender.read_buffer.len(), INITIAL_BUFFER_SIZE);
-        let body = vec![17u8; INITIAL_BUFFER_SIZE * 5];
+        assert_eq!(sender.read_buffer.len(), INITIAL_READ_BUFFER_SIZE);
+        let body = vec![17u8; INITIAL_READ_BUFFER_SIZE * 5];
         let (tx, mut rx) = oneshot::channel();
         sender.enqueue_body(Bytes::from_static(&[1, 0, 0, 0]), tx);
         sender.try_fill_write();
@@ -1539,7 +1545,7 @@ mod optimization_tests {
         .await
         .unwrap();
         assert_eq!(got, body);
-        assert!(sender.read_buffer.len() > INITIAL_BUFFER_SIZE);
+        assert!(sender.read_buffer.len() > INITIAL_READ_BUFFER_SIZE);
         assert!(sender.read_buffer.len() <= MAXIMUM_DATA);
         let _peer = writer.await.unwrap();
         sender.read_buffer.resize(MAXIMUM_DATA, 0);
@@ -1554,7 +1560,7 @@ mod optimization_tests {
     fn benchmark_initial_receive_allocation() {
         use std::hint::black_box;
         const N: usize = 5_000;
-        for size in [MAXIMUM_DATA, INITIAL_BUFFER_SIZE] {
+        for size in [MAXIMUM_DATA, INITIAL_READ_BUFFER_SIZE] {
             let started = std::time::Instant::now();
             for _ in 0..N {
                 black_box(vec![0u8; black_box(size)]);

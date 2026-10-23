@@ -13,7 +13,7 @@ use std::num::NonZeroU32;
 use std::ops::{ControlFlow, Deref};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
@@ -34,6 +34,7 @@ use tracing::{debug, info, warn};
 
 use crate::configuration::{ConnectionParams, RetryContext};
 use crate::errors::{InvocationError, InvocationErrorCategory, ReadError};
+use crate::queue;
 use crate::{Sender, ServerAddr, connect, connect_with_auth};
 
 /// How long to wait after warning the user that the updates was dropped.
@@ -55,7 +56,9 @@ enum Request {
         tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
     },
     CheckRetry {
-        error: InvocationError,
+        // Boxed so this rare variant does not widen every queue slot; each
+        // pool's request queue preallocates a block of them.
+        error: Box<InvocationError>,
         fail_count: NonZeroU32,
         slept_so_far: Duration,
         tx: oneshot::Sender<ControlFlow<InvocationError, Duration>>,
@@ -75,7 +78,7 @@ struct Rpc {
 
 struct ConnectionInfo {
     dc_id: i32,
-    rpc_tx: mpsc::UnboundedSender<Rpc>,
+    rpc_tx: queue::UnboundedSender<Rpc>,
     abort_handle: AbortHandle,
 }
 
@@ -83,7 +86,7 @@ struct ConnectionInfo {
 // the read guard is released before queueing or awaiting a response.
 #[derive(Default)]
 struct RouteCache {
-    entries: Vec<(i32, mpsc::UnboundedSender<Rpc>)>,
+    entries: Vec<(i32, queue::UnboundedSender<Rpc>)>,
     disconnecting: Vec<(i32, usize)>,
     stopping: bool,
     parked: bool,
@@ -149,7 +152,7 @@ struct PoolState {
     active: AtomicUsize,
     dropped: AtomicU64,
     rejected: AtomicU64,
-    events: broadcast::Sender<PoolEvent>,
+    events: OnceLock<broadcast::Sender<PoolEvent>>,
     prefer_ipv6: bool,
 }
 impl Default for PoolState {
@@ -160,14 +163,29 @@ impl Default for PoolState {
             active: AtomicUsize::new(0),
             dropped: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
-            events: broadcast::channel(64).0,
+            events: OnceLock::new(),
             prefer_ipv6: false,
+        }
+    }
+}
+impl PoolState {
+    /// Receivers only observe events sent after subscribing, so the buffer is
+    /// created by the first subscriber instead of eagerly for every pool.
+    fn subscribe(&self) -> broadcast::Receiver<PoolEvent> {
+        self.events
+            .get_or_init(|| broadcast::channel(64).0)
+            .subscribe()
+    }
+
+    fn emit(&self, event: PoolEvent) {
+        if let Some(events) = self.events.get() {
+            let _ = events.send(event);
         }
     }
 }
 
 impl RouteCache {
-    fn publish(&mut self, dc_id: i32, tx: &mpsc::UnboundedSender<Rpc>) {
+    fn publish(&mut self, dc_id: i32, tx: &queue::UnboundedSender<Rpc>) {
         if !self.stopping && !self.disconnecting.iter().any(|(id, _)| *id == dc_id) {
             self.entries.retain(|(id, _)| *id != dc_id);
             self.entries.push((dc_id, tx.clone()));
@@ -212,7 +230,12 @@ pub struct SenderPoolFatHandle {
 
 /// Cheaply cloneable handle to interact with its [`SenderPoolRunner`].
 #[derive(Clone)]
-pub struct SenderPoolHandle(mpsc::UnboundedSender<Request>, Routes, bool, Arc<PoolState>);
+pub struct SenderPoolHandle(
+    queue::UnboundedSender<Request>,
+    Routes,
+    bool,
+    Arc<PoolState>,
+);
 
 /// Builder to configure the runner to drive I/O and linked handles.
 pub struct SenderPool {
@@ -240,7 +263,7 @@ pub struct SenderPoolRunner {
     session: Arc<ErasedSession>,
     api_id: i32,
     connection_params: ConnectionParams,
-    request_rx: mpsc::UnboundedReceiver<Request>,
+    request_rx: queue::UnboundedReceiver<Request>,
     updates_tx: Option<mpsc::Sender<UpdatesLike>>,
     connections: Vec<ConnectionInfo>,
     connection_pool: JoinSet<(i32, Result<(), ReadError>)>,
@@ -270,7 +293,7 @@ impl SenderPoolHandle {
 
     /// Subscribe to the next runtime events (64 buffered notifications).
     pub fn events(&self) -> broadcast::Receiver<PoolEvent> {
-        self.3.events.subscribe()
+        self.3.subscribe()
     }
 
     /// The address-family preference fixed at pool construction.
@@ -524,7 +547,7 @@ impl SenderPoolHandle {
         if self
             .0
             .send(Request::CheckRetry {
-                error,
+                error: Box::new(error),
                 fail_count,
                 slept_so_far,
                 tx,
@@ -601,7 +624,7 @@ impl SenderPool {
         parked: bool,
     ) -> Self {
         let receive_updates = connection_params.receive_updates;
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (request_tx, request_rx) = queue::unbounded_channel();
         let routes = Arc::new(RwLock::new(RouteCache {
             parked,
             ..Default::default()
@@ -644,48 +667,65 @@ impl SenderPoolRunner {
     /// Run the sender pool until [`SenderPoolHandle::quit`] is called or the returned future is dropped.
     ///
     /// Connections will be initiated on-demand whenever the first request to a datacenter is made.
-    pub async fn run(self) {
-        if let Err(error) = self.run_checked().await {
-            warn!(%error, "sender pool stopped unexpectedly");
-        }
+    pub fn run(self) -> impl Future<Output = ()> {
+        self.run_then(|outcome| {
+            if let Err(error) = outcome {
+                warn!(%error, "sender pool stopped unexpectedly");
+            }
+        })
     }
 
     /// Run with observable internal task failures. Connection I/O failures are
     /// reported as events and to their callers; a later call may reconnect.
-    pub async fn run_checked(mut self) -> Result<(), PoolRunError> {
-        let outcome = {
-            let mut driving = std::pin::pin!(self.drive());
-            poll_fn(
-                |cx| match catch_unwind(AssertUnwindSafe(|| driving.as_mut().poll(cx))) {
-                    Ok(Poll::Pending) => Poll::Pending,
-                    Ok(Poll::Ready(result)) => Poll::Ready(Ok(result)),
-                    Err(_) => Poll::Ready(Err(())),
-                },
-            )
-            .await
-        };
-        let mut failure = match outcome {
-            Ok(result) => result.err(),
-            Err(()) => {
-                let error = PoolRunError::TaskPanicked;
-                let _ = self.state.events.send(PoolEvent::RunnerFailed(error));
-                Some(error)
+    pub fn run_checked(self) -> impl Future<Output = Result<(), PoolRunError>> {
+        self.run_then(|outcome| outcome)
+    }
+
+    // Not `async fn`, nor one future awaiting another: either keeps a second
+    // copy of the runner in a future that lives as long as the pool.
+    #[expect(
+        clippy::manual_async_fn,
+        reason = "an async fn would store the runner twice"
+    )]
+    fn run_then<T>(
+        mut self,
+        finish: impl FnOnce(Result<(), PoolRunError>) -> T,
+    ) -> impl Future<Output = T> {
+        async move {
+            let outcome = {
+                let mut driving = std::pin::pin!(self.drive());
+                poll_fn(
+                    |cx| match catch_unwind(AssertUnwindSafe(|| driving.as_mut().poll(cx))) {
+                        Ok(Poll::Pending) => Poll::Pending,
+                        Ok(Poll::Ready(result)) => Poll::Ready(Ok(result)),
+                        Err(_) => Poll::Ready(Err(())),
+                    },
+                )
+                .await
+            };
+            let mut failure = match outcome {
+                Ok(result) => result.err(),
+                Err(()) => {
+                    let error = PoolRunError::TaskPanicked;
+                    self.state.emit(PoolEvent::RunnerFailed(error));
+                    Some(error)
+                }
+            };
+            self.close_routes();
+            self.request_rx.close();
+            // Retire queued permits before their response channels are dropped.
+            while self.request_rx.try_recv().is_ok() {}
+            self.connections.clear();
+            if failure.is_some() {
+                self.connection_pool.abort_all();
             }
-        };
-        self.close_routes();
-        self.request_rx.close();
-        // Retire queued permits before their response channels are dropped.
-        while self.request_rx.try_recv().is_ok() {}
-        self.connections.clear();
-        if failure.is_some() {
-            self.connection_pool.abort_all();
-        }
-        while let Some(completion) = self.connection_pool.join_next().await {
-            if let Err(error) = self.record_completion(completion) {
-                failure = Some(error);
+            while let Some(completion) = self.connection_pool.join_next().await {
+                if let Err(error) = self.record_completion(completion) {
+                    failure = Some(error);
+                }
             }
+            finish(failure.map_or(Ok(()), Err))
         }
-        failure.map_or(Ok(()), Err)
     }
 
     async fn drive(&mut self) -> Result<(), PoolRunError> {
@@ -725,15 +765,13 @@ impl SenderPoolRunner {
                 let category = result
                     .err()
                     .map(|error| InvocationError::from(error).category());
-                let _ = self
-                    .state
-                    .events
-                    .send(PoolEvent::ConnectionClosed { dc_id, category });
+                self.state
+                    .emit(PoolEvent::ConnectionClosed { dc_id, category });
                 Ok(())
             }
             Err(error) if error.is_panic() => {
                 let error = PoolRunError::TaskPanicked;
-                let _ = self.state.events.send(PoolEvent::RunnerFailed(error));
+                self.state.emit(PoolEvent::RunnerFailed(error));
                 Err(error)
             }
             Err(_) => Ok(()), // explicit disconnect/termination cancellation
@@ -748,7 +786,7 @@ impl SenderPoolRunner {
     }
 
     fn report_setup_failure(&self, dc_id: i32, error: &InvocationError) {
-        let _ = self.state.events.send(PoolEvent::SetupFailed {
+        self.state.emit(PoolEvent::SetupFailed {
             dc_id,
             category: error.category(),
         });
@@ -771,11 +809,13 @@ impl SenderPoolRunner {
                     .find(|connection| connection.dc_id == dc_id && !connection.rpc_tx.is_closed())
                 {
                     Some(connection) => connection,
+                    // Setup is boxed: inline, its handshake state would size
+                    // every idle runner task for the life of the pool.
                     None => match tokio::select! {
                         biased;
                         _ = tx.closed() => return ControlFlow::Continue(()),
                         _ = wait_for_connection_cancel(Arc::clone(&self.routes), dc_id) => Err(InvocationError::Dropped("connection initialization was cancelled")),
-                        result = self.create_connection(dc_id) => result,
+                        result = Box::pin(self.create_connection(dc_id)) => result,
                     } {
                         Ok(x) => x,
                         Err(e) => {
@@ -800,7 +840,7 @@ impl SenderPoolRunner {
                 let retry_context = RetryContext {
                     fail_count,
                     slept_so_far,
-                    error,
+                    error: *error,
                 };
                 let flow = match self
                     .connection_params
@@ -827,7 +867,7 @@ impl SenderPoolRunner {
                 self.connections.retain(|connection| {
                     if connection.dc_id == dc_id {
                         connection.abort_handle.abort();
-                        let _ = self.state.events.send(PoolEvent::ConnectionClosed {
+                        self.state.emit(PoolEvent::ConnectionClosed {
                             dc_id,
                             category: None,
                         });
@@ -869,7 +909,7 @@ impl SenderPoolRunner {
         dc_option.auth_key = Some(sender.auth_key());
         self.session.set_dc_option(&dc_option).await?;
 
-        let (rpc_tx, rpc_rx) = mpsc::unbounded_channel();
+        let (rpc_tx, rpc_rx) = queue::unbounded_channel();
         let updates = self.updates_tx.clone();
         let session = Arc::clone(&self.session);
         let state = Arc::clone(&self.state);
@@ -891,7 +931,7 @@ impl SenderPoolRunner {
         self.state
             .active
             .store(self.connections.len(), Ordering::Relaxed);
-        let _ = self.state.events.send(PoolEvent::Connected { dc_id });
+        self.state.emit(PoolEvent::Connected { dc_id });
         Ok(self.connections.last().unwrap())
     }
 
@@ -1054,10 +1094,8 @@ fn validate_dc_endpoint(option: &tl::types::DcOption) -> std::io::Result<()> {
 impl Drop for SenderPoolRunner {
     fn drop(&mut self) {
         if std::thread::panicking() {
-            let _ = self
-                .state
-                .events
-                .send(PoolEvent::RunnerFailed(PoolRunError::TaskPanicked));
+            self.state
+                .emit(PoolEvent::RunnerFailed(PoolRunError::TaskPanicked));
         }
         self.close_routes();
         self.state.active.store(0, Ordering::Relaxed);
@@ -1103,74 +1141,81 @@ fn forward_update(
         Ok(()) => Ok(()),
         Err(mpsc::error::TrySendError::Full(_)) => {
             state.dropped.fetch_add(1, Ordering::Relaxed);
-            let _ = state.events.send(PoolEvent::UpdateOverflow);
+            state.emit(PoolEvent::UpdateOverflow);
             Err(UpdateDeliveryError::Full)
         }
         Err(mpsc::error::TrySendError::Closed(_)) => Err(UpdateDeliveryError::Closed),
     }
 }
 
-async fn run_sender(
+// Lives as long as the connection; see `footprint_tests`.
+#[expect(
+    clippy::manual_async_fn,
+    reason = "an async fn would store the sender twice"
+)]
+fn run_sender(
     mut sender: Sender<Transport, grammers_mtproto::mtp::Encrypted>,
-    mut rpc_rx: mpsc::UnboundedReceiver<Rpc>,
+    mut rpc_rx: queue::UnboundedReceiver<Rpc>,
     updates: Option<mpsc::Sender<UpdatesLike>>,
     dc_id: i32,
     session: Arc<ErasedSession>,
     state: Arc<PoolState>,
-) -> Result<(), ReadError> {
-    let mut dropped: usize = 0;
-    let mut last_update_limit_warn = Instant::now();
-    let mut updates_closed = false;
+) -> impl Future<Output = Result<(), ReadError>> {
+    async move {
+        let mut dropped: usize = 0;
+        let mut last_update_limit_warn = Instant::now();
+        let mut updates_closed = false;
 
-    loop {
-        tokio::select! {
-            step = sender.step() => match step {
-                Ok(all_new_updates) => {
-                    let Some(updates) = updates.as_ref().filter(|_| !updates_closed) else {
-                        continue;
-                    };
-                    for new_updates in all_new_updates {
-                        if let Err(e) = forward_update(updates, &state, new_updates) {
-                            match e {
-                                UpdateDeliveryError::Full => {
-                                    dropped += 1;
-                                    if last_update_limit_warn.elapsed() >= UPDATES_DROPPED_LOG_COOLDOWN {
-                                        warn!(
-                                            capacity = updates.max_capacity(),
-                                            dropped_count = dropped,
-                                            last_time = ?last_update_limit_warn.elapsed(),
-                                            "updates channel full",
-                                        );
-                                        dropped = 0;
-                                        last_update_limit_warn = Instant::now();
+        loop {
+            tokio::select! {
+                step = sender.step() => match step {
+                    Ok(all_new_updates) => {
+                        let Some(updates) = updates.as_ref().filter(|_| !updates_closed) else {
+                            continue;
+                        };
+                        for new_updates in all_new_updates {
+                            if let Err(e) = forward_update(updates, &state, new_updates) {
+                                match e {
+                                    UpdateDeliveryError::Full => {
+                                        dropped += 1;
+                                        if last_update_limit_warn.elapsed() >= UPDATES_DROPPED_LOG_COOLDOWN {
+                                            warn!(
+                                                capacity = updates.max_capacity(),
+                                                dropped_count = dropped,
+                                                last_time = ?last_update_limit_warn.elapsed(),
+                                                "updates channel full",
+                                            );
+                                            dropped = 0;
+                                            last_update_limit_warn = Instant::now();
+                                        }
                                     }
-                                }
-                                UpdateDeliveryError::Closed => {
-                                    debug!("updates channel closed, stopping update forwarding");
-                                    updates_closed = true;
-                                    break;
+                                    UpdateDeliveryError::Closed => {
+                                        debug!("updates channel closed, stopping update forwarding");
+                                        updates_closed = true;
+                                        break;
+                                    }
                                 }
                             }
                         }
-                    }
+                    },
+                    Err(err) => {
+                        // Login migration can promote a connection created while
+                        // another DC was home. Classify only at failure, without a
+                        // lookup on the RPC path or recreating a live sender.
+                        // If storage fails, still wake consumers so they can surface
+                        // that failure instead of waiting indefinitely for updates.
+                        let home_sender = session.home_dc_id().map_or(true, |home| home == dc_id);
+                        if let (true, Some(updates)) = (home_sender, &updates) {
+                            let _ = forward_update(updates, &state, UpdatesLike::ConnectionClosed);
+                        }
+                        break Err(err)
+                    },
                 },
-                Err(err) => {
-                    // Login migration can promote a connection created while
-                    // another DC was home. Classify only at failure, without a
-                    // lookup on the RPC path or recreating a live sender.
-                    // If storage fails, still wake consumers so they can surface
-                    // that failure instead of waiting indefinitely for updates.
-                    let home_sender = session.home_dc_id().map_or(true, |home| home == dc_id);
-                    if let (true, Some(updates)) = (home_sender, &updates) {
-                        let _ = forward_update(updates, &state, UpdatesLike::ConnectionClosed);
-                    }
-                    break Err(err)
+                rpc = rpc_rx.recv() => match rpc {
+                    Some(rpc) => sender.enqueue_tracked_body(rpc.body, rpc.tx, rpc.permit),
+                    None => break Ok(()),
                 },
-            },
-            rpc = rpc_rx.recv() => match rpc {
-                Some(rpc) => sender.enqueue_tracked_body(rpc.body, rpc.tx, rpc.permit),
-                None => break Ok(()),
-            },
+            }
         }
     }
 }
@@ -1312,7 +1357,7 @@ mod optimization_tests {
                 ..Default::default()
             },
         );
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = queue::unbounded_channel();
         pool.handle.1.write().unwrap().publish(4, &tx);
         let held = pool
             .handle
@@ -1414,7 +1459,7 @@ mod optimization_tests {
     #[tokio::test]
     async fn overflow_is_counted_and_observer_lag_is_explicit() {
         let state = PoolState::default();
-        let mut events = state.events.subscribe();
+        let mut events = state.subscribe();
         let (tx, _rx) = mpsc::channel(1);
         forward_update(&tx, &state, UpdatesLike::ConnectionClosed).unwrap();
         for _ in 0..65 {
@@ -1668,8 +1713,8 @@ mod optimization_tests {
             .unwrap();
     }
 
-    fn fake_handle() -> (SenderPoolHandle, mpsc::UnboundedReceiver<Request>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn fake_handle() -> (SenderPoolHandle, queue::UnboundedReceiver<Request>) {
+        let (tx, rx) = queue::unbounded_channel();
         (
             SenderPoolHandle(tx, Routes::default(), true, Arc::default()),
             rx,
@@ -1752,7 +1797,7 @@ mod optimization_tests {
         assert!(stream.is_err());
         assert!(matches!(
             pool.runner.request_rx.try_recv(),
-            Err(mpsc::error::TryRecvError::Disconnected)
+            Err(queue::TryRecvError::Disconnected)
         ));
         assert!(ConnectionParams::default().receive_updates);
     }
@@ -1768,7 +1813,7 @@ mod optimization_tests {
             );
             let mut sender = sender.unwrap();
             sender.set_receive_updates(enabled);
-            let (_rpc_tx, rpc_rx) = mpsc::unbounded_channel();
+            let (_rpc_tx, rpc_rx) = queue::unbounded_channel();
             let (updates_tx, mut updates_rx) = mpsc::channel(1);
             let updates = enabled.then_some(updates_tx);
             drop(peer.unwrap());
@@ -1815,7 +1860,7 @@ mod optimization_tests {
             );
             let sender = sender.unwrap();
             let peer = peer.unwrap();
-            let (_rpc_tx, rpc_rx) = mpsc::unbounded_channel();
+            let (_rpc_tx, rpc_rx) = queue::unbounded_channel();
             let (updates_tx, mut updates_rx) = mpsc::channel(1);
             let shared_session = erase(Arc::clone(&session));
             let running = tokio::spawn(run_sender(
@@ -1855,7 +1900,7 @@ mod optimization_tests {
     #[tokio::test]
     async fn warm_route_bypasses_pool_and_keeps_shared_payload() {
         let (handle, mut pool_rx) = fake_handle();
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = queue::unbounded_channel();
         handle.1.write().unwrap().publish(4, &tx);
         let body = Bytes::from(vec![1; 152]);
         let ptr = body.as_ptr() as usize;
@@ -1867,7 +1912,7 @@ mod optimization_tests {
         assert_eq!(rpc.body.as_ptr() as usize, ptr);
         assert!(matches!(
             pool_rx.try_recv(),
-            Err(mpsc::error::TryRecvError::Empty)
+            Err(queue::TryRecvError::Empty)
         ));
         rpc.tx.send(Ok(vec![7; 4])).unwrap();
         assert_eq!(call.await.unwrap().unwrap(), [7; 4]);
@@ -1876,7 +1921,7 @@ mod optimization_tests {
     #[tokio::test]
     async fn rejected_queue_send_falls_back_once_but_lost_reply_does_not() {
         let (handle, mut pool_rx) = fake_handle();
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = queue::unbounded_channel();
         handle.1.write().unwrap().publish(4, &tx);
         drop(rx);
         let task_handle = handle.clone();
@@ -1889,7 +1934,7 @@ mod optimization_tests {
             panic!("fallback");
         };
         assert_eq!(dc_id, 4);
-        let (new_tx, mut new_rx) = mpsc::unbounded_channel();
+        let (new_tx, mut new_rx) = queue::unbounded_channel();
         handle.1.write().unwrap().publish(4, &new_tx);
         tx.send(Ok(vec![2; 4])).unwrap();
         assert_eq!(call.await.unwrap().unwrap(), [2; 4]);
@@ -1908,14 +1953,14 @@ mod optimization_tests {
         ));
         assert!(matches!(
             pool_rx.try_recv(),
-            Err(mpsc::error::TryRecvError::Empty)
+            Err(queue::TryRecvError::Empty)
         ));
     }
 
     #[test]
     fn pending_disconnects_block_stale_route_publication() {
         let (handle, mut rx) = fake_handle();
-        let (tx, _rpc_rx) = mpsc::unbounded_channel();
+        let (tx, _rpc_rx) = queue::unbounded_channel();
         {
             let mut cache = handle.1.write().unwrap();
             cache.publish(2, &tx);
@@ -1946,7 +1991,7 @@ mod optimization_tests {
     #[tokio::test]
     async fn warm_route_cancellation_keeps_the_response_channel_cancelled() {
         let (handle, _pool_rx) = fake_handle();
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = queue::unbounded_channel();
         handle.1.write().unwrap().publish(4, &tx);
         let call = tokio::spawn(async move {
             handle
@@ -1965,7 +2010,7 @@ mod optimization_tests {
         let pool = SenderPool::with_configuration(session, 1, ConnectionParams::default());
         let handle = pool.handle.thin;
         let mut runner = pool.runner;
-        let (tx, mut rx) = mpsc::unbounded_channel::<Rpc>();
+        let (tx, mut rx) = queue::unbounded_channel::<Rpc>();
         runner.routes.write().unwrap().publish(4, &tx);
         let abort_handle = runner.connection_pool.spawn(async move {
             while let Some(rpc) = rx.recv().await {
@@ -1981,7 +2026,7 @@ mod optimization_tests {
         let task = tokio::spawn(runner.run());
         assert!(handle.quit());
         // Even if connection creation completes during quit, it cannot republish.
-        let (late_tx, _late_rx) = mpsc::unbounded_channel();
+        let (late_tx, _late_rx) = queue::unbounded_channel();
         handle.1.write().unwrap().publish(4, &late_tx);
         assert!(handle.1.read().unwrap().entries.is_empty());
         assert!(matches!(
@@ -1999,7 +2044,7 @@ mod optimization_tests {
     #[tokio::test]
     async fn stopped_pool_rejects_even_a_still_open_cached_route() {
         let (handle, pool_rx) = fake_handle();
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = queue::unbounded_channel();
         handle.1.write().unwrap().publish(4, &tx);
         drop(pool_rx);
         assert!(matches!(
@@ -2008,10 +2053,7 @@ mod optimization_tests {
                 .await,
             Err(InvocationError::Dropped(_))
         ));
-        assert!(matches!(
-            rx.try_recv(),
-            Err(mpsc::error::TryRecvError::Empty)
-        ));
+        assert!(matches!(rx.try_recv(), Err(queue::TryRecvError::Empty)));
     }
 
     #[test]
@@ -2032,7 +2074,7 @@ mod optimization_tests {
             };
             runtime.block_on(async {
                 let (handle, mut pool_rx) = fake_handle();
-                let (rpc_tx, mut rpc_rx) = mpsc::unbounded_channel::<Rpc>();
+                let (rpc_tx, mut rpc_rx) = queue::unbounded_channel::<Rpc>();
                 let forwarding_tx = rpc_tx.clone();
                 let forwarder = tokio::spawn(async move {
                     while let Some(Request::Invoke { body, tx, .. }) = pool_rx.recv().await {
@@ -2090,7 +2132,7 @@ mod optimization_tests {
 
     #[tokio::test]
     async fn malformed_raw_bodies_fail_before_reaching_the_runner() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = queue::unbounded_channel();
         let handle = SenderPoolHandle(tx, Routes::default(), true, Arc::default());
         for len in 0..4 {
             assert!(matches!(
@@ -2104,17 +2146,14 @@ mod optimization_tests {
                 Err(InvocationError::Deserialize(_))
             ));
         }
-        assert!(matches!(
-            rx.try_recv(),
-            Err(mpsc::error::TryRecvError::Empty)
-        ));
+        assert!(matches!(rx.try_recv(), Err(queue::TryRecvError::Empty)));
     }
 
     #[tokio::test]
     async fn unaligned_raw_bodies_do_not_reach_cold_or_warm_senders() {
         for warm in [false, true] {
             let (handle, mut pool_rx) = fake_handle();
-            let (tx, mut direct_rx) = mpsc::unbounded_channel();
+            let (tx, mut direct_rx) = queue::unbounded_channel();
             if warm {
                 handle.1.write().unwrap().publish(4, &tx);
             }
@@ -2157,11 +2196,11 @@ mod optimization_tests {
             }
             assert!(matches!(
                 pool_rx.try_recv(),
-                Err(mpsc::error::TryRecvError::Empty)
+                Err(queue::TryRecvError::Empty)
             ));
             assert!(matches!(
                 direct_rx.try_recv(),
-                Err(mpsc::error::TryRecvError::Empty)
+                Err(queue::TryRecvError::Empty)
             ));
             assert!(!handle.0.is_closed());
         }
@@ -2174,7 +2213,7 @@ mod optimization_tests {
             for warm in [false, true] {
                 let (mut handle, mut pool_rx) = fake_handle();
                 handle.2 = receive_updates;
-                let (tx, mut direct_rx) = mpsc::unbounded_channel();
+                let (tx, mut direct_rx) = queue::unbounded_channel();
                 if warm {
                     handle.1.write().unwrap().publish(4, &tx);
                 }
@@ -2219,11 +2258,11 @@ mod optimization_tests {
                 }
                 assert!(matches!(
                     pool_rx.try_recv(),
-                    Err(mpsc::error::TryRecvError::Empty)
+                    Err(queue::TryRecvError::Empty)
                 ));
                 assert!(matches!(
                     direct_rx.try_recv(),
-                    Err(mpsc::error::TryRecvError::Empty)
+                    Err(queue::TryRecvError::Empty)
                 ));
             }
         }
@@ -2232,7 +2271,7 @@ mod optimization_tests {
     #[tokio::test]
     async fn shared_and_owned_request_apis_preserve_the_payload_allocation() {
         for shared in [false, true] {
-            let (tx, mut rx) = mpsc::unbounded_channel();
+            let (tx, mut rx) = queue::unbounded_channel();
             let handle = SenderPoolHandle(tx, Routes::default(), true, Arc::default());
             let body = vec![1, 0, 0, 0];
             let address = body.as_ptr() as usize;
@@ -2281,14 +2320,14 @@ mod optimization_tests {
         let Request::CheckRetry { error, tx, .. } = rx.recv().await.unwrap() else {
             panic!("retry");
         };
-        tx.send(ControlFlow::Break(error)).unwrap();
+        tx.send(ControlFlow::Break(*error)).unwrap();
         assert!(matches!(call.await.unwrap(), Err(InvocationError::Io(_))));
         assert_eq!(formatted.load(Ordering::Relaxed), 0);
     }
 
     #[tokio::test]
     async fn typed_retry_reuses_request_storage_and_keeps_retry_policy() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = queue::unbounded_channel();
         let handle = SenderPoolHandle(tx, Routes::default(), true, Arc::default());
         let call = tokio::spawn(async move { handle.do_invoke_in_dc(4, vec![1, 0, 0, 0]).await });
         let Request::Invoke {
@@ -2351,5 +2390,48 @@ mod optimization_tests {
                 owned_ns[5], shared_ns[5]
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod footprint_tests {
+    use super::*;
+
+    /// Connection and runner futures live as long as their pool, once per
+    /// session. Guard against storing owned state twice (`async fn`
+    /// arguments) and against inlining the connection handshake.
+    #[tokio::test]
+    async fn long_lived_futures_hold_their_state_once() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, _peer) = tokio::join!(
+            connect_with_auth(Transport::new(), ServerAddr::Tcp { address }, [0; 256]),
+            listener.accept()
+        );
+        let sender = sender.unwrap();
+        let sender_size = size_of_val(&sender);
+        let (_tx, rx) = queue::unbounded_channel();
+        let session = erase(Arc::new(
+            grammers_session::storages::MemorySession::default(),
+        ));
+        let connection = run_sender(sender, rx, None, 2, session, Arc::default());
+        assert!(
+            size_of_val(&connection) < 2 * sender_size,
+            "connection future {} B for a {sender_size} B sender",
+            size_of_val(&connection)
+        );
+
+        let pool = SenderPool::new(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+        );
+        let runner = pool.runner.run();
+        assert!(
+            size_of_val(&runner) < 2048,
+            "runner future {} B; connection setup must stay boxed",
+            size_of_val(&runner)
+        );
+        // Queue slots preallocated by Tokio channels were sized by these.
+        assert!(size_of::<Request>() <= size_of::<Rpc>() + 8);
     }
 }
