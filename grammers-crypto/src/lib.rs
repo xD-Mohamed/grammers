@@ -225,6 +225,111 @@ pub fn generate_key_data_from_nonce(
 }
 
 #[cfg(test)]
+mod benchmarks {
+    use super::*;
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    /// Median ns/op of eight alternating rounds for each labelled operation.
+    fn compare(label: &str, iterations: usize, ops: &mut [(&str, &mut dyn FnMut())]) {
+        let mut samples = vec![Vec::new(); ops.len()];
+        for round in 0..8 {
+            for i in 0..ops.len() {
+                let i = (i + round) % ops.len();
+                let began = Instant::now();
+                for _ in 0..iterations {
+                    (ops[i].1)();
+                }
+                samples[i].push(began.elapsed().as_nanos() as f64 / iterations as f64);
+            }
+        }
+        let report: Vec<String> = ops
+            .iter()
+            .zip(&mut samples)
+            .map(|((name, _), sample)| {
+                sample.sort_by(f64::total_cmp);
+                format!("{name} {:.1} ns", sample[4])
+            })
+            .collect();
+        println!("{label}: {}", report.join(", "));
+    }
+
+    #[test]
+    #[ignore = "local per-message crypto component costs; run release with nocapture"]
+    fn benchmark_message_crypto_components() {
+        let auth_key = AuthKey::from_bytes([7; 256]);
+        let key = [3u8; 32];
+        compare(
+            "padding randomness",
+            200_000,
+            &mut [("getrandom 32 B", &mut || {
+                let mut padding = [0; 32];
+                getrandom::fill(&mut padding).unwrap();
+                black_box(padding);
+            })],
+        );
+        compare(
+            "AES-256 key schedule",
+            200_000,
+            &mut [
+                ("both directions", &mut || {
+                    black_box(<::aes::Aes256 as ::aes::cipher::KeyInit>::new(
+                        black_box(&key).into(),
+                    ));
+                }),
+                ("encrypt only", &mut || {
+                    black_box(<::aes::Aes256Enc as ::aes::cipher::KeyInit>::new(
+                        black_box(&key).into(),
+                    ));
+                }),
+                ("decrypt only", &mut || {
+                    black_box(<::aes::Aes256Dec as ::aes::cipher::KeyInit>::new(
+                        black_box(&key).into(),
+                    ));
+                }),
+            ],
+        );
+        for len in [448usize, 1024] {
+            let mut template = DequeBuffer::with_capacity(len + 64, 64);
+            template.extend(std::iter::repeat_n(9u8, len));
+            let mut buffer = template.clone();
+            let mut buffer2 = template.clone();
+            compare(
+                &format!("encrypt {len} B plaintext"),
+                100_000,
+                &mut [
+                    ("with OS padding", &mut || {
+                        buffer.clear();
+                        buffer.extend(std::iter::repeat_n(9u8, len));
+                        encrypt_data_v2(&mut buffer, &auth_key);
+                        black_box(&buffer);
+                    }),
+                    ("fixed padding", &mut || {
+                        buffer2.clear();
+                        buffer2.extend(std::iter::repeat_n(9u8, len));
+                        do_encrypt_data_v2(&mut buffer2, &auth_key, &[5; 32]);
+                        black_box(&buffer2);
+                    }),
+                ],
+            );
+        }
+        for len in [640usize, 2096] {
+            let source = vec![1u8; len];
+            let mut work = source.clone();
+            compare(
+                &format!("decrypt {len} B packet (key check fails after full work)"),
+                100_000,
+                &mut [("decrypt_data_v2", &mut || {
+                    work.copy_from_slice(&source);
+                    work[..8].copy_from_slice(&auth_key.key_id);
+                    black_box(decrypt_data_v2(&mut work, &auth_key).is_err());
+                })],
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
