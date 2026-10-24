@@ -33,3 +33,10 @@ pub const DEFAULT_COMPRESSION_THRESHOLD: Option<usize> = Some(512);
 /// that was assigned to the request to determine which request the response is for.
 #[derive(Copy, Clone, Debug, Hash, PartialEq, PartialOrd, Eq, Ord)]
 pub struct MsgId(i64);
+
+impl MsgId {
+    /// Returns the raw value of the message identifier.
+    pub fn into_inner(self) -> i64 {
+        self.0
+    }
+}
