@@ -1,0 +1,196 @@
+{
+  "scheduled_arrival": {
+    "open-warm": {
+      "baseline": {
+        "offered": 30000,
+        "completed": 30000,
+        "errors": 0,
+        "harness_drops": 0,
+        "busy_p99_us": 2708.5,
+        "quiet_p99_us": 2715.4,
+        "process_rss_kib": 11288
+      },
+      "candidate": {
+        "offered": 30000,
+        "completed": 30000,
+        "errors": 0,
+        "harness_drops": 0,
+        "busy_p99_us": 2496.7,
+        "quiet_p99_us": 2452.5,
+        "process_rss_kib": 11276
+      }
+    },
+    "open-overload": {
+      "baseline": {
+        "offered": 180000,
+        "completed": 97966,
+        "errors": 0,
+        "harness_drops": 82034,
+        "busy_p99_us": 26602.2,
+        "quiet_p99_us": 28591.7,
+        "process_rss_kib": 11548
+      },
+      "candidate": {
+        "offered": 180000,
+        "completed": 103828,
+        "errors": 0,
+        "harness_drops": 76172,
+        "busy_p99_us": 45073.3,
+        "quiet_p99_us": 13164.2,
+        "process_rss_kib": 11284
+      }
+    },
+    "open-cold": {
+      "baseline": {
+        "offered": 30000,
+        "completed": 29527,
+        "errors": 0,
+        "harness_drops": 473,
+        "busy_p99_us": 55055.7,
+        "quiet_p99_us": 76916.2,
+        "process_rss_kib": 11260
+      },
+      "candidate": {
+        "offered": 30000,
+        "completed": 29823,
+        "errors": 0,
+        "harness_drops": 177,
+        "busy_p99_us": 47776.6,
+        "quiet_p99_us": 57785.3,
+        "process_rss_kib": 11268
+      }
+    },
+    "open-large": {
+      "baseline": {
+        "offered": 150,
+        "completed": 74,
+        "errors": 76,
+        "harness_drops": 0,
+        "busy_p99_us": 2045.2,
+        "quiet_p99_us": 1981.1,
+        "process_rss_kib": 15056
+      },
+      "candidate": {
+        "offered": 150,
+        "completed": 150,
+        "errors": 0,
+        "harness_drops": 0,
+        "busy_p99_us": 9268.6,
+        "quiet_p99_us": 8554.5,
+        "process_rss_kib": 92388
+      }
+    },
+    "open-large-burst": {
+      "baseline": {
+        "offered": 3000,
+        "completed": 1500,
+        "errors": 1500,
+        "harness_drops": 0,
+        "busy_p99_us": 114025.5,
+        "quiet_p99_us": 123552.6,
+        "process_rss_kib": 71924
+      },
+      "candidate": {
+        "offered": 3000,
+        "completed": 2152,
+        "errors": 0,
+        "harness_drops": 848,
+        "busy_p99_us": 1487502.9,
+        "quiet_p99_us": 1006105.4,
+        "process_rss_kib": 372304
+      }
+    }
+  },
+  "runtime": {
+    "current-1cpu": {
+      "baseline": {
+        "rates": [
+          79204,
+          77838,
+          75669
+        ],
+        "median": 77838
+      },
+      "candidate": {
+        "rates": [
+          78694,
+          73855,
+          75441
+        ],
+        "median": 75441
+      }
+    },
+    "multi-1cpu": {
+      "baseline": {
+        "rates": [
+          80614,
+          77296,
+          74390
+        ],
+        "median": 77296
+      },
+      "candidate": {
+        "rates": [
+          78774,
+          77238,
+          74979
+        ],
+        "median": 77238
+      }
+    },
+    "multi-2cpu": {
+      "baseline": {
+        "rates": [
+          94506,
+          95988,
+          92176
+        ],
+        "median": 94506
+      },
+      "candidate": {
+        "rates": [
+          94900,
+          94267,
+          94520
+        ],
+        "median": 94520
+      }
+    },
+    "blocking-1cpu": {
+      "baseline": {
+        "rates": [
+          66232,
+          71613,
+          67524
+        ],
+        "median": 67524
+      },
+      "candidate": {
+        "rates": [
+          68902,
+          66870,
+          68408
+        ],
+        "median": 68408
+      }
+    },
+    "blocking-2cpu": {
+      "baseline": {
+        "rates": [
+          88596,
+          94202,
+          91250
+        ],
+        "median": 91250
+      },
+      "candidate": {
+        "rates": [
+          93653,
+          93689,
+          95181
+        ],
+        "median": 93689
+      }
+    }
+  }
+}

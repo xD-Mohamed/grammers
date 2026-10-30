@@ -1,0 +1,47 @@
+benchmark_binary_sha256=a4621eb14b00ec19c9058897d3c3fbd17beaff6d8a2d340b4d446487aa995633
+
+running 1 test
+test loopback_blocking_control ... BLOCKING_WORKER_CPU user_us=32405 sys_us=110387 rpcs=9070
+BLOCKING_WORKER_CPU user_us=24205 sys_us=118525 rpcs=9132
+BLOCKING_WORKER_CPU user_us=31128 sys_us=105552 rpcs=8699
+BLOCKING_WORKER_CPU user_us=13888 sys_us=129598 rpcs=9146
+BLOCKING_WORKER_CPU user_us=31419 sys_us=111327 rpcs=9063
+BLOCKING_WORKER_CPU user_us=23619 sys_us=120012 rpcs=9118
+BLOCKING_WORKER_CPU user_us=22766 sys_us=119941 rpcs=9072
+BLOCKING_WORKER_CPU user_us=37568 sys_us=99375 rpcs=8719
+BLOCKING_WORKER_CPU user_us=47684 sys_us=96061 rpcs=9179
+BLOCKING_WORKER_CPU user_us=24004 sys_us=117900 rpcs=9057
+BLOCKING_WORKER_CPU user_us=24107 sys_us=112059 rpcs=8648
+BLOCKING_WORKER_CPU user_us=29013 sys_us=112579 rpcs=8985
+BLOCKING_WORKER_CPU user_us=36871 sys_us=99312 rpcs=8656
+BLOCKING_WORKER_CPU user_us=33265 sys_us=106251 rpcs=8842
+BLOCKING_WORKER_CPU user_us=8143 sys_us=127377 rpcs=8666
+BLOCKING_WORKER_CPU user_us=26235 sys_us=114054 rpcs=8888
+BLOCKING rate=95181 user_us=3.122 sys_us=12.595 p50_us=189.1 p95_us=251.7 p99_us=313.1
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 1.54s
+
+	Command being timed: "<binary> --exact loopback_blocking_control --ignored --nocapture --test-threads=1"
+	User time (seconds): 1.12
+	System time (seconds): 3.03
+	Percent of CPU this job got: 268%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.54
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 7428
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 843
+	Voluntary context switches: 145730
+	Involuntary context switches: 2013
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

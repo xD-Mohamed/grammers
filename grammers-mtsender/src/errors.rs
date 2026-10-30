@@ -247,14 +247,17 @@ pub enum InvocationError {
     Session(Box<dyn std::error::Error + Send + Sync>),
 
     /// The request invocation failed because it was invalid or the server
-    /// could not process it successfully. If the server is suffering from
-    /// temporary issues, the request may be retried after some time.
+    /// could not process it successfully. Negative codes are conservatively
+    /// classified as uncertain delivery: the request may have taken effect.
+    /// Retrying requires application knowledge of the operation.
     Rpc(RpcError),
 
-    /// Standard I/O error when reading the response.
+    /// Legacy I/O error without an explicit request-delivery marker.
     ///
-    /// The request may already have reached Telegram. Retrying a mutating request
-    /// can duplicate its effects; an I/O failure alone does not make replay safe.
+    /// [`crate::AutoSleep`] retries its documented connection-error kinds even
+    /// though this variant alone cannot establish whether a request was sent.
+    /// Producers should use [`Self::Read`] with `may_have_been_sent: true` for
+    /// failures after possible delivery, to prevent unsafe automatic replay.
     Io(io::Error),
 
     /// Error propagated from attempting to deserialize an invalid [`tl::Deserializable`].
@@ -326,6 +329,9 @@ pub enum InvocationErrorCategory {
     InvalidRequest,
     /// A server-side failure was reported.
     Server,
+    /// A failure does not establish whether the operation took effect.
+    /// In particular, unknown negative RPC codes are treated conservatively.
+    UncertainDelivery,
     /// An explicit timed flood or slow mode rejection.
     FloodWait,
     /// Another RPC rejection, including migration instructions.
@@ -461,6 +467,7 @@ impl InvocationError {
                 io::ErrorKind::InvalidData => C::Protocol,
                 _ => C::Network,
             },
+            Self::Rpc(e) if e.code < 0 => C::UncertainDelivery,
             Self::Rpc(_) if self.is_flood_wait() => C::FloodWait,
             Self::Rpc(e) => match e.code {
                 401 => C::Authentication,
@@ -476,10 +483,14 @@ impl InvocationError {
     pub fn retry_after(&self) -> Option<std::time::Duration> {
         match self.root_cause() {
             Self::Rpc(e)
-                if matches!(
-                    e.name.as_str(),
-                    "FLOOD_WAIT" | "FLOOD_PREMIUM_WAIT" | "SLOWMODE_WAIT" | "FLOOD_TEST_PHONE_WAIT"
-                ) =>
+                if e.code >= 0
+                    && matches!(
+                        e.name.as_str(),
+                        "FLOOD_WAIT"
+                            | "FLOOD_PREMIUM_WAIT"
+                            | "SLOWMODE_WAIT"
+                            | "FLOOD_TEST_PHONE_WAIT"
+                    ) =>
             {
                 e.value
                     .map(|n| std::time::Duration::from_secs(u64::from(n)))
@@ -575,6 +586,35 @@ mod tests {
             InvocationError::Dropped("closed").category(),
             InvocationErrorCategory::Closed
         );
+    }
+
+    #[test]
+    fn negative_rpc_codes_preserve_uncertain_delivery_without_default_replay() {
+        use crate::{AutoSleep, RetryContext, RetryPolicy};
+        for (code, name) in [-503, i32::MIN]
+            .into_iter()
+            .flat_map(|code| ["UNKNOWN_SERVER_FAILURE", "FLOOD_WAIT"].map(|name| (code, name)))
+        {
+            let error = InvocationError::Shared(Arc::new(InvocationError::Rpc(RpcError {
+                code,
+                name: name.into(),
+                value: Some(10),
+                caused_by: None,
+            })));
+            assert_eq!(error.category(), InvocationErrorCategory::UncertainDelivery);
+            assert_eq!(error.retry_after(), None);
+            assert!(!error.is_flood_wait());
+            assert!(matches!(error.root_cause(), InvocationError::Rpc(rpc) if rpc.code == code));
+            assert!(
+                AutoSleep::default()
+                    .should_retry(&RetryContext {
+                        error,
+                        fail_count: std::num::NonZeroU32::MIN,
+                        slept_so_far: std::time::Duration::ZERO,
+                    })
+                    .is_break()
+            );
+        }
     }
 
     #[test]

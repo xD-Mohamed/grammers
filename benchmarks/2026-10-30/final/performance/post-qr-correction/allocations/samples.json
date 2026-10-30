@@ -1,0 +1,54 @@
+{
+  "baseline": [
+    {
+      "payload": "Plain",
+      "round": 1,
+      "allocations_per_rpc": 2.0,
+      "bytes_per_rpc": 1789
+    },
+    {
+      "payload": "Plain",
+      "round": 3,
+      "allocations_per_rpc": 2.0,
+      "bytes_per_rpc": 1789
+    },
+    {
+      "payload": "Gzip",
+      "round": 1,
+      "allocations_per_rpc": 2.0,
+      "bytes_per_rpc": 1789
+    },
+    {
+      "payload": "Gzip",
+      "round": 3,
+      "allocations_per_rpc": 2.0,
+      "bytes_per_rpc": 1790
+    }
+  ],
+  "candidate": [
+    {
+      "payload": "Plain",
+      "round": 1,
+      "allocations_per_rpc": 2.0,
+      "bytes_per_rpc": 1792
+    },
+    {
+      "payload": "Plain",
+      "round": 3,
+      "allocations_per_rpc": 2.0,
+      "bytes_per_rpc": 1792
+    },
+    {
+      "payload": "Gzip",
+      "round": 1,
+      "allocations_per_rpc": 2.0,
+      "bytes_per_rpc": 1787
+    },
+    {
+      "payload": "Gzip",
+      "round": 3,
+      "allocations_per_rpc": 2.0,
+      "bytes_per_rpc": 1791
+    }
+  ]
+}

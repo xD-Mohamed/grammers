@@ -8,6 +8,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Duration;
 
 use grammers_session::storages::ErasedSession;
 use grammers_session::types::{PeerId, PeerInfo, UpdateState, UpdatesState};
@@ -25,6 +26,51 @@ use crate::{InvocationError, SenderPoolHandle, UpdatesConfiguration};
 const BOT_CHANNEL_DIFF_LIMIT: i32 = 100000;
 const USER_CHANNEL_DIFF_LIMIT: i32 = 100;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Authorization {
+    Unknown,
+    Inferred,
+    Confirmed,
+    // A rejected inference must not be rearmed by queued socket updates.
+    Rejected,
+}
+
+impl Authorization {
+    fn can_recover(self) -> bool {
+        matches!(self, Self::Inferred | Self::Confirmed)
+    }
+}
+
+fn proves_login(updates: &UpdatesLike) -> bool {
+    fn account_update(update: &tl::enums::Update) -> bool {
+        // These service pushes can precede login. See core.telegram.org/api/updates
+        // and api/qr-login; peer lists alone are not proof either.
+        !matches!(
+            update,
+            tl::enums::Update::LoginToken
+                | tl::enums::Update::SentPhoneCode(_)
+                | tl::enums::Update::DcOptions(_)
+                | tl::enums::Update::Config
+                | tl::enums::Update::LangPackTooLong(_)
+                | tl::enums::Update::LangPack(_)
+                | tl::enums::Update::ServiceNotification(_)
+        )
+    }
+    match updates {
+        UpdatesLike::ConnectionClosed | UpdatesLike::MalformedUpdates => false,
+        UpdatesLike::Updates(updates) => match updates {
+            tl::enums::Updates::UpdateShort(updates) => account_update(&updates.update),
+            tl::enums::Updates::Updates(updates) => updates.updates.iter().any(account_update),
+            tl::enums::Updates::Combined(updates) => updates.updates.iter().any(account_update),
+            // TooLong is an account catch-up hint, including for imported sessions
+            // without self metadata. Non-PTS account updates also qualify above.
+            _ => true,
+        },
+        // These are results of account-authorized requests.
+        _ => true,
+    }
+}
+
 pub struct UpdatesReceiver {
     handle: SenderPoolHandle,
     session: Arc<ErasedSession>,
@@ -34,18 +80,24 @@ pub struct UpdatesReceiver {
     should_get_state: bool,
     home_failure_generation: u64,
     prefer_channel: bool,
+    prefer_live: bool,
+    authorization: Authorization,
+    is_bot: Option<bool>,
+    next_self_check: tokio::time::Instant,
 }
 
 async fn prepare_channel_difference(
     mut request: tl::functions::updates::GetChannelDifference,
     session: Arc<ErasedSession>,
     message_box: &mut MessageBoxes,
-) -> Result<
-    Option<tl::functions::updates::GetChannelDifference>,
-    Box<dyn std::error::Error + Send + Sync>,
-> {
+    is_bot: bool,
+) -> Result<Option<tl::functions::updates::GetChannelDifference>, InvocationError> {
     let id = match &request.channel {
-        tl::enums::InputChannel::Channel(channel) => PeerId::channel_unchecked(channel.channel_id),
+        tl::enums::InputChannel::Channel(channel) => PeerId::channel(channel.channel_id).ok_or(
+            grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
+                reason: "invalid channel update-state identifier",
+            },
+        )?,
         _ => unreachable!(),
     };
 
@@ -55,19 +107,12 @@ async fn prepare_channel_difference(
         ..
     }) = session.peer(id).await?
     {
+        message_box.channel_difference_accessible();
         request.channel = tl::enums::InputChannel::Channel(tl::types::InputChannel {
             channel_id: id,
             access_hash: auth.hash(),
         });
-        request.limit = if session
-            .peer(PeerId::self_user())
-            .await?
-            .map(|user| match user {
-                PeerInfo::User { bot, .. } => bot.unwrap_or(false),
-                _ => false,
-            })
-            .unwrap_or(false)
-        {
+        request.limit = if is_bot {
             BOT_CHANNEL_DIFF_LIMIT
         } else {
             USER_CHANNEL_DIFF_LIMIT
@@ -79,7 +124,7 @@ async fn prepare_channel_difference(
             channel_id = ?id,
             "cannot getChannelDifference as we're missing its hash",
         );
-        message_box.end_channel_difference(PrematureEndReason::Banned);
+        message_box.defer_channel_difference(Duration::from_secs(1));
         Ok(None)
     }
 }
@@ -99,20 +144,12 @@ impl UpdatesReceiver {
             .into());
         }
         let message_box = if configuration.catch_up {
-            MessageBoxes::try_load(session.updates_state().await?).map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "invalid saved update state",
-                )
-            })?
+            MessageBoxes::load(session.updates_state().await?)
         } else {
             // If the user doesn't want to bother with catching up on previous update, start with
             // pristine state instead.
             MessageBoxes::new()
         };
-        // Don't bother getting pristine update state if we're not logged in.
-        let should_get_state =
-            !message_box.has_primary_state() && session.peer(PeerId::self_user()).await?.is_some();
 
         Ok(UpdatesReceiver {
             handle,
@@ -120,9 +157,13 @@ impl UpdatesReceiver {
             message_box,
             updates,
             buffer: VecDeque::new(),
-            should_get_state,
+            should_get_state: false,
             home_failure_generation: 0,
             prefer_channel: false,
+            prefer_live: true,
+            authorization: Authorization::Unknown,
+            is_bot: None,
+            next_self_check: tokio::time::Instant::now(),
         })
     }
 
@@ -143,15 +184,52 @@ impl UpdatesReceiver {
             tokio::task::consume_budget().await;
             let generation = self.handle.home_failure_generation();
             if generation != self.home_failure_generation {
-                self.should_get_state |= !self.message_box.has_primary_state()
-                    && session.peer(PeerId::self_user()).await?.is_some();
                 self.process_socket_updates(UpdatesLike::ConnectionClosed)
                     .await;
                 self.home_failure_generation = generation;
             }
+            if let Some(update) = self.buffer.pop_front() {
+                return Ok(update);
+            }
+            // Before consulting stored login metadata, let one queued socket
+            // payload establish authorization. Once proven, recovery runs before
+            // draining further packets so a busy pending key cannot starve it.
+            if let Some(Ok(update)) =
+                (!self.authorization.can_recover() && !self.should_get_state && self.prefer_live)
+                    .then(|| self.updates.try_recv())
+            {
+                self.process_socket_updates(update).await;
+                if let Some(update) = self.buffer.pop_front() {
+                    return Ok(update);
+                }
+            }
+            self.message_box.check_deadlines();
+            let needs_authorization = !self.message_box.has_primary_state()
+                || self.message_box.get_difference().is_some()
+                || self.message_box.get_channel_difference().is_some();
+            if !self.authorization.can_recover()
+                && needs_authorization
+                && tokio::time::Instant::now() >= self.next_self_check
+            {
+                self.next_self_check = tokio::time::Instant::now() + Duration::from_secs(1);
+                if let Some(PeerInfo::User { bot, .. }) = session.peer(PeerId::self_user()).await? {
+                    self.authorization = Authorization::Confirmed;
+                    self.is_bot = Some(bot.unwrap_or(false));
+                }
+            }
+            self.should_get_state |=
+                self.authorization.can_recover() && !self.message_box.has_primary_state();
             if self.should_get_state {
                 match self.invoke(&tl::functions::updates::GetState {}).await {
                     Ok(tl::enums::updates::State::State(state)) => {
+                        // Validate before persisting or changing the in-memory
+                        // state. A rejected reply must leave recovery armed.
+                        if state.pts < 0 || state.qts < 0 || state.date < 0 || state.seq < 0 {
+                            return Err(grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
+                                reason: "invalid account update state",
+                            }
+                            .into());
+                        }
                         session
                             .clone()
                             .set_update_state(UpdateState::All(UpdatesState {
@@ -163,8 +241,21 @@ impl UpdatesReceiver {
                             }))
                             .await?;
                         self.message_box.set_state(state);
+                        self.authorization = Authorization::Confirmed;
                         // Cancellation or storage failure must leave recovery armed.
                         self.should_get_state = false;
+                    }
+                    Err(error)
+                        if self.authorization == Authorization::Inferred
+                            && matches!(error.root_cause(), InvocationError::Rpc(rpc) if rpc.code == 401) =>
+                    {
+                        // An account-shaped push is only provisional proof. During
+                        // login/2FA, wait for cached self metadata instead of exposing
+                        // a premature authorization error or retrying on every next().
+                        self.authorization = Authorization::Rejected;
+                        self.should_get_state = false;
+                        self.next_self_check = tokio::time::Instant::now() + Duration::from_secs(1);
+                        continue;
                     }
                     Err(error) => {
                         // Recovery failures must reach the caller. Otherwise a connection failing during GetState
@@ -176,32 +267,69 @@ impl UpdatesReceiver {
                 }
             }
 
-            // Catch-up must not indefinitely starve live updates or closure.
-            if let Ok(update) = self.updates.try_recv() {
+            // Alternate ready live batches with recovery. This preference lives
+            // in the receiver so returning a batch or cancelling next() cannot
+            // reset it and let a busy, deliverable socket stream starve catch-up.
+            let recovery_ready = self.authorization.can_recover()
+                && (self.message_box.get_difference().is_some()
+                    || self.message_box.get_channel_difference().is_some());
+            if let Some(Ok(update)) =
+                (self.prefer_live || !recovery_ready).then(|| self.updates.try_recv())
+            {
                 self.process_socket_updates(update).await;
             }
-            let (deadline, get_diff, get_channel_diff) = {
+            let (deadline, get_diff, get_channel_diff, can_recover) = {
                 if let Some(update) = self.buffer.pop_front() {
                     return Ok(update);
                 }
+                let deadline = self.message_box.check_deadlines();
+                // Saved state alone is not evidence of a current login.
+                let can_recover = self.authorization.can_recover();
                 (
-                    self.message_box.check_deadlines(), // first, as it might trigger differences
-                    self.message_box.get_difference(),
-                    match self.message_box.get_channel_difference() {
+                    deadline,
+                    self.message_box.get_difference().filter(|_| can_recover),
+                    match self
+                        .message_box
+                        .get_channel_difference()
+                        .filter(|_| can_recover)
+                    {
                         Some(gd) => {
+                            // Resolve account kind once on recovery, never on ordinary
+                            // live delivery. Commit the result after the await so a
+                            // cancelled or failed lookup can be retried.
+                            let is_bot = match self.is_bot {
+                                Some(is_bot) => is_bot,
+                                None => {
+                                    let is_bot = if let Some(PeerInfo::User { bot, .. }) =
+                                        session.peer(PeerId::self_user()).await?
+                                    {
+                                        self.authorization = Authorization::Confirmed;
+                                        bot.unwrap_or(false)
+                                    } else {
+                                        false
+                                    };
+                                    self.is_bot = Some(is_bot);
+                                    is_bot
+                                }
+                            };
                             match prepare_channel_difference(
                                 gd,
                                 session.clone(),
                                 &mut self.message_box,
+                                is_bot,
                             )
                             .await?
                             {
                                 Some(request) => Some(request),
-                                None => continue,
+                                None => {
+                                    self.prefer_live = true;
+                                    continue;
+                                }
                             }
                         }
                         None => None,
                     },
+                    can_recover,
                 )
             };
 
@@ -210,6 +338,7 @@ impl UpdatesReceiver {
             {
                 self.prefer_channel = true;
                 let response = self.invoke(&request).await?;
+                self.prefer_live = true;
                 let (updates, users, chats) = self
                     .message_box
                     .try_apply_difference(response)
@@ -225,9 +354,21 @@ impl UpdatesReceiver {
             if let Some(request) = get_channel_diff {
                 self.prefer_channel = false;
                 let maybe_response = self.invoke(&request).await;
+                self.prefer_live = true;
 
                 let response = match maybe_response {
                     Ok(r) => r,
+                    Err(e)
+                        if e.is("FLOOD_*")
+                            || e.is("SLOWMODE_WAIT*")
+                            || e.is("AUTH_KEY_*")
+                            || e.is("SESSION_*")
+                            || e.is("CONNECTION_*")
+                            || e.is("API_ID_*")
+                            || matches!(e.root_cause(), InvocationError::Rpc(rpc) if matches!(rpc.code, 401 | 420 | 429)) =>
+                    {
+                        return Err(e);
+                    }
                     Err(e) if e.is("PERSISTENT_TIMESTAMP_OUTDATED") => {
                         // According to Telegram's docs:
                         // "Channel internal replication issues, try again later (treat this like an RPC_CALL_FAIL)."
@@ -250,14 +391,23 @@ impl UpdatesReceiver {
                         continue;
                     }
                     Err(e)
-                        if e.is("CHANNEL_PRIVATE")
-                            || e.is("CHANNEL_INVALID")
-                            || e.is("CHANNEL_PUBLIC_GROUP_NA")
-                            || e.is("USER_BANNED_IN_CHANNEL") =>
+                        if [
+                            "CHANNEL_INVALID",
+                            "CHANNEL_PRIVATE",
+                            "CHANNEL_PUBLIC_GROUP_NA",
+                            "CHAT_WRITE_FORBIDDEN",
+                            "FROZEN_PARTICIPANT_MISSING",
+                            "PERSISTENT_TIMESTAMP_EMPTY",
+                            "PERSISTENT_TIMESTAMP_INVALID",
+                            "USER_BANNED_IN_CHANNEL",
+                        ]
+                        .iter()
+                        .any(|name| e.is(name)) =>
                     {
                         info!(
                             ?request,
-                            "Account is now banned so we can no longer fetch updates with request",
+                            error = ?e.root_cause(),
+                            "channel difference rejected; discarding this channel's saved position",
                         );
                         {
                             self.message_box
@@ -265,8 +415,9 @@ impl UpdatesReceiver {
                         }
                         continue;
                     }
-                    Err(InvocationError::Rpc(rpc_error)) if rpc_error.code == 500 => {
-                        warn!("Telegram is having internal issues: {:#?}", rpc_error);
+                    Err(e) if matches!(e.root_cause(), InvocationError::Rpc(rpc_error) if matches!(rpc_error.code, 400 | 403 | 406 | 500)) =>
+                    {
+                        warn!(error = ?e.root_cause(), "channel recovery deferred with its saved position intact");
                         {
                             self.message_box
                                 .end_channel_difference(PrematureEndReason::TemporaryServerIssues);
@@ -288,8 +439,17 @@ impl UpdatesReceiver {
                 continue;
             }
 
+            // A stream can be created before login. Session caching does not
+            // signal this receiver, so periodically recheck while account state
+            // or the cached self user is missing.
+            let deadline = tokio::time::Instant::from_std(deadline);
+            let deadline = if !can_recover && needs_authorization {
+                self.next_self_check
+            } else {
+                deadline
+            };
             let received = tokio::select! {
-                result = timeout_at(deadline.into(), self.updates.recv()) => result,
+                result = timeout_at(deadline, self.updates.recv()) => result,
                 _ = self.handle.wait_home_failure(self.home_failure_generation) => continue,
             };
             match received {
@@ -323,6 +483,10 @@ impl UpdatesReceiver {
     }
 
     async fn process_socket_updates(&mut self, updates: UpdatesLike) {
+        self.prefer_live = false;
+        if self.authorization == Authorization::Unknown && proves_login(&updates) {
+            self.authorization = Authorization::Inferred;
+        }
         if let Ok((updates, users, chats)) = self.message_box.process_updates(updates) {
             self.extend_update_queue(updates, users, chats);
         }
@@ -334,6 +498,8 @@ impl UpdatesReceiver {
         users: Vec<tl::enums::User>,
         chats: Vec<tl::enums::Chat>,
     ) {
-        self.buffer.push_back((updates, users, chats));
+        if !updates.is_empty() || !users.is_empty() || !chats.is_empty() {
+            self.buffer.push_back((updates, users, chats));
+        }
     }
 }

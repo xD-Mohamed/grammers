@@ -1,0 +1,196 @@
+{
+  "scheduled_arrival": {
+    "open-warm": {
+      "baseline": {
+        "offered": 30000,
+        "completed": 30000,
+        "errors": 0,
+        "harness_drops": 0,
+        "busy_p99_us": 2502.0,
+        "quiet_p99_us": 2463.2,
+        "process_rss_kib": 11260
+      },
+      "candidate": {
+        "offered": 30000,
+        "completed": 30000,
+        "errors": 0,
+        "harness_drops": 0,
+        "busy_p99_us": 2494.0,
+        "quiet_p99_us": 2549.1,
+        "process_rss_kib": 11256
+      }
+    },
+    "open-overload": {
+      "baseline": {
+        "offered": 180000,
+        "completed": 120000,
+        "errors": 0,
+        "harness_drops": 60000,
+        "busy_p99_us": 16901.1,
+        "quiet_p99_us": 18093.7,
+        "process_rss_kib": 11320
+      },
+      "candidate": {
+        "offered": 180000,
+        "completed": 109825,
+        "errors": 0,
+        "harness_drops": 70175,
+        "busy_p99_us": 43499.7,
+        "quiet_p99_us": 11311.4,
+        "process_rss_kib": 11264
+      }
+    },
+    "open-cold": {
+      "baseline": {
+        "offered": 30000,
+        "completed": 30000,
+        "errors": 0,
+        "harness_drops": 0,
+        "busy_p99_us": 34092.6,
+        "quiet_p99_us": 53009.7,
+        "process_rss_kib": 11264
+      },
+      "candidate": {
+        "offered": 30000,
+        "completed": 29462,
+        "errors": 0,
+        "harness_drops": 538,
+        "busy_p99_us": 66000.0,
+        "quiet_p99_us": 75974.8,
+        "process_rss_kib": 11260
+      }
+    },
+    "open-large": {
+      "baseline": {
+        "offered": 150,
+        "completed": 74,
+        "errors": 76,
+        "harness_drops": 0,
+        "busy_p99_us": 1303.2,
+        "quiet_p99_us": 1570.9,
+        "process_rss_kib": 15032
+      },
+      "candidate": {
+        "offered": 150,
+        "completed": 150,
+        "errors": 0,
+        "harness_drops": 0,
+        "busy_p99_us": 9082.0,
+        "quiet_p99_us": 8448.6,
+        "process_rss_kib": 90280
+      }
+    },
+    "open-large-burst": {
+      "baseline": {
+        "offered": 3000,
+        "completed": 1500,
+        "errors": 1500,
+        "harness_drops": 0,
+        "busy_p99_us": 115281.9,
+        "quiet_p99_us": 121345.6,
+        "process_rss_kib": 87264
+      },
+      "candidate": {
+        "offered": 3000,
+        "completed": 1953,
+        "errors": 0,
+        "harness_drops": 1047,
+        "busy_p99_us": 1622167.5,
+        "quiet_p99_us": 1322144.7,
+        "process_rss_kib": 417916
+      }
+    }
+  },
+  "runtime": {
+    "current-1cpu": {
+      "baseline": {
+        "rates": [
+          72191,
+          78711,
+          72233
+        ],
+        "median": 72233
+      },
+      "candidate": {
+        "rates": [
+          72174,
+          80931,
+          78410
+        ],
+        "median": 78410
+      }
+    },
+    "multi-1cpu": {
+      "baseline": {
+        "rates": [
+          79571,
+          69879,
+          77998
+        ],
+        "median": 77998
+      },
+      "candidate": {
+        "rates": [
+          75923,
+          69490,
+          70838
+        ],
+        "median": 70838
+      }
+    },
+    "multi-2cpu": {
+      "baseline": {
+        "rates": [
+          92459,
+          89085,
+          89412
+        ],
+        "median": 89412
+      },
+      "candidate": {
+        "rates": [
+          93219,
+          93601,
+          89414
+        ],
+        "median": 93219
+      }
+    },
+    "blocking-1cpu": {
+      "baseline": {
+        "rates": [
+          69041,
+          63145,
+          65298
+        ],
+        "median": 65298
+      },
+      "candidate": {
+        "rates": [
+          72188,
+          67207,
+          63065
+        ],
+        "median": 67207
+      }
+    },
+    "blocking-2cpu": {
+      "baseline": {
+        "rates": [
+          95344,
+          82857,
+          89640
+        ],
+        "median": 89640
+      },
+      "candidate": {
+        "rates": [
+          96779,
+          92061,
+          88000
+        ],
+        "median": 92061
+      }
+    }
+  }
+}

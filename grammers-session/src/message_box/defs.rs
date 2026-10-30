@@ -6,6 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 #[cfg(not(test))]
 use std::time::Instant;
@@ -68,6 +69,14 @@ pub(super) struct LiveEntry {
     /// Next instant when we would get the update difference if no updates arrived before then.
     pub(super) deadline: Instant,
 
+    /// Pending recovery may wait until this deadline before another attempt.
+    /// The key stays pending so socket updates cannot skip its backlog.
+    pub(super) recovery_deferred: bool,
+    /// Whether recovery is pending, including while its retry is deferred.
+    pub(super) recovery_pending: bool,
+    /// Consecutive deferrals before abandoning an unavailable channel's backlog.
+    pub(super) recovery_deferrals: u8,
+
     /// If the entry has a gap and may soon trigger the need to get difference.
     pub(super) possible_gap: Option<PossibleGap>,
 }
@@ -84,8 +93,13 @@ pub struct MessageBoxes {
     pub(super) date: i32,
     pub(super) seq: i32,
 
-    /// Optimization field to quickly query all entries that are currently being fetched.
-    pub(super) getting_diff_for: Vec<Key>,
+    /// Ready recovery work, in fair request order. Deferred entries are excluded.
+    pub(super) getting_diff_for: VecDeque<Key>,
+    /// Pending entries eligible for immediate recovery (not deferred).
+    pub(super) ready_diff_count: usize,
+    /// Channels whose missing-hash grace was exhausted in this receiver lifetime.
+    /// Survives entry removal; usable access or successful recovery clears it.
+    pub(super) exhausted_channels: BTreeSet<i64>,
 
     /// Optimization field holding the closest deadline instant.
     pub(super) next_deadline: Instant,

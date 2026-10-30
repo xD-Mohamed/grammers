@@ -1,0 +1,15 @@
+{
+  "scope": "Superseded intermediate attempts; not passing validation receipts for the final source. Intermediate source manifest was not captured.",
+  "attempts": [
+    {
+      "log": "opus-initial.log",
+      "exit_code": 101,
+      "reason": "Slow-storage test used std::Instant with paused Tokio time; changed fixture to tokio::time::Instant. All other executed sender/protocol regressions passed."
+    },
+    {
+      "log": "opus-second.log",
+      "exit_code": 101,
+      "reason": "Two historical message-box tests required original expired deadline timestamps; preserved those while retaining recomputed internal cache. Client/protocol/sender tests passed. Added separate shortened-channel-timeout regression."
+    }
+  ]
+}

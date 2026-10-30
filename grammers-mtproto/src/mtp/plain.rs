@@ -132,6 +132,71 @@ mod tests {
 
     const REQUEST: &[u8] = b"Hey!";
 
+    fn reply(auth_key: i64, msg_id: i64, length: i32) -> Vec<u8> {
+        let mut bytes = auth_key.to_bytes();
+        msg_id.serialize(&mut bytes);
+        length.serialize(&mut bytes);
+        bytes.extend_from_slice(REQUEST);
+        bytes
+    }
+
+    #[test]
+    fn plain_deserialize_rejects_invalid_headers_and_lengths() {
+        let mut mtp = Plain::new();
+        for length in 0..20 {
+            assert_eq!(
+                mtp.deserialize(&mut vec![0; length]).err(),
+                Some(DeserializeError::MessageBufferTooSmall)
+            );
+        }
+        assert_eq!(
+            mtp.deserialize(&mut reply(8, 1, 4)).err(),
+            Some(DeserializeError::BadAuthKey {
+                got: 8,
+                expected: 0
+            })
+        );
+        for id in [i64::MIN, -3, 0, 2, 3, 4] {
+            assert_eq!(
+                mtp.deserialize(&mut reply(0, id, 4)).err(),
+                Some(DeserializeError::BadMessageId { got: id })
+            );
+        }
+        for length in [i32::MIN, -4, 0] {
+            assert_eq!(
+                mtp.deserialize(&mut reply(0, 1, length)).err(),
+                Some(DeserializeError::NegativeMessageLength { got: length })
+            );
+        }
+        for length in [1, 3, 5, i32::MAX] {
+            assert_eq!(
+                mtp.deserialize(&mut reply(0, 1, length)).err(),
+                Some(DeserializeError::InvalidEnvelope {
+                    reason: "invalid message envelope"
+                })
+            );
+        }
+        for length in [8, i32::MAX - 3] {
+            assert_eq!(
+                mtp.deserialize(&mut reply(0, 1, length)).err(),
+                Some(DeserializeError::TooLongMessageLength {
+                    got: length as usize,
+                    max_length: 4
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn plain_deserialize_returns_only_the_declared_body() {
+        let mut mtp = Plain::new();
+        let mut bytes = reply(0, 5, 4);
+        bytes.extend_from_slice(&[0; 16]);
+        let results = mtp.deserialize(&mut bytes).unwrap();
+        assert!(matches!(results.as_slice(),
+            [Deserialization::RpcResult(result)] if result.msg_id == MsgId(0) && result.body == REQUEST));
+    }
+
     #[test]
     fn ensure_finalize_preserves_buffer() {
         let mut buffer = DequeBuffer::with_capacity(0, 0);

@@ -1,0 +1,30 @@
+fatal: bad object 6ce4c54c0ad712a6f91f6344119f58be105f9533
+candidate checkpoint: 5f0cb0511416e666b5476c078c0aaa86d9bce69e
+178 local Markdown links resolve in a fresh index export
+round1: 171 historical source hashes match 5b16ac4
+round2: 171 historical source hashes match 5f0cb05
+candidate: live files match index; 3 additional build inputs match checkpoint
+final: 171 source and 328 artifact hashes match index
+current validation and benchmark receipts bind to the candidate source manifest
+executable bytes not supplied; build/measurement hash consistency checked only
+validation: receipts match result-line totals; negative control failed as expected
+paired comparisons: every configured execution has its successful raw log
+Traceback (most recent call last):
+  File "<clone>/scripts/check-optimization-evidence.py", line 344, in main
+    raw = canonical_git(repo, 'show', '--format=fuller', '--full-index',
+  File "<clone>/scripts/check-optimization-evidence.py", line 96, in canonical_git
+    return subprocess.check_output(['git', '--git-dir=' + str(isolated), *args], env=env)
+  File "/usr/lib/python3.10/subprocess.py", line 421, in check_output
+    return run(*popenargs, stdout=PIPE, timeout=timeout, check=True,
+  File "/usr/lib/python3.10/subprocess.py", line 526, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['git', '--git-dir=<isolated-git>', 'show', '--format=fuller', '--full-index', '--binary', '--no-ext-diff', '--no-textconv', '6ce4c54c0ad712a6f91f6344119f58be105f9533']' returned non-zero exit status 128.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<clone>/scripts/check-optimization-evidence.py", line 361, in <module>
+    main()
+  File "<clone>/scripts/check-optimization-evidence.py", line 347, in main
+    raise AssertionError('upstream objects unavailable; run the fetch_command in upstream/source.json') from error
+AssertionError: upstream objects unavailable; run the fetch_command in upstream/source.json

@@ -11,6 +11,8 @@
 
 This independently maintained fork builds on [Lonami's grammers](https://codeberg.org/Lonami/grammers). It keeps the raw MTProto APIs and adds an easier client interface, portable sessions, bounded work, and observable shutdown.
 
+Before deploying many bots in one process, read the [known limitations and measured costs](CHANGELOG.md#known-limitations-and-measured-costs), including generated-TL stack overflow, channel recovery without cached access, and measured throughput/memory tradeoffs.
+
 ## Install
 
 Use this repository for the fork APIs. For deployments, pin a reviewed commit with `rev` instead of following `main`.

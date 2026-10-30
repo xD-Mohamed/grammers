@@ -1,0 +1,22 @@
+   Compiling grammers-tl-types v0.10.0 (<control>/grammers-tl-types)
+   Compiling grammers-mtproto v0.10.0 (<control>/grammers-mtproto)
+   Compiling grammers-session v0.10.0 (<control>/grammers-session)
+   Compiling grammers-mtsender v0.10.0 (<control>/grammers-mtsender)
+    Finished `release` profile [optimized] target(s) in 1m 26s
+     Running unittests src/lib.rs (<worktree>/target/release/deps/grammers_mtsender-b36f2ea05566075f)
+
+running 1 test
+
+thread 'sender_pool::optimization_tests::ready_connection_queue_yields_before_draining_its_backlog' (164) panicked at grammers-mtsender/src/sender_pool.rs:1588:9:
+completed 512
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test sender_pool::optimization_tests::ready_connection_queue_yields_before_draining_its_backlog ... FAILED
+
+failures:
+
+failures:
+    sender_pool::optimization_tests::ready_connection_queue_yields_before_draining_its_backlog
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 95 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p grammers-mtsender --lib`

@@ -60,6 +60,8 @@ impl Client {
             auth_copied_to_dcs: Mutex::new(Vec::new()),
             configuration,
             lifecycle: None,
+            #[cfg(test)]
+            rpc_responder: None,
         }))
     }
 
@@ -108,19 +110,36 @@ impl Client {
         dc_id: i32,
         request: &R,
     ) -> Result<R::Return, InvocationError> {
+        #[cfg(test)]
+        if let Some(responder) = &self.0.rpc_responder {
+            let response = responder(dc_id, &tl::Serializable::to_bytes(request))?;
+            return <R::Return as tl::Deserializable>::from_bytes(&response)
+                .map_err(InvocationError::from);
+        }
         self.0.handle.invoke_in_dc(dc_id, request).await
     }
 
     pub(crate) async fn copy_auth_to_dc(&self, target_dc_id: i32) -> Result<(), InvocationError> {
         let mut auth_copied_to_dcs = self.0.auth_copied_to_dcs.lock().await;
-        if auth_copied_to_dcs.contains(&target_dc_id) {
-            return Ok(());
-        }
-
         let home_dc_id = self.0.session.home_dc_id()?;
         if target_dc_id == home_dc_id {
             return Ok(());
         }
+
+        let target_key = self
+            .0
+            .session
+            .dc_option(target_dc_id)?
+            .and_then(|dc| dc.auth_key);
+        if target_key.as_ref().is_some_and(|key| {
+            auth_copied_to_dcs
+                .iter()
+                .any(|(dc, copied_key)| *dc == target_dc_id && copied_key.as_ref() == key)
+        }) {
+            return Ok(());
+        }
+        // Authorization belongs to a key, not a DC number.
+        auth_copied_to_dcs.retain(|(dc, _)| *dc != target_dc_id);
 
         let tl::enums::auth::ExportedAuthorization::Authorization(exported_auth) = self
             .invoke(&tl::functions::auth::ExportAuthorization {
@@ -137,8 +156,75 @@ impl Client {
         )
         .await?;
 
-        auth_copied_to_dcs.push(target_dc_id);
+        // Setup may replace the key during import. Never attribute success to a
+        // newly observed key; the mutex coalesces imports for an unchanged key.
+        // An absent pre-import key stays uncached: normal file retries already
+        // have a persisted key. Direct calls may repeat after initialization,
+        // avoiding attribution to a key replaced during the import await.
+        if let Some(key) = target_key {
+            let current_key = self
+                .0
+                .session
+                .dc_option(target_dc_id)?
+                .and_then(|dc| dc.auth_key);
+            if current_key.as_ref() == Some(&key) {
+                auth_copied_to_dcs.push((target_dc_id, Box::new(key)));
+            }
+        }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+pub(super) fn test_self_user(id: i64, hash: Option<i64>, bot: bool) -> tl::enums::User {
+    use tl::{Deserializable, Identifiable};
+    let flags = (1_u32 << 10) | u32::from(hash.is_some()) | (u32::from(bot) << 14);
+    let mut bytes = tl::types::User::CONSTRUCTOR_ID.to_le_bytes().to_vec();
+    bytes.extend_from_slice(&flags.to_le_bytes());
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&id.to_le_bytes());
+    if let Some(hash) = hash {
+        bytes.extend_from_slice(&hash.to_le_bytes());
+    }
+    if bot {
+        bytes.extend_from_slice(&0_i32.to_le_bytes());
+    }
+    tl::enums::User::from_bytes(&bytes).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grammers_mtsender::SenderPool;
+    use grammers_session::Session;
+    use grammers_session::storages::MemorySession;
+    #[tokio::test]
+    async fn authorization_copy_cache_does_not_survive_key_replacement() {
+        for replacement in [Some([2; 256]), None] {
+            let session = Arc::new(MemorySession::default());
+            session.set_home_dc_id(2).await.unwrap();
+            let target_dc = 4;
+            let mut dc = session.dc_option(target_dc).unwrap().unwrap();
+            dc.auth_key = Some([1; 256]);
+            session.set_dc_option(&dc).await.unwrap();
+            let pool = SenderPool::new(Arc::clone(&session), 1);
+            let client = Client::new(pool.handle);
+            client
+                .0
+                .auth_copied_to_dcs
+                .lock()
+                .await
+                .push((target_dc, Box::new([1; 256])));
+            client.copy_auth_to_dc(target_dc).await.unwrap();
+            dc.auth_key = replacement;
+            session.set_dc_option(&dc).await.unwrap();
+            tokio::select! {
+                biased;
+                result = client.copy_auth_to_dc(target_dc) => panic!("replacement key must export: {result:?}"),
+                _ = std::future::ready(()) => {}
+            }
+            assert!(client.0.auth_copied_to_dcs.lock().await.is_empty());
+        }
     }
 }

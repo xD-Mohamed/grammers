@@ -1,0 +1,5 @@
+   Compiling grammers-tl-parser v1.2.2 (<control>/grammers-tl-parser)
+   Compiling grammers-tl-gen v0.10.0 (<control>/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (<control>/grammers-tl-types)
+   Compiling grammers-session v0.10.0 (<control>/grammers-session)
+    Finished `release` profile [optimized] target(s) in 47.35s

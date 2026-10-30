@@ -1,0 +1,266 @@
+{
+  "source_inputs_sha256": "f39d322de0885831e90e74ee4c232b0b079042314bfe0df2b3b743273b413c00",
+  "result_prefix": "acceptance-r2-",
+  "analysis_target_initially_empty": true,
+  "analysis_target_scope": "check, clippy and rustdoc share this new initially empty target; test commands use the ordinary target",
+  "tooling_inputs": {
+    "scripts/check-optimization-evidence.py": "020ecef7c0d5d7c71dee6af94f49abf29d31813cbdd2457ade2eefa5c6100937",
+    "scripts/test_check_optimization_evidence.py": "b28a64ebccb116e7de9184a91d8981ba4d4562bd6844c219ea50f791e8ce8797"
+  },
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+  "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)",
+  "environment": {
+    "CARGO_BUILD_JOBS": "1",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0"
+  },
+  "execution": "Parent on the original candidate; reviewer workers had no shell execution.",
+  "results": {
+    "acceptance-r2-fmt": {
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.413
+    },
+    "acceptance-r2-check": {
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 186.596,
+      "environment": {
+        "CARGO_TARGET_DIR": "<fresh-analysis-target>"
+      }
+    },
+    "acceptance-r2-clippy": {
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 116.667,
+      "environment": {
+        "CARGO_TARGET_DIR": "<fresh-analysis-target>"
+      }
+    },
+    "acceptance-r2-rustdoc": {
+      "command": [
+        "cargo",
+        "doc",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-features",
+        "--no-deps"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 33.213,
+      "environment": {
+        "CARGO_TARGET_DIR": "<fresh-analysis-target>",
+        "RUSTDOCFLAGS": "-D warnings"
+      }
+    },
+    "acceptance-r2-workspace": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "--workspace",
+        "--all-features"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 378.315,
+      "totals": {
+        "passed": 684,
+        "failed": 0,
+        "ignored": 44
+      }
+    },
+    "acceptance-r2-client-minimal": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-client",
+        "--no-default-features",
+        "--lib"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 56.14,
+      "totals": {
+        "passed": 52,
+        "failed": 0,
+        "ignored": 0
+      }
+    },
+    "acceptance-r2-debug-mentions": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "grammers-client",
+        "--all-features",
+        "malformed_mentions"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 13.641,
+      "totals": {
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0
+      }
+    },
+    "acceptance-r2-python": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts",
+        "-p",
+        "test_check_optimization_evidence.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.427,
+      "passed_tests": 28
+    },
+    "acceptance-r2-session-memory": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 34.069,
+      "totals": {
+        "passed": 55,
+        "failed": 0,
+        "ignored": 3
+      }
+    },
+    "acceptance-r2-session-import": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--features",
+        "session-import",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 37.434,
+      "totals": {
+        "passed": 77,
+        "failed": 0,
+        "ignored": 3
+      }
+    },
+    "acceptance-r2-session-string": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--features",
+        "session-string",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 33.155,
+      "totals": {
+        "passed": 62,
+        "failed": 0,
+        "ignored": 3
+      }
+    },
+    "acceptance-r2-session-files": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--features",
+        "session-import-files",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 36.831,
+      "totals": {
+        "passed": 97,
+        "failed": 0,
+        "ignored": 3
+      }
+    },
+    "acceptance-r2-debug-self-response": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "grammers-client",
+        "--all-features",
+        "self_send_resolves_identity_before_text_or_media_delivery"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.766,
+      "totals": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    }
+  },
+  "source_inputs_file": "performance/post-acceptance-round2/source/source-inputs.json"
+}

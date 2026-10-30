@@ -1,0 +1,23 @@
+test_assume_unchanged_does_not_hide_different_tested_source (test_check_optimization_evidence.CandidateChecks) ... ok
+test_canonical_diff_ignores_local_git_configuration (test_check_optimization_evidence.CandidateChecks) ... ok
+test_complete_candidate_and_unchanged_schema_pass (test_check_optimization_evidence.CandidateChecks) ... ok
+test_deleted_checkpoint_configuration_cannot_escape_build_identity (test_check_optimization_evidence.CandidateChecks) ... ok
+test_each_expected_identity_field_is_enforced (test_check_optimization_evidence.CandidateChecks) ... ok
+test_ignored_cargo_configuration_cannot_escape_build_identity (test_check_optimization_evidence.CandidateChecks) ... ok
+test_ignored_non_json_evidence_cannot_escape_index (test_check_optimization_evidence.CandidateChecks) ... ok
+test_manifest_cannot_omit_tracked_source (test_check_optimization_evidence.CandidateChecks) ... ok
+test_new_staged_toolchain_cannot_reuse_old_build_identity (test_check_optimization_evidence.CandidateChecks) ... ok
+test_staged_schema_change_cannot_reuse_old_build_receipts (test_check_optimization_evidence.CandidateChecks) ... ok
+test_untracked_source_cannot_escape_manifest (test_check_optimization_evidence.CandidateChecks) ... ok
+test_benchmark_receipts_reject_stale_sources_and_wrong_executables (test_check_optimization_evidence.ValidationChecks) ... ok
+test_external_privacy_patterns_cover_text_outside_benchmarks (test_check_optimization_evidence.ValidationChecks) ... ok
+test_main_and_detached_identity_are_allowed_without_explicit_constraint (test_check_optimization_evidence.ValidationChecks) ... ok
+test_python_receipt_rejects_hidden_failure (test_check_optimization_evidence.ValidationChecks) ... ok
+test_receipt_references_cannot_escape_evidence (test_check_optimization_evidence.ValidationChecks) ... ok
+test_routing_receipt_rejects_failed_rows_and_mismatched_totals (test_check_optimization_evidence.ValidationChecks) ... ok
+test_validation_requires_named_current_rows_and_source_binding (test_check_optimization_evidence.ValidationChecks) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.213s
+
+OK

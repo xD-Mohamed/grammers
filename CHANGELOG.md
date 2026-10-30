@@ -23,6 +23,111 @@
 - Offload PQ factorization alongside DH work. Disable optional salt prefetch after
   repeated rejection without closing the connection. Diagnose unexpected container
   child sequence ordering with a warning while preserving other validation.
+- Reject malformed GetState counters and live update metadata before changing
+  recovery state. Repair invalid saved rows/counters with warnings at stream startup;
+  strict `MessageBoxes::try_load` remains available for callers requiring rejection. Checked peer constructors reject extreme IDs
+  without overflowing in debug builds.
+
+### Post-review recovery corrections
+
+- Preserve zero-QTS updates and valid siblings; skip malformed difference elements
+  while applying validated response state. Recognize login after stream creation.
+- Limit missing channel access-hash retries to 30 deferrals, then warn and release
+  that saved backlog position so live delivery resumes without a peer cache.
+  Remember exhaustion for that receiver lifetime so later recovery episodes do
+  not repeat the grace; usable access or a successful difference resets it.
+  The first grace suppresses live channel PTS updates and may lose them permanently
+  when no hash becomes available, including with `auto_cache_peers: false`.
+- Avoid repeated pending-queue scans during catch-up deadline checks.
+- Deliver delayed RPC replies below the actual replay floor without replaying own
+  updates or discarding valid siblings. Keep container replay decisions stable.
+- Give the reactor a bounded opportunity to report buffered replies before opt-in
+  liveness expiry, retaining the probe across cancellation.
+- Preserve shared setup RPC errors, reject invalid mention IDs, retain working salts
+  on empty replies, and prevent ACK traffic from starving near-limit requests.
+- Classify unknown negative RPC codes as `UncertainDelivery`; default retry remains
+  conservative.
+- Retain an update batch before awaiting peer caching; cancellation no longer
+  loses it. Preserve local channel PTS when receiving `updateChannelTooLong`,
+  and let other channels progress after channel-scoped RPC rejection.
+- Return unmapped send results through the existing fallback, preserve peerless
+  channel edits as raw updates, and invalidate copied authorization after key rotation.
+- Retire failed/wrapped optional salt replies, preserve sibling results on sequence
+  correction, and offload SRP validation/proof work behind bounded admission.
+
+- Preserve recovery for imported sessions without a cached self user: account
+  updates establish provisional login proof; pre-login service pushes do not.
+  Missing proof uses paced self-metadata checks, at most once per second.
+  First channel recovery also resolves unknown account kind with one lookup.
+- Preserve channel positions and propagate session-wide errors; unknown channel
+  rejections defer recovery without erasing saved PTS or blocking other channels.
+- Resolve missing self identity before sending to Saved Messages; `get_me` caches
+  explicit self metadata even with automatic peer caching disabled.
+- Refresh invalid SRP parameters once when B is outside the supplied prime, and
+  preserve peerless guest-chat queries as raw updates.
+
+### Known limitations and measured costs
+
+Generated TL recursion is an explicit deferral. A deeply nested value in an
+authenticated Telegram response, including content influenced by remote users,
+can cause a **process-aborting stack overflow**. Every bot sharing that process
+can stop. MTProto/gzip depth and work limits do not bound generated TL recursion,
+and checked runners cannot contain a non-unwinding abort.
+
+Cooperative sender budgeting currently counts more than the receive arm.
+Receive-arm-only placement remains unevaluated and deferred. No stack profile
+was obtained because `perf` was unavailable; socket/runtime/thread controls do
+not establish that Tokio is a bottleneck or justify replacing it.
+
+Local correctness costs are material, not a general optimization claim.
+The current twelve-pair comparison measures plain throughput -3.15% [-7.23%, -1.53%]
+and overload completion -0.91% [-6.17%, +3.65%]. Busy p99 is
++124.27% and quiet p99 -45.47%.
+Saturated heap remains 7,911 to 16,079 B/session; dedicated heap-run process RSS
+changes +29.55%. These local intervals do not explain historical losses.
+The historical post-Opus2 comparison measured plain throughput -5.80%,
+CPU/RPC +5.94%, overload completion -3.58%, busy p99 +115.73% and quiet p99 -45.69%.
+Saturated client heap rose from 7,911 to 16,079 B/session; heap-run whole-process
+RSS rose 28.15%. Throughput/CPU losses remain unattributed. See
+[measurement identities, intervals and scope](benchmarks/2026-10-30/final/README.md)
+for the current build and historical comparisons; local/mock runs do not establish
+production capacity.
+
+The historical acceptance-round1 1 MiB reply scenarios used 90,504 KiB candidate
+whole-process max RSS versus 15,052 KiB baseline at 100 offered calls/s, and
+353,152 versus 71,652 KiB at 2,000/s. The baseline failed about half its calls because
+it could not accept the valid large replies, so these are not equivalent-work
+memory comparisons. The absolute candidate memory footprint matters for many
+bots in one process; these figures include the local responder. Current reruns measure 92,388/15,056 KiB
+at 100 calls/s and 372,304/71,924 KiB at 2,000/s, with the same
+baseline-failure caveat. Full scope is linked above.
+
+Obfuscation and encrypted-packet padding still panic if operating-system entropy
+fails. Fallible handshake and EncryptedBuilder setup do not cover those paths.
+
+Pre-login service pushes, including QR login-token notifications, are delivered
+without starting account recovery. Account updates provide provisional login
+proof; a rejected initial GetState (401) returns to paced self-metadata discovery.
+Errors after cached-self or successful GetState confirmation still propagate.
+Ordinary live delivery does not read self metadata. If account kind is unknown,
+the first channel recovery reads it once: cached bots retain limit 100,000;
+missing metadata uses the valid conservative limit of 100 for that receiver.
+
+Unknown channel-difference errors (400/403/406) preserve the channel's PTS and
+allow sibling channels to recover. Live PTS updates for the affected channel
+remain withheld while recovery keeps failing; the failure is logged as a warning.
+
+Missing-hash grace can suppress about 30 seconds of channel updates on the first
+recovery episode, or longer under scheduling delays. The unavailable backlog is
+discarded. Exhaustion memory is per receiver, grows with distinct exhausted
+channels, and is not persisted. New receivers can therefore encounter a new grace.
+Peer caching is required for reliable channel catch-up. Cancelled peer-cache work
+is retained and retried on the next stream call before buffered updates are delivered.
+
+Opt-in `liveness_timeout` measures time without a **complete valid packet**.
+Partial transport progress does not reset it. Configure enough time for the
+largest slow response, or keep the default `None`; trickled bytes cannot keep an
+otherwise unresponsive connection alive indefinitely.
 
 ### Compatibility and migration
 
@@ -31,8 +136,12 @@ and `ReadError::Shared` variants. `Read` includes `may_have_been_sent`; retry on
 when application semantics permit it. Use `root_cause`, `category`, `transport_error`
 and `std::error::Error::source` instead of assuming every connection error is `Io`.
 `DeserializeError::{InvalidEnvelope, ResourceLimit}` and authentication
-`Error::{InvalidPq, InvalidDhParameters}` also require exhaustive-match updates.
+`Error::{InvalidPq, InvalidDhParameters, RandomnessUnavailable}` also require exhaustive-match updates.
 `DhGenRetry` is now reported distinctly from `DhGenFail`.
+The legacy tuple-returning `grammers_crypto::factorize` now panics on invalid
+non-semiprimes such as `30` or exhausted work; use fallible `try_factorize` for
+untrusted inputs. Session construction offers `Builder::try_finish`; the legacy
+`finish` retains its entropy-failure panic while sender setup uses the fallible path.
 
 New public configuration fields include `max_pending_bytes`, `liveness_timeout`
 and `decode_limits`. Update explicit struct literals or use `..Default::default()`.

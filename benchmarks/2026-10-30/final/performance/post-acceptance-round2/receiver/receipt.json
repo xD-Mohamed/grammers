@@ -1,0 +1,37 @@
+{
+  "candidate_source_inputs_sha256": "f39d322de0885831e90e74ee4c232b0b079042314bfe0df2b3b743273b413c00",
+  "baseline_source_inputs_sha256": "8bf94b609247c59b2316e550a5954c4eeb2d12d2aa7c51ef56aa26d9c80458f6",
+  "baseline_index_tree": "35b3eea137b32a3685b0bbafd41f2a93c470f88c",
+  "control_source_inputs_sha256": "e19697482c8d4b041bac42513371eb17b8a3e2c79ff385caaa13dff398460e15",
+  "benchmark_only_patch_sha256": "153bee9bd534203c29e9dc28951e8a4438f1eedb8797398244bbab2a901c53e7",
+  "build_command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--release",
+    "-p",
+    "grammers-client",
+    "--all-features",
+    "--test",
+    "receiver_sqlite_cost",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "builds": {
+    "baseline": {
+      "exit_code": 0,
+      "elapsed_seconds": 97.66039327299222,
+      "binary_sha256": "06000e9dfb68c8d101e1a477a763b5be56a60b47790b5cf19297224bbd03264c"
+    },
+    "candidate": {
+      "exit_code": 0,
+      "elapsed_seconds": 80.7272789280396,
+      "binary_sha256": "262867adccf61f5982c9541d2c0a8e9b19b53c0a0b90f6767827b258768791cb"
+    }
+  },
+  "pairs": 3,
+  "cpu": 0,
+  "test": "benchmark_sqlite_self_lookup_and_live_receiver",
+  "scope": "256 idle-boundary live deliveries and negative self lookups; SQLite :memory: with 1000/100000 peers; setup excluded; no sockets or runner. Exact pre-correction source plus identical added integration harness."
+}

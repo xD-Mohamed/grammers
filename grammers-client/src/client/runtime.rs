@@ -473,6 +473,8 @@ impl ClientBuilder {
             configuration: self.configuration,
             auth_copied_to_dcs: tokio::sync::Mutex::new(Vec::new()),
             lifecycle: Some(lifecycle),
+            #[cfg(test)]
+            rpc_responder: None,
         })))
     }
 }

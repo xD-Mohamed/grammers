@@ -1,0 +1,86 @@
+--- /dev/null
++++ b/grammers-client/tests/receiver_sqlite_cost.rs
+@@ -0,0 +1,83 @@
++#![cfg(feature = "session-file")]
++
++use std::hint::black_box;
++use std::sync::Arc;
++use std::time::Instant;
++
++use grammers_mtsender::{SenderPool, UpdatesConfiguration, UpdatesReceiver};
++use grammers_session::Session;
++use grammers_session::storages::SqliteSession;
++use grammers_session::types::{PeerAuth, PeerId, PeerInfo};
++use grammers_session::updates::UpdatesLike;
++use grammers_tl_types as tl;
++use tokio::sync::mpsc;
++
++fn common_update(pts: i32) -> UpdatesLike {
++    UpdatesLike::Updates(
++        tl::types::UpdateShort {
++            date: 1,
++            update: tl::types::UpdateDeleteMessages {
++                messages: vec![pts],
++                pts,
++                pts_count: 1,
++            }
++            .into(),
++        }
++        .into(),
++    )
++}
++
++#[tokio::test(flavor = "current_thread")]
++#[ignore = "local SQLite lookup/live-receiver component benchmark; no network"]
++async fn benchmark_sqlite_self_lookup_and_live_receiver() {
++    const ITERATIONS: i32 = 256;
++    for peer_count in [1_000_i64, 100_000] {
++        let session = Arc::new(SqliteSession::open(":memory:").await.unwrap());
++        session
++            .cache_peers(
++                (1..=peer_count)
++                    .map(|id| PeerInfo::User {
++                        id,
++                        auth: Some(PeerAuth::from_hash(id)),
++                        bot: Some(false),
++                        is_self: Some(false),
++                    })
++                    .collect(),
++            )
++            .await
++            .unwrap();
++        // Negative lookup visits the large table without a cached self row.
++        let started = Instant::now();
++        for _ in 0..ITERATIONS {
++            assert!(black_box(session.peer(PeerId::self_user()).await.unwrap()).is_none());
++        }
++        let lookup_ns = started.elapsed().as_nanos();
++        let pool = SenderPool::new(Arc::clone(&session), 1);
++        let (updates_tx, updates_rx) = mpsc::channel(1);
++        let mut receiver = UpdatesReceiver::create(
++            pool.handle.thin.clone(),
++            Arc::clone(&pool.handle.session),
++            updates_rx,
++            UpdatesConfiguration { catch_up: false },
++        )
++        .await
++        .unwrap();
++        updates_tx.send(common_update(100)).await.unwrap();
++        assert_eq!(receiver.next().await.unwrap().0.len(), 1);
++        let started = Instant::now();
++        for pts in 101..101 + ITERATIONS {
++            let (result, ()) = tokio::join!(receiver.next(), async {
++                tokio::task::yield_now().await;
++                updates_tx.send(common_update(pts)).await.unwrap();
++            });
++            let result = black_box(result.unwrap());
++            assert!(
++                matches!(&result.0[0].0, tl::enums::Update::DeleteMessages(update) if update.pts == pts)
++            );
++        }
++        let live_ns = started.elapsed().as_nanos();
++        println!(
++            "sqlite_live_receiver peers={peer_count} iterations={ITERATIONS} self_lookup_total_ns={lookup_ns} live_total_ns={live_ns}"
++        );
++    }
++}

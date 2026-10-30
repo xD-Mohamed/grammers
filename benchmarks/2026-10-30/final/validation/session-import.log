@@ -1,0 +1,98 @@
+   Compiling grammers-session v0.10.0 (<checkout>/grammers-session)
+    Finished `release` profile [optimized] target(s) in 31.89s
+     Running unittests src/lib.rs (target/release/deps/grammers_session-843bc59dc9402b3a)
+
+running 39 tests
+test message_box::tests::channel_catch_up_rotates_after_nonfinal_pages ... ok
+test message_box::tests::checked_saved_state_and_difference_reject_invalid_counters_without_mutation ... ok
+test message_box::tests::extreme_update_counters_do_not_overflow ... ok
+test message_box::tests::live_qts_without_primary_state_does_not_create_orphan_secondary ... ok
+test message_box::tests::malformed_socket_metadata_cannot_poison_recovery_state ... ok
+test message_box::tests::peerless_channel_message_preserves_non_pts_siblings_and_difference_progress ... ok
+test message_box::tests::relearning_primary_state_preserves_saved_channel_recovery ... ok
+test message_box::tests::saved_state_deduplicates_channels_and_recovers_missing_common_pts ... ok
+test message_box::tests::test_common_and_channel_difference_do_not_duplicate_message ... ok
+test message_box::tests::test_complete_login_flow ... ok
+test message_box::tests::test_connect_flow_empty ... ok
+test message_box::tests::test_connect_flow_with_data ... ok
+test message_box::tests::test_iter_dialogs_flow ... ok
+test message_box::tests::test_next_raw_update_flow_channel_ban ... ok
+test message_box::tests::test_next_raw_update_flow_channel_issues ... ok
+test message_box::tests::test_next_raw_update_flow_channel_timeout ... ok
+test message_box::tests::test_next_raw_update_flow_common_timeout ... ok
+test message_box::tests::test_next_raw_update_flow_empty ... ok
+test message_box::tests::test_next_raw_update_flow_no_new_get_diff_if_already_fetching ... ok
+test message_box::tests::test_process_socket_update_for_new_channel_dispatches_first_update ... ok
+test message_box::tests::test_process_socket_updates_flow_already_processed ... ok
+test message_box::tests::test_process_socket_updates_flow_common_already_applied ... ok
+test message_box::tests::test_process_socket_updates_flow_common_difference_ok ... ok
+test message_box::tests::test_process_socket_updates_flow_common_ok ... ok
+test message_box::tests::test_process_socket_updates_flow_common_pts_gap ... ok
+test message_box::tests::test_process_socket_updates_flow_common_pts_possible_gap_resolves ... ok
+test message_box::tests::test_process_socket_updates_flow_common_seq_gap ... ok
+test message_box::tests::test_process_socket_updates_trickle_causes_gap ... ok
+test peer::cache_merge_tests::channel_refresh_keeps_missing_hash_and_replaces_kind ... ok
+test peer::cache_merge_tests::checked_peer_ids_reject_extremes_before_arithmetic ... ok
+test peer::cache_merge_tests::new_user_information_replaces_cached_values_without_erasing_missing_fields ... ok
+test storages::erased::tests::benchmark_memory_and_erased_cache_peers ... ignored, local session-storage microbenchmark; run explicitly in release mode
+test storages::erased::tests::erased_cache_peers_forwards_empty_input_and_original_error ... ok
+test storages::erased::tests::erased_cache_peers_preserves_bulk_override_and_input_order ... ok
+test storages::erased::tests::memory_cache_peers_matches_ordered_individual_updates ... ok
+test storages::memory::tests::cache_peers_empty_input_succeeds_with_poisoned_storage ... ok
+test storages::memory::tests::compact_dc_options_round_trip_session_data ... ok
+test storages::memory::tests::self_user_lookup_recognizes_bulk_cached_identity ... ok
+test storages::memory::tests::self_user_lookup_uses_cached_identity_and_tracks_flag_changes ... ok
+
+test result: ok. 38 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deps.rs (target/release/deps/deps-796e44710ff6423b)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/import.rs (target/release/deps/import-e94396fc2bc4a284)
+
+running 22 tests
+test auto_detection_handles_supported_formats ... ok
+test diagnostics_never_include_input_or_auth_key ... ok
+test explicit_parsers_select_only_the_named_format_and_address_family ... ok
+test gotd_allows_missing_optional_key_id_and_preserves_ipv6_address ... ok
+test gotd_imports_version_one_loader_json_and_verifies_key_id ... ok
+test gotd_preserves_explicit_production_endpoint_and_session_data_conversion ... ok
+test gotd_rejects_invalid_versions_keys_key_ids_addresses_and_environment ... ok
+test gotd_rejects_known_endpoint_environment_mismatch ... ok
+test gotd_rejects_missing_and_duplicate_relevant_fields ... ok
+test oversized_inputs_are_rejected_before_decoding ... ok
+test pyrogram_application_id_metadata_respects_signed_range ... ok
+test pyrogram_imports_current_and_both_legacy_formats_with_optional_padding ... ok
+test pyrogram_rejects_invalid_fields_and_lengths ... ok
+test pyrogram_rejects_production_only_dc_in_test_mode ... ok
+test pyrogram_supports_dc_203_without_copying_its_key_to_other_dcs ... ok
+test pyrogram_test_sessions_have_only_test_routes ... ok
+test pyrogram_zero_application_id_is_missing_metadata ... ok
+test telethon_ipv6_test_endpoint_is_classified_and_preserved ... ok
+test telethon_preserves_ipv4_endpoint_and_does_not_invent_metadata ... ok
+test telethon_preserves_ipv6_endpoint_and_requires_ipv6_preference ... ok
+test telethon_recognizes_test_endpoints_without_production_fallbacks ... ok
+test telethon_rejects_versions_truncation_trailing_bytes_and_invalid_fields ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/native.rs (target/release/deps/native-262a46d2ad3ffd1e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests grammers_session
+
+running 3 tests
+test grammers-session/src/peer.rs - peer::PeerId (line 17) ... ok
+test grammers-session/src/peer.rs - peer::PeerId::to_ambient_ref (line 289) ... ok
+test grammers-session/src/types.rs - types::DcOption::id (line 26) ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.25s; merged doctests compilation took 0.24s

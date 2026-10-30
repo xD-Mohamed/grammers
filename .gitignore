@@ -17,3 +17,4 @@ testbed.rs
 !benchmarks/2026-10-30/first-candidate/summary.json
 !benchmarks/2026-10-30/round1/**/*.json
 !benchmarks/2026-10-30/round2/**/*.json
+!benchmarks/2026-10-30/final/**/*.json

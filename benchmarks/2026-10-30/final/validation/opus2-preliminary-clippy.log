@@ -1,0 +1,6 @@
+    Checking grammers-session v0.10.0 (<candidate-worktree>/grammers-session)
+    Checking grammers-mtproto v0.10.0 (<candidate-worktree>/grammers-mtproto)
+    Checking grammers-mtsender v0.10.0 (<candidate-worktree>/grammers-mtsender)
+    Checking grammers-client v0.10.0 (<candidate-worktree>/grammers-client)
+    Checking grammers v0.1.0 (<candidate-worktree>/grammers)
+    Finished `dev` profile [unoptimized] target(s) in 11.92s

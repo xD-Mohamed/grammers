@@ -1,7 +1,7 @@
 {
   "reviewed_checkpoint": "5b16ac41ae9d6b0cdd0bf42df50d6064561bc19e",
   "historical_baseline": "7774ed666317d981e1dfea0d12311cbd38acb43e",
-  "code_diff_command": "git diff --binary 5b16ac41ae9d6b0cdd0bf42df50d6064561bc19e -- Cargo.lock ':(glob)**/Cargo.toml' ':(glob)**/*.rs'",
+  "code_diff_command": "git diff --binary 5b16ac41ae9d6b0cdd0bf42df50d6064561bc19e 5f0cb0511416e666b5476c078c0aaa86d9bce69e -- Cargo.lock ':(glob)**/Cargo.toml' ':(glob)**/*.rs'",
   "code_diff_sha256": "de64c736ef60ff4c0d71ade1793dee0ac6d667558fa66da9575a8599b50db8d6",
   "source_input_hashes": "source-inputs.json",
   "source_inputs_sha256": "41daca9dab262ef58cdc5acc705cac939b9c08dcacc3432df285d7210dbf996c",
@@ -27,5 +27,8 @@
     "os": "Linux x86_64",
     "shared_host": true
   },
-  "integration": "Code is identified by these inputs, not an invented future commit. Independent review acceptance/publication are not asserted."
+  "integration": "The orchestrator recorded this measured source as correction checkpoint 5f0cb05. This is not review acceptance or publication.",
+  "correction_checkpoint": "5f0cb0511416e666b5476c078c0aaa86d9bce69e",
+  "canonical_full_index_diff_sha256": "30da2b1fc48d9c4c179667e40bcdaa8e1d2019ec445c703c561a54441af0cd44",
+  "canonical_hash_note": "Additional reproducible full-index hash; original historical hash retained."
 }

@@ -1,0 +1,10 @@
+   Compiling grammers-tl-parser v1.2.2 (<candidate>/grammers-tl-parser)
+   Compiling grammers-tl-gen v0.10.0 (<candidate>/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (<candidate>/grammers-tl-types)
+    Checking grammers-crypto v0.10.0 (<candidate>/grammers-crypto)
+    Checking grammers-session v0.10.0 (<candidate>/grammers-session)
+    Checking grammers-mtproto v0.10.0 (<candidate>/grammers-mtproto)
+    Checking grammers-mtsender v0.10.0 (<candidate>/grammers-mtsender)
+    Checking grammers-client v0.10.0 (<candidate>/grammers-client)
+    Checking grammers v0.1.0 (<candidate>/grammers)
+    Finished `dev` profile [unoptimized] target(s) in 1m 56s

@@ -41,5 +41,7 @@
     "grammers_crypto-beb17f4c5dd099c6": "7702c3fddc7fc1289eb1e22b1714368528ac6970855dd81df44fc3b090bc50c1"
   },
   "prime_reproduction_command": "cargo test --locked --release -p grammers-crypto --lib two_factor_auth::tests::benchmark_published_prime_validation -- --exact --ignored --nocapture --test-threads=1",
-  "measured_source_checkpoint": "5b16ac41ae9d6b0cdd0bf42df50d6064561bc19e"
+  "measured_source_checkpoint": "5b16ac41ae9d6b0cdd0bf42df50d6064561bc19e",
+  "canonical_full_index_diff_sha256": "075a2bf962299401923a22583513f0faa6171d3602d37f76c7e3f9a46cd16929",
+  "canonical_hash_note": "Additional reproducible full-index hash; original historical hash retained."
 }

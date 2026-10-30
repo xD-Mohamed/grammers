@@ -1,0 +1,37 @@
+{
+  "component": "full missing-hash retry passes, excluding terminal removal and overall catch-up",
+  "baseline_index_tree": "4cd6d1a902685d0c0b4dc1e4628e834fd0d749bd",
+  "baseline_source_inputs_sha256": "94c015aac9c37cab1adb435deccca824363a29a043fbe529db05cba32d645b23",
+  "candidate_source_inputs_sha256": "8bf94b609247c59b2316e550a5954c4eeb2d12d2aa7c51ef56aa26d9c80458f6",
+  "control_source_inputs_sha256": "a9717d886ce223bc4fb35a29ddb17c048a31c50321840ee55c03963d97848982",
+  "benchmark_only_patch_sha256": "566071c666ff6e8901e8fc4baaee33a201cb1003994cbb81af10e21494ea8b13",
+  "adjustment": "Identical ignored harness appended to unmodified reviewed production baseline.",
+  "build_command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--release",
+    "-p",
+    "grammers-session",
+    "--no-default-features",
+    "--lib",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "builds": {
+    "baseline": {
+      "exit_code": 0,
+      "elapsed_seconds": 59.12187183799688,
+      "binary_sha256": "be4b9efb3019b46c4791b1aef0c503252af8c986151e3bbae709fa23d5faf085"
+    },
+    "candidate": {
+      "exit_code": 0,
+      "elapsed_seconds": 56.50889812898822,
+      "binary_sha256": "dd234145827cba53fb786de008b712ae4f54d3651630c60bc5caa77d612397e8"
+    }
+  },
+  "pairs": 3,
+  "cpu": 0,
+  "test": "message_box::tests::benchmark_missing_hash_retry_pass"
+}

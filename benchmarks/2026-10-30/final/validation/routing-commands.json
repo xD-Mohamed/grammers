@@ -1,0 +1,130 @@
+{
+  "execution": "Parent executed; no reviewer execution claimed. Rust/Cargo source is unchanged from final/source.json.",
+  "results": {
+    "routing-python": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts",
+        "-p",
+        "test_check_optimization_evidence.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.335,
+      "passed_tests": 10
+    },
+    "routing-workspace": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "--workspace",
+        "--all-features"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 18.29,
+      "totals": {
+        "passed": 604,
+        "failed": 0,
+        "ignored": 41
+      }
+    },
+    "routing-fmt": {
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.438
+    },
+    "routing-check": {
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.192
+    },
+    "routing-clippy": {
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.275
+    },
+    "routing-rustdoc": {
+      "command": [
+        "cargo",
+        "doc",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-features",
+        "--no-deps"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.211
+    }
+  },
+  "superseded_python_fixture_attempt": {
+    "command": [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "scripts",
+      "-p",
+      "test_check_optimization_evidence.py",
+      "-v"
+    ],
+    "exit_code": 1,
+    "elapsed_seconds": 0.348,
+    "tests_run": 10,
+    "errors": 1,
+    "note": "Test fixture attempted git rm of an added staged file without a HEAD. Fixed fixture to unlink then stage deletion; no candidate-source failure."
+  },
+  "environment": {
+    "CARGO_BUILD_JOBS": "1",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "RUSTDOCFLAGS": "-D warnings for rustdoc only"
+  },
+  "read_only_upstream_verification": {
+    "command": [
+      "git",
+      "ls-remote",
+      "https://codeberg.org/Lonami/grammers.git",
+      "refs/heads/master"
+    ],
+    "exit_code": 0,
+    "observed_on": "2026-10-30",
+    "stdout": "1e31e73cd9797790905bbea82cd75adcbe6f1242\trefs/heads/master\n"
+  },
+  "source_inputs_sha256": "f97006a847b2d918c27aca1b45f03ee5f3db9c2551208d95a0aeaea9361210db",
+  "source_inputs_file": "performance/measured-source/source-inputs.json",
+  "receipt_scope": "Historical pre-Opus source; not a validation receipt for the later correction."
+}

@@ -1,0 +1,35 @@
+{
+  "component": "pending-channel check_deadlines only; not full recovery throughput",
+  "candidate_source_inputs_sha256": "f39d322de0885831e90e74ee4c232b0b079042314bfe0df2b3b743273b413c00",
+  "baseline_source_inputs_sha256": "6d9ac6eb7f2f94987cea0db51ec7e468905834013d83a1e30303c694778e6471",
+  "baseline_adjustment": "Only the identical ignored benchmark was appended to the pre-round2 snapshot; production code is unchanged.",
+  "build_command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--release",
+    "-p",
+    "grammers-session",
+    "--lib",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "builds": {
+    "baseline": {
+      "exit_code": 0,
+      "elapsed_seconds": 54.517621236038394,
+      "binary_sha256": "b6f218babec65aed718f7a7e3bef6b4e71d3f295ab46310f9b87aec1772f7514"
+    },
+    "candidate": {
+      "exit_code": 0,
+      "elapsed_seconds": 55.476172087015584,
+      "binary_sha256": "179b9e88cacd8765ceaddec542e2dad9d7fc1e5a8f7f4f11fc10a80b56ab5c92"
+    }
+  },
+  "pairs": 3,
+  "cpu": 0,
+  "test": "message_box::tests::benchmark_pending_channel_deadlines",
+  "benchmark_only_patch_sha256": "8ef57b1d52d4f83bd09b059f48e8c19d99a0f19559cdd4c7c31dcc5231927fe0",
+  "control_source_inputs_sha256": "e5bc3d65fc4ba8cd82d9c0cfb55d5ddd95581d39a9bd1563f8b941318dd215fe"
+}

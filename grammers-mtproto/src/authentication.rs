@@ -50,6 +50,8 @@ const TRACE_AUTH_GEN: bool = false;
 /// The error type for Authorization Key generation process.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
+    /// The operating system could not provide secure random bytes.
+    RandomnessUnavailable,
     /// PQ is not a product of two distinct 32-bit primes, or factoring exceeded its budget.
     InvalidPq,
 
@@ -137,6 +139,7 @@ impl std::error::Error for Error {}
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::RandomnessUnavailable => write!(f, "secure random data is unavailable"),
             Self::InvalidPq => write!(f, "invalid pq or factorization work limit exceeded"),
             Self::InvalidDhParameters => write!(f, "invalid Diffie-Hellman parameters"),
             Self::InvalidNonce { got, expected } => {
@@ -198,9 +201,15 @@ pub struct Step3 {
 
 /// The first step of the process to generate an Authorization Key.
 pub fn step1() -> Result<(tl::functions::ReqPqMulti, Step1), Error> {
+    step1_with_rng(getrandom::fill)
+}
+
+fn step1_with_rng<E>(
+    fill: impl FnOnce(&mut [u8]) -> Result<(), E>,
+) -> Result<(tl::functions::ReqPqMulti, Step1), Error> {
     let random_bytes = {
         let mut buffer = [0; 16];
-        getrandom::fill(&mut buffer).expect("failed to generate secure data for auth key");
+        fill(&mut buffer).map_err(|_| Error::RandomnessUnavailable)?;
         buffer
     };
 
@@ -233,7 +242,7 @@ pub fn step2(
 
     let random_bytes = {
         let mut buffer = [0; 32 + 224];
-        getrandom::fill(&mut buffer).expect("failed to generate secure data for auth key");
+        getrandom::fill(&mut buffer).map_err(|_| Error::RandomnessUnavailable)?;
         buffer
     };
 
@@ -364,7 +373,7 @@ pub fn step3(
 
     let random_bytes = {
         let mut buffer = [0; 256 + 16];
-        getrandom::fill(&mut buffer).expect("failed to generate secure data for auth key");
+        getrandom::fill(&mut buffer).map_err(|_| Error::RandomnessUnavailable)?;
         buffer
     };
 
@@ -735,6 +744,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn step1_rng_failure_is_a_typed_error_and_success_keeps_nonce() {
+        assert!(matches!(
+            step1_with_rng(|_| Err(())),
+            Err(Error::RandomnessUnavailable)
+        ));
+        let (request, state) = step1_with_rng(|bytes| {
+            bytes.fill(42);
+            Ok::<(), ()>(())
+        })
+        .unwrap();
+        assert_eq!(request.nonce, [42; 16]);
+        assert_eq!(state.nonce, request.nonce);
+    }
+
+    #[test]
     fn malformed_pq_and_short_dh_answers_return_errors() {
         for pq in [0, 1, 2, 3, 9, 27, u64::MAX] {
             let result = do_step2(
@@ -800,7 +824,7 @@ mod tests {
         let prime = hex::from_hex(
             "c71caeb9c6b1c9048e6c522f70f13f73980d40238e3e21c14934d037563d930f48198a0aa7c14058229493d22530f4dbfa336f6e0ac925139543aed44cce7c3720fd51f69458705ac68cd4fe6b6b13abdc9746512969328454f18faf8c595f642477fe96bb2a941d5bcd1d4ac8cc49880708fa9b378e3c4f3a9060bee67cf9a4a4a695811051907e162753b56b0f6b410dba74d8a84b2a14b3144e0ef1284754fd17ed950d5965b4b9dd46582db1178d169c6bc465b0d6ff9ca3928fef5b9ae4e418fc15e83ebea0f87fa9ff5eed70050ded2849f47bf959d956850ce929851f0d8115f635b105ee2e4e15d04b2454bf6f4fadf034b10403119cd8e3b92fcc5b",
         );
-        for case in 0..11 {
+        for case in 0..13 {
             let mut inner = tl::types::ServerDhInnerData {
                 nonce: [0; 16],
                 server_nonce: [0; 16],
@@ -827,6 +851,13 @@ mod tests {
                     inner.g_a = (BigUint::from_bytes_be(&prime) - (BigUint::from(1u8) << 1984u32)
                         + BigUint::from(1u8))
                     .to_bytes_be()
+                }
+                // Keep every other field valid: these must reach the prime /
+                // generator gate, without a later time error masking its loss.
+                11 => inner.g = 2, // The known prime is 3, not 7, modulo 8.
+                12 => {
+                    inner.g = 4; // No subgroup residue restriction.
+                    inner.dh_prime[255] &= !1; // An even 2048-bit composite.
                 }
                 _ => {}
             }
@@ -859,7 +890,7 @@ mod tests {
             );
             match case {
                 0 => assert!(result.is_ok(), "valid fixture"),
-                1 | 5 | 6 => assert!(
+                1 | 5 | 6 | 11 | 12 => assert!(
                     matches!(result, Err(Error::InvalidDhParameters)),
                     "case {case}"
                 ),

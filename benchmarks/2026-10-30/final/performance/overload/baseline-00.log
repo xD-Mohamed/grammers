@@ -1,0 +1,31 @@
+
+running 1 test
+test loopback_open_loop ... OPEN group=0 cold=false large=false scheduled=180000 completed=47014 errors=0 dropped=85440 peak=1024 rate=31142 p50_us=14923.0 p95_us=23008.1 p99_us=28399.1
+OPEN group=1 cold=false large=false scheduled=180000 completed=47546 errors=0 dropped=85440 peak=1024 rate=31494 p50_us=16941.0 p95_us=25416.8 p99_us=31349.2
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 4.02s
+
+	Command being timed: "<binary> --exact loopback_open_loop --ignored --nocapture --test-threads=1"
+	User time (seconds): 3.10
+	System time (seconds): 2.16
+	Percent of CPU this job got: 130%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:04.02
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 11432
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 173977
+	Voluntary context switches: 21612
+	Involuntary context switches: 1355
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

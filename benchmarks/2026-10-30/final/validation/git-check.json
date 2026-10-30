@@ -1,0 +1,32 @@
+{
+  "candidate_branch": "<candidate-branch>",
+  "candidate_head": "5f0cb0511416e666b5476c078c0aaa86d9bce69e",
+  "runner_branch": "<runner-branch>",
+  "runner_head": "7774ed666317d981e1dfea0d12311cbd38acb43e",
+  "origin": "https://github.com/xD-Mohamed/grammers.git",
+  "checks": [
+    {
+      "command": "git status --porcelain=v1 --untracked-files=all (runner worktree)",
+      "exit": 0,
+      "result": "clean baseline-only checkout"
+    },
+    {
+      "command": "git diff --check (candidate worktree)",
+      "exit": 0,
+      "result": "no whitespace errors"
+    },
+    {
+      "command": "git fsck --no-reflogs --connectivity-only",
+      "exit": 0,
+      "result": "no missing/corrupt objects; dangling blobs and fetched canonical tip are unreferenced objects, not integrity errors"
+    },
+    {
+      "command": "git ls-remote origin refs/heads/<candidate-branch>",
+      "exit": 0,
+      "result": "no advertised branch"
+    }
+  ],
+  "diagnosis": "Historical candidate integrity checks passed; routing details are in the private handoff.",
+  "handoff": "Review full cumulative source at the candidate checkpoint plus correction; do not substitute the baseline.",
+  "observations": "At measurement time; not a claim about subsequent publication."
+}

@@ -1,0 +1,383 @@
+diff --git a/grammers-mtsender/src/sender_pool.rs b/grammers-mtsender/src/sender_pool.rs
+index f2eb5a2..07ff0ab 100644
+--- a/grammers-mtsender/src/sender_pool.rs
++++ b/grammers-mtsender/src/sender_pool.rs
+@@ -1538,6 +1538,60 @@ mod optimization_tests {
+     use super::*;
+     use tl::Serializable;
+ 
++    #[tokio::test]
++    async fn ready_connection_queue_yields_before_draining_its_backlog() {
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let (sender, peer) = tokio::join!(
++            connect_with_auth(
++                Transport::new(),
++                ServerAddr::Tcp {
++                    address: listener.local_addr().unwrap()
++                },
++                [0; 256]
++            ),
++            listener.accept()
++        );
++        let _peer = peer.unwrap().0;
++        let (tx, rx) = queue::unbounded_channel();
++        let mut responses = Vec::new();
++        for _ in 0..512 {
++            let (tx_result, rx_result) = oneshot::channel();
++            // Invalid bodies fail synchronously without socket progress, so
++            // the ready queue itself must not monopolize the runtime.
++            tx.send(Rpc {
++                body: Bytes::from_static(&[0; 3]),
++                permit: None,
++                tx: tx_result,
++            })
++            .unwrap();
++            responses.push(rx_result);
++        }
++        let session = erase(Arc::new(
++            grammers_session::storages::MemorySession::default(),
++        ));
++        let runner = run_sender(sender.unwrap(), rx, None, 2, session, Arc::default());
++        tokio::pin!(runner);
++        tokio::select! { biased;
++            _ = &mut runner => panic!("open connection should remain active"),
++            _ = std::future::ready(()) => {}
++        }
++        let mut completed = 0;
++        for result in &mut responses {
++            match result.try_recv() {
++                Ok(Err(InvocationError::Io(error))) => {
++                    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
++                    completed += 1;
++                }
++                Err(oneshot::error::TryRecvError::Empty) => {}
++                other => panic!("unexpected request outcome: {other:?}"),
++            }
++        }
++        assert!(
++            (1..responses.len()).contains(&completed),
++            "completed {completed}"
++        );
++    }
++
+     #[tokio::test]
+     async fn socket_failure_drains_unframed_queue_with_original_error_and_permits() {
+         use crate::configuration::{AutoSleep, RetryPolicy};
+@@ -1880,6 +1934,105 @@ mod optimization_tests {
+         assert_eq!(saved.channels, channels);
+     }
+ 
++    #[tokio::test]
++    async fn invalid_socket_channel_does_not_start_recovery_or_block_updates() {
++        let session = Arc::new(grammers_session::storages::MemorySession::default());
++        let pool = SenderPool::new(Arc::clone(&session), 1);
++        let mut receiver = crate::UpdatesReceiver::create(
++            pool.handle.thin.clone(),
++            erase(session),
++            pool.updates,
++            crate::UpdatesConfiguration { catch_up: true },
++        )
++        .await
++        .unwrap();
++        let update_tx = pool.runner.updates_tx.as_ref().unwrap();
++        update_tx
++            .send(UpdatesLike::Updates(
++                tl::types::UpdateShort {
++                    date: 1,
++                    update: tl::types::UpdateChannelTooLong {
++                        channel_id: i64::MAX,
++                        pts: Some(1),
++                    }
++                    .into(),
++                }
++                .into(),
++            ))
++            .await
++            .unwrap();
++        update_tx.send(config_update()).await.unwrap();
++        let update = tokio::time::timeout(Duration::from_secs(1), receiver.next())
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(update.0[0].0, tl::enums::Update::Config);
++    }
++
++    #[tokio::test]
++    async fn invalid_get_state_preserves_storage_and_retries_recovery() {
++        use grammers_session::types::{ChannelState, UpdateState, UpdatesState};
++        let session = Arc::new(grammers_session::storages::MemorySession::default());
++        cache_self_user(session.as_ref()).await;
++        let saved = UpdatesState {
++            channels: vec![ChannelState { id: 7, pts: 10 }],
++            ..Default::default()
++        };
++        session
++            .set_update_state(UpdateState::All(saved.clone()))
++            .await
++            .unwrap();
++        let mut pool = SenderPool::new(Arc::clone(&session), 1);
++        let mut receiver = crate::UpdatesReceiver::create(
++            pool.handle.thin.clone(),
++            erase(Arc::clone(&session)),
++            pool.updates,
++            crate::UpdatesConfiguration { catch_up: true },
++        )
++        .await
++        .unwrap();
++        for field in 0..4 {
++            let mut state = tl::types::updates::State {
++                pts: 100,
++                qts: 0,
++                date: 1,
++                seq: 1,
++                unread_count: 0,
++            };
++            *match field {
++                0 => &mut state.pts,
++                1 => &mut state.qts,
++                2 => &mut state.date,
++                _ => &mut state.seq,
++            } = -1;
++            let (result, ()) = tokio::join!(receiver.next(), async {
++                expect_get_state(&mut pool.runner)
++                    .await
++                    .send(Ok(tl::enums::updates::State::State(state).to_bytes()))
++                    .unwrap();
++            });
++            assert!(matches!(
++                result,
++                Err(InvocationError::Deserialize(
++                    grammers_mtproto::mtp::DeserializeError::InvalidEnvelope { .. }
++                ))
++            ));
++            assert_eq!(session.updates_state().await.unwrap(), saved);
++        }
++        let update_tx = pool.runner.updates_tx.clone().unwrap();
++        let (result, ()) = tokio::join!(receiver.next(), async {
++            expect_get_state(&mut pool.runner)
++                .await
++                .send(Ok(state_reply()))
++                .unwrap();
++            update_tx.send(config_update()).await.unwrap();
++        });
++        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
++        let recovered = session.updates_state().await.unwrap();
++        assert_eq!(recovered.pts, 100);
++        assert_eq!(recovered.channels, saved.channels);
++    }
++
+     #[tokio::test]
+     async fn logged_out_home_failure_does_not_request_account_state() {
+         let session = Arc::new(grammers_session::storages::MemorySession::default());
+diff --git a/grammers-mtsender/src/updates_receiver.rs b/grammers-mtsender/src/updates_receiver.rs
+index 59a055a..0ea2484 100644
+--- a/grammers-mtsender/src/updates_receiver.rs
++++ b/grammers-mtsender/src/updates_receiver.rs
+@@ -40,12 +40,13 @@ async fn prepare_channel_difference(
+     mut request: tl::functions::updates::GetChannelDifference,
+     session: Arc<ErasedSession>,
+     message_box: &mut MessageBoxes,
+-) -> Result<
+-    Option<tl::functions::updates::GetChannelDifference>,
+-    Box<dyn std::error::Error + Send + Sync>,
+-> {
++) -> Result<Option<tl::functions::updates::GetChannelDifference>, InvocationError> {
+     let id = match &request.channel {
+-        tl::enums::InputChannel::Channel(channel) => PeerId::channel_unchecked(channel.channel_id),
++        tl::enums::InputChannel::Channel(channel) => PeerId::channel(channel.channel_id).ok_or(
++            grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
++                reason: "invalid channel update-state identifier",
++            },
++        )?,
+         _ => unreachable!(),
+     };
+ 
+@@ -152,6 +153,14 @@ impl UpdatesReceiver {
+             if self.should_get_state {
+                 match self.invoke(&tl::functions::updates::GetState {}).await {
+                     Ok(tl::enums::updates::State::State(state)) => {
++                        // Validate before persisting or changing the in-memory
++                        // state. A rejected reply must leave recovery armed.
++                        if state.pts < 0 || state.qts < 0 || state.date < 0 || state.seq < 0 {
++                            return Err(grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
++                                reason: "invalid account update state",
++                            }
++                            .into());
++                        }
+                         session
+                             .clone()
+                             .set_update_state(UpdateState::All(UpdatesState {
+diff --git a/grammers-session/src/message_box/adaptor.rs b/grammers-session/src/message_box/adaptor.rs
+index 6cff6ce..af94c0b 100644
+--- a/grammers-session/src/message_box/adaptor.rs
++++ b/grammers-session/src/message_box/adaptor.rs
+@@ -494,11 +494,21 @@ impl PtsInfo {
+             _ => true,
+         };
+         valid_peer
+-            && Self::from_update(update)
+-                .is_none_or(|info| info.count >= 0 && info.pts >= info.count)
++            && Self::raw_from_update(update).is_none_or(|info| {
++                info.count >= 0
++                    && info.pts >= info.count
++                    && match info.key {
++                        Key::Channel(id) => crate::types::PeerId::channel(id).is_some(),
++                        _ => true,
++                    }
++            })
+     }
+ 
+     pub(super) fn from_update(update: &tl::enums::Update) -> Option<Self> {
++        Self::raw_from_update(update).filter(|info| info.pts != NO_PTS)
++    }
++
++    fn raw_from_update(update: &tl::enums::Update) -> Option<Self> {
+         use tl::enums::Update::*;
+         match update {
+             NewMessage(u) => Some(Self {
+@@ -758,6 +768,5 @@ impl PtsInfo {
+             PaidReactionPrivacy(_) => None,
+             _ => None,
+         }
+-        .filter(|info| info.pts != NO_PTS)
+     }
+ }
+diff --git a/grammers-session/src/message_box/mod.rs b/grammers-session/src/message_box/mod.rs
+index 2bc3834..1a0a291 100644
+--- a/grammers-session/src/message_box/mod.rs
++++ b/grammers-session/src/message_box/mod.rs
+@@ -50,7 +50,7 @@ use grammers_tl_types as tl;
+ use tests::Instant;
+ use tracing::{debug, info, trace};
+ 
+-use crate::types::{ChannelState, UpdatesState};
++use crate::types::{ChannelState, PeerId, UpdatesState};
+ 
+ fn next_updates_deadline() -> Instant {
+     Instant::now() + defs::NO_UPDATES_TIMEOUT
+@@ -185,7 +185,7 @@ impl MessageBoxes {
+             || state
+                 .channels
+                 .iter()
+-                .any(|channel| channel.id <= 0 || channel.pts < 0)
++                .any(|channel| PeerId::channel(channel.id).is_none() || channel.pts < 0)
+         {
+             return Err(Gap);
+         }
+@@ -473,6 +473,11 @@ impl MessageBoxes {
+             }
+         };
+ 
++        if date < 0 || seq < 0 || seq_start < 0 {
++            self.try_begin_get_diff(Key::Common);
++            return Err(Gap);
++        }
++
+         let account_pending = force.is_empty()
+             && (self.getting_diff_for.contains(&Key::Common)
+                 || self.getting_diff_for.contains(&Key::Secondary));
+diff --git a/grammers-session/src/message_box/tests.rs b/grammers-session/src/message_box/tests.rs
+index da15f42..00814e4 100644
+--- a/grammers-session/src/message_box/tests.rs
++++ b/grammers-session/src/message_box/tests.rs
+@@ -25,6 +25,60 @@ thread_local! {
+     static NOW: RefCell<Instant> = const { RefCell::new(Instant(Duration::ZERO)) };
+ }
+ 
++#[test]
++fn malformed_socket_metadata_cannot_poison_recovery_state() {
++    let saved = UpdatesState {
++        pts: 100,
++        qts: 0,
++        date: 1,
++        seq: 1,
++        channels: vec![ChannelState { id: 7, pts: 10 }],
++    };
++    for (date, seq_start, seq) in [(-1, 0, 0), (1, -1, 0), (1, 0, -1)] {
++        let mut boxes = MessageBoxes::try_load(saved.clone()).unwrap();
++        assert!(
++            boxes
++                .process_updates(UpdatesLike::Updates(
++                    tl::types::UpdatesCombined {
++                        date,
++                        seq_start,
++                        seq,
++                        updates: vec![tl::enums::Update::Config],
++                        users: vec![],
++                        chats: vec![],
++                    }
++                    .into()
++                ))
++                .is_err()
++        );
++        assert_eq!(boxes.session_state(), saved);
++    }
++    for id in [i64::MIN, -1, 0, 997852516353, 1002147483648, i64::MAX] {
++        let mut invalid = saved.clone();
++        invalid.channels.push(ChannelState { id, pts: 10 });
++        assert!(MessageBoxes::try_load(invalid).is_err());
++        for pts in [0, 10] {
++            let mut boxes = MessageBoxes::try_load(saved.clone()).unwrap();
++            assert!(
++                boxes
++                    .process_updates(UpdatesLike::Updates(
++                        tl::types::UpdateShort {
++                            date: 1,
++                            update: tl::types::UpdateChannelTooLong {
++                                channel_id: id,
++                                pts: Some(pts)
++                            }
++                            .into(),
++                        }
++                        .into()
++                    ))
++                    .is_err()
++            );
++            assert_eq!(boxes.session_state(), saved);
++        }
++    }
++}
++
+ #[test]
+ fn relearning_primary_state_preserves_saved_channel_recovery() {
+     let channels = vec![ChannelState { id: 7, pts: 10 }];
+diff --git a/grammers-session/src/peer.rs b/grammers-session/src/peer.rs
+index d5da303..6acb258 100644
+--- a/grammers-session/src/peer.rs
++++ b/grammers-session/src/peer.rs
+@@ -173,13 +173,13 @@ impl PeerId {
+ 
+     /// Creates a peer identity for a small group chat.
+     pub fn chat(id: i64) -> Option<Self> {
+-        CHAT_ID_RANGE.contains(&id).then_some(Self(-id))
++        CHAT_ID_RANGE.contains(&id).then(|| Self(-id))
+     }
+ 
+     /// Creates a peer identity for a broadcast channel, megagroup, gigagroup or monoforum.
+     pub fn channel(id: i64) -> Option<Self> {
+         (SUPERGROUP_AND_CHANNEL_ID_RANGE.contains(&id) || MONOFORUM_ID_RANGE.contains(&id))
+-            .then_some(Self(-(1000000000000 + id)))
++            .then(|| Self(-(1000000000000 + id)))
+     }
+ 
+     /// Creates a peer identity from a [Bot API dialog ID](https://core.telegram.org/api/bots/ids).
+@@ -1081,6 +1081,19 @@ impl<'a> TryFrom<&'a tl::types::ChannelForbidden> for ChannelKind {
+ mod cache_merge_tests {
+     use super::*;
+ 
++    #[test]
++    fn checked_peer_ids_reject_extremes_before_arithmetic() {
++        for id in [i64::MIN, -1, 0, i64::MAX] {
++            assert!(PeerId::chat(id).is_none());
++            assert!(PeerId::channel(id).is_none());
++        }
++        for id in [1, 997852516352, 1002147483649, 3000000000000] {
++            assert_eq!(PeerId::channel(id).unwrap().bare_id(), Some(id));
++        }
++        assert!(PeerId::channel(997852516353).is_none());
++        assert!(PeerId::channel(1002147483648).is_none());
++    }
++
+     #[test]
+     fn new_user_information_replaces_cached_values_without_erasing_missing_fields() {
+         let mut peer = PeerInfo::User {

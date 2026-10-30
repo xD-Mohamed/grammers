@@ -1,0 +1,20 @@
+{
+  "baseline": {
+    "stages": {
+      "pool created, not connected": 2103,
+      "connected after one RPC": 7911,
+      "after nine RPCs per session": 7911,
+      "after 1100 RPCs per session (replay cache saturated)": 7911
+    },
+    "process_rss_kib": 11288
+  },
+  "candidate": {
+    "stages": {
+      "pool created, not connected": 2143,
+      "connected after one RPC": 7919,
+      "after nine RPCs per session": 8015,
+      "after 1100 RPCs per session (replay cache saturated)": 16079
+    },
+    "process_rss_kib": 14624
+  }
+}

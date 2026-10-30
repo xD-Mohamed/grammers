@@ -1,0 +1,13 @@
+candidate checkpoint: 5f0cb0511416e666b5476c078c0aaa86d9bce69e
+178 local Markdown links resolve in a fresh index export
+round1: 171 historical source hashes match 5b16ac4
+round2: 171 historical source hashes match 5f0cb05
+candidate: live files match index; 3 additional build inputs match checkpoint
+final: 171 source and 328 artifact hashes match index
+current validation and benchmark receipts bind to the candidate source manifest
+executable bytes not supplied; build/measurement hash consistency checked only
+validation: receipts match result-line totals; negative control failed as expected
+paired comparisons: every configured execution has its successful raw log
+upstream: canonical objects verified
+privacy: external patterns not supplied; privacy scan not performed
+PASS: staged evidence is complete; review acceptance and publication require separate receipts

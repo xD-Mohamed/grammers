@@ -173,13 +173,13 @@ impl PeerId {
 
     /// Creates a peer identity for a small group chat.
     pub fn chat(id: i64) -> Option<Self> {
-        CHAT_ID_RANGE.contains(&id).then_some(Self(-id))
+        CHAT_ID_RANGE.contains(&id).then(|| Self(-id))
     }
 
     /// Creates a peer identity for a broadcast channel, megagroup, gigagroup or monoforum.
     pub fn channel(id: i64) -> Option<Self> {
         (SUPERGROUP_AND_CHANNEL_ID_RANGE.contains(&id) || MONOFORUM_ID_RANGE.contains(&id))
-            .then_some(Self(-(1000000000000 + id)))
+            .then(|| Self(-(1000000000000 + id)))
     }
 
     /// Creates a peer identity from a [Bot API dialog ID](https://core.telegram.org/api/bots/ids).
@@ -1080,6 +1080,19 @@ impl<'a> TryFrom<&'a tl::types::ChannelForbidden> for ChannelKind {
 #[cfg(test)]
 mod cache_merge_tests {
     use super::*;
+
+    #[test]
+    fn checked_peer_ids_reject_extremes_before_arithmetic() {
+        for id in [i64::MIN, -1, 0, i64::MAX] {
+            assert!(PeerId::chat(id).is_none());
+            assert!(PeerId::channel(id).is_none());
+        }
+        for id in [1, 997852516352, 1002147483649, 3000000000000] {
+            assert_eq!(PeerId::channel(id).unwrap().bare_id(), Some(id));
+        }
+        assert!(PeerId::channel(997852516353).is_none());
+        assert!(PeerId::channel(1002147483648).is_none());
+    }
 
     #[test]
     fn new_user_information_replaces_cached_values_without_erasing_missing_fields() {

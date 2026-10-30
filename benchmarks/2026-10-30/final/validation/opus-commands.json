@@ -1,0 +1,231 @@
+{
+  "execution": "Parent executed on the original candidate; reviewer shell execution unavailable.",
+  "source_inputs_sha256": "6d9ac6eb7f2f94987cea0db51ec7e468905834013d83a1e30303c694778e6471",
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+  "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)",
+  "environment": {
+    "CARGO_BUILD_JOBS": "1",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0"
+  },
+  "results": {
+    "opus-workspace": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "--workspace",
+        "--all-features"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 460.08,
+      "totals": {
+        "passed": 631,
+        "failed": 0,
+        "ignored": 41
+      }
+    },
+    "opus-fmt": {
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.443
+    },
+    "opus-check": {
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 14.851
+    },
+    "opus-clippy": {
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 15.605
+    },
+    "opus-rustdoc": {
+      "command": [
+        "cargo",
+        "doc",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-features",
+        "--no-deps"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 14.404
+    },
+    "opus-session-memory": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 37.385,
+      "totals": {
+        "passed": 48,
+        "failed": 0,
+        "ignored": 1
+      }
+    },
+    "opus-session-import": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--features",
+        "session-import",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 39.284,
+      "totals": {
+        "passed": 70,
+        "failed": 0,
+        "ignored": 1
+      }
+    },
+    "opus-session-string": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--features",
+        "session-string",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 39.643,
+      "totals": {
+        "passed": 55,
+        "failed": 0,
+        "ignored": 1
+      }
+    },
+    "opus-session-files": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--features",
+        "session-import-files",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 45.619,
+      "totals": {
+        "passed": 90,
+        "failed": 0,
+        "ignored": 1
+      }
+    },
+    "opus-client-minimal": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-client",
+        "--no-default-features",
+        "--lib"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 38.784,
+      "totals": {
+        "passed": 39,
+        "failed": 0,
+        "ignored": 0
+      }
+    },
+    "opus-debug-mentions": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "grammers-client",
+        "--all-features",
+        "malformed_mentions"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 85.658,
+      "totals": {
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0
+      }
+    },
+    "opus-python": {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "scripts",
+        "-p",
+        "test_check_optimization_evidence.py",
+        "-v"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.312,
+      "passed_tests": 14
+    }
+  },
+  "log_normalization": "Local host paths replaced by placeholders; trailing empty lines removed. Test/result content retained.",
+  "source_inputs_file": "performance/post-opus/source/source-inputs.json"
+}

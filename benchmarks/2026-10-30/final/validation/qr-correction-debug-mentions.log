@@ -1,0 +1,23 @@
+   Compiling grammers-mtsender v0.10.0 (<candidate>/grammers-mtsender)
+   Compiling grammers-client v0.10.0 (<candidate>/grammers-client)
+    Finished `test` profile [unoptimized] target(s) in 9.54s
+     Running unittests src/lib.rs (target/debug/deps/grammers_client-14d33dd7fe27faff)
+
+running 2 tests
+test parsers::markdown::tests::malformed_mentions_remain_text_links ... ok
+test parsers::html::tests::malformed_mentions_remain_text_links ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 112 filtered out; finished in 0.00s
+
+     Running tests/deps.rs (target/debug/deps/deps-b24ade46888aad35)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/receiver_sqlite_cost.rs (target/debug/deps/receiver_sqlite_cost-2966985f8474bdb9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+

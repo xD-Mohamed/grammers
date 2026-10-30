@@ -1,0 +1,61 @@
+commit 1e31e73cd9797790905bbea82cd75adcbe6f1242
+Author:     Lonami Exo <totufals@hotmail.com>
+AuthorDate: Tue Oct 27 22:25:57 2026 +0100
+Commit:     Lonami Exo <totufals@hotmail.com>
+CommitDate: Tue Oct 27 22:25:57 2026 +0100
+
+    Return request too large error to user instead of panic
+
+diff --git a/grammers-mtsender/src/sender.rs b/grammers-mtsender/src/sender.rs
+index 3bb37d1..ba1f8d7 100644
+--- a/grammers-mtsender/src/sender.rs
++++ b/grammers-mtsender/src/sender.rs
+@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicI64, Ordering};
+ use std::time::{Duration, SystemTime};
+ use std::{io, thread};
+ 
+-use grammers_mtproto::mtp;
+ use grammers_mtproto::transport::Transport;
++use grammers_mtproto::{MAX_REQUEST_SIZE, mtp};
+ use grammers_mtproto::{MsgId, authentication, connection};
+ use grammers_session::updates::UpdatesLike;
+ use grammers_tl_types::{self as tl, Deserializable, RemoteCall};
+@@ -125,8 +125,13 @@ impl<T: Transport, M: mtp::Mtp> Sender<T, M> {
+         &mut self,
+         request: &R,
+     ) -> Result<R::Return, InvocationError> {
++        let body = request.to_bytes();
++        if body.len() > MAX_REQUEST_SIZE {
++            return Err(InvocationError::Dropped("request body is too large"));
++        }
++
+         let (tx, rx) = oneshot::channel();
+-        self.enqueue_body(request.to_bytes(), tx);
++        self.enqueue_body(body, tx);
+         self.step_until_receive(rx)
+             .await
+             .and_then(|vec| R::Return::from_bytes(&vec).map_err(|err| err.into()))
+diff --git a/grammers-mtsender/src/sender_pool.rs b/grammers-mtsender/src/sender_pool.rs
+index 9bbec47..2fe288d 100644
+--- a/grammers-mtsender/src/sender_pool.rs
++++ b/grammers-mtsender/src/sender_pool.rs
+@@ -13,7 +13,7 @@ use std::sync::Arc;
+ use std::time::{Duration, Instant};
+ use std::{fmt, panic};
+ 
+-use grammers_mtproto::{mtp, transport};
++use grammers_mtproto::{MAX_REQUEST_SIZE, mtp, transport};
+ use grammers_session::Session;
+ use grammers_session::storages::{ErasedSession, erase};
+ use grammers_session::types::DcOption;
+@@ -147,6 +147,10 @@ impl SenderPoolHandle {
+         dc_id: i32,
+         body: Vec<u8>,
+     ) -> Result<InvokeResponse, InvocationError> {
++        if body.len() > MAX_REQUEST_SIZE {
++            return Err(InvocationError::Dropped("request body is too large"));
++        }
++
+         let (tx, rx) = oneshot::channel();
+         self.0
+             .send(Request::Invoke { dc_id, body, tx })

@@ -1,0 +1,304 @@
+{
+  "observed_utc": "2026-10-30T14:33:09.734912+00:00",
+  "remote": "https://codeberg.org/Lonami/grammers.git",
+  "ref": "refs/heads/master",
+  "tip": "1e31e73cd9797790905bbea82cd75adcbe6f1242",
+  "ls_remote_command": "git ls-remote https://codeberg.org/Lonami/grammers.git refs/heads/master",
+  "fetch_command": "git fetch --no-tags --no-write-fetch-head https://codeberg.org/Lonami/grammers.git 1e31e73cd9797790905bbea82cd75adcbe6f1242",
+  "fetch_exit_code": 0,
+  "git_show_command": "git show --format=fuller --binary --no-ext-diff COMMIT",
+  "integrated_ancestor": "633d7fe4ecc829beec492d745bbbfe5911010623",
+  "commits": [
+    {
+      "commit": "6ce4c54c0ad712a6f91f6344119f58be105f9533",
+      "subject": "Make ttl behaviour a bit more sensible",
+      "url": "https://codeberg.org/Lonami/grammers/commit/6ce4c54c0ad712a6f91f6344119f58be105f9533",
+      "parents": [
+        "633d7fe4ecc829beec492d745bbbfe5911010623"
+      ],
+      "tree": "26986ccf73da5891c048e9e6d9fda11bdd59da2c",
+      "paths": [
+        "grammers-client/src/media/input_media.rs"
+      ],
+      "git_show_sha256": "04639f79d4463f26ef85b78bc7d232d193fd6790e635e13586d14c8903c83535",
+      "canonical_full_index_show_sha256": "973aa97c20aab8e891135df968fbee084026bc2d39b6f9fe6739ec449186ea01"
+    },
+    {
+      "commit": "5b8007925bc0ab58e7af92058960c1f585ab1e19",
+      "subject": "Bump all dependencies",
+      "url": "https://codeberg.org/Lonami/grammers/commit/5b8007925bc0ab58e7af92058960c1f585ab1e19",
+      "parents": [
+        "6ce4c54c0ad712a6f91f6344119f58be105f9533"
+      ],
+      "tree": "611bbfb56902b36e7ea01f6c0de2b2625aef0779",
+      "paths": [
+        "grammers-client/Cargo.toml",
+        "grammers-crypto/Cargo.toml",
+        "grammers-mtproto/Cargo.toml",
+        "grammers-mtsender/Cargo.toml",
+        "grammers-session/Cargo.toml",
+        "grammers-tl-gen/Cargo.toml",
+        "grammers-tl-parser/Cargo.toml",
+        "grammers-tl-types/Cargo.toml"
+      ],
+      "git_show_sha256": "cb1a6644b73f7bb872dd18fd7c493922dabe1f38ad04cfca9abd4ea545e32179",
+      "canonical_full_index_show_sha256": "ab407de34e7697dd0aca30f08c08cca66cbceadf396717fa6a7dc5f431c19e3a"
+    },
+    {
+      "commit": "15b7afa46a9c6853aa9d8efc9d70a0f46b1781c3",
+      "subject": "Bump to v0.11.0",
+      "url": "https://codeberg.org/Lonami/grammers/commit/15b7afa46a9c6853aa9d8efc9d70a0f46b1781c3",
+      "parents": [
+        "5b8007925bc0ab58e7af92058960c1f585ab1e19"
+      ],
+      "tree": "f5205657aa038a1d2eb7ee2a96a9314aa40b0cbd",
+      "paths": [
+        "grammers-client/Cargo.toml",
+        "grammers-crypto/Cargo.toml",
+        "grammers-mtproto/Cargo.toml",
+        "grammers-mtsender/Cargo.toml",
+        "grammers-session/Cargo.toml",
+        "grammers-tl-gen/Cargo.toml",
+        "grammers-tl-types/Cargo.toml",
+        "grammers/Cargo.toml"
+      ],
+      "git_show_sha256": "891407e33a14740275e7ab235b78676a2cebaeb01510c992abebeb93c529bf0b",
+      "canonical_full_index_show_sha256": "dfc42970891a9f6b14d30ad4cd1782cca77fc7ed5f707679b48cd70d08a5a88e"
+    },
+    {
+      "commit": "dfffb7144f8a57aeda4dcd041ebb5a71a0ed63ef",
+      "subject": "Update to layer 232",
+      "url": "https://codeberg.org/Lonami/grammers/commit/dfffb7144f8a57aeda4dcd041ebb5a71a0ed63ef",
+      "parents": [
+        "15b7afa46a9c6853aa9d8efc9d70a0f46b1781c3"
+      ],
+      "tree": "6bfca49bde7f41cb3dc3b07a9c2946b7ff3a663a",
+      "paths": [
+        "grammers-client/src/client/messages.rs",
+        "grammers-client/src/message/message.rs",
+        "grammers-client/src/peer/channel.rs",
+        "grammers-session/src/message_box/adaptor.rs",
+        "grammers-tl-types/tl/api.tl"
+      ],
+      "git_show_sha256": "1a3a036b88350fb8a46a32db8614d212cc5e83b54cc62c3b55681c84d105ba2b",
+      "saved_patch": "dfffb71.patch",
+      "canonical_full_index_show_sha256": "2fc0ca769da1f497526d37b8965c9ff470a0000085437e8a600da14586335536"
+    },
+    {
+      "commit": "a984cac0be35871e943a307a7fd0b300eeb32bb9",
+      "subject": "Factor sans-io bits out of mtsender",
+      "url": "https://codeberg.org/Lonami/grammers/commit/a984cac0be35871e943a307a7fd0b300eeb32bb9",
+      "parents": [
+        "dfffb7144f8a57aeda4dcd041ebb5a71a0ed63ef"
+      ],
+      "tree": "13fd679b47df8c7fd09d4945cfdac1615ac11b74",
+      "paths": [
+        "grammers-mtproto/src/connection.rs",
+        "grammers-mtproto/src/lib.rs",
+        "grammers-mtproto/src/mtp/mod.rs",
+        "grammers-mtsender/src/errors.rs",
+        "grammers-mtsender/src/sender.rs",
+        "grammers-session/src/updates.rs",
+        "grammers-tl-types/src/deserialize.rs"
+      ],
+      "git_show_sha256": "b733c7ca59d9349e5255e658a340f8c181a1a74c55726c3aa9ae66518cf360c9",
+      "canonical_full_index_show_sha256": "250df608b2a5a103a73c971d2facc798902561543fbe2e60bcd6883729eb0ded"
+    },
+    {
+      "commit": "e564eefacb7feb5bde1c59ecd90a8f0552556847",
+      "subject": "Add extend_back fast-path for slices to DequeBuffer (#85)",
+      "url": "https://codeberg.org/Lonami/grammers/commit/e564eefacb7feb5bde1c59ecd90a8f0552556847",
+      "parents": [
+        "a984cac0be35871e943a307a7fd0b300eeb32bb9"
+      ],
+      "tree": "0e973d3563f98406e101eebc7dcda389e847911a",
+      "paths": [
+        "grammers-crypto/src/deque_buffer.rs",
+        "grammers-crypto/src/lib.rs"
+      ],
+      "git_show_sha256": "8c19d2209884ac8167c1636ce6371a7506be0c7f5cee22ba56daa5168e9f20e3",
+      "canonical_full_index_show_sha256": "538e230f25e014fe85c9eacffd3336b9d6884dc5e780589f99e09e1d12b83af8"
+    },
+    {
+      "commit": "4101f5e9931eede7118b3b29efd52cc3a22883b5",
+      "subject": "Support dynamically-configured Transport in SenderPool (#84)",
+      "url": "https://codeberg.org/Lonami/grammers/commit/4101f5e9931eede7118b3b29efd52cc3a22883b5",
+      "parents": [
+        "e564eefacb7feb5bde1c59ecd90a8f0552556847"
+      ],
+      "tree": "5016254e650479a86cf6d42dc01dea3ef50453fb",
+      "paths": [
+        "grammers-mtproto/src/connection.rs",
+        "grammers-mtproto/src/transport/mod.rs",
+        "grammers-mtsender/src/configuration.rs",
+        "grammers-mtsender/src/sender_pool.rs"
+      ],
+      "git_show_sha256": "dd518eea564e0de97c5343e17f4a16a938b431f99a93a150a3d2a77491a69d38",
+      "canonical_full_index_show_sha256": "9a7bf8b3c7d3beeaf14efb42aa3d800beb8973b2a6395ab61e2c667139246ee1"
+    },
+    {
+      "commit": "c8d69796606882117d259df46f8c28f5d9ba951d",
+      "subject": "Support converting MsgId into_inner",
+      "url": "https://codeberg.org/Lonami/grammers/commit/c8d69796606882117d259df46f8c28f5d9ba951d",
+      "parents": [
+        "4101f5e9931eede7118b3b29efd52cc3a22883b5"
+      ],
+      "tree": "b6b6832099cf8ec36632a7d90b30e25fb93f5319",
+      "paths": [
+        "grammers-mtproto/src/lib.rs"
+      ],
+      "git_show_sha256": "02e318936b0574780315b772ea017df1fb8658978a8bfbc863678bc30bd69e7f",
+      "canonical_full_index_show_sha256": "ea8f96ac173f28811740538e97390f600e6a7ea6b0a2464eea058147126058bf"
+    },
+    {
+      "commit": "07b51abe53e6db99dbe8791d6562ea9b00ce9c8d",
+      "subject": "Fix typo in logging message",
+      "url": "https://codeberg.org/Lonami/grammers/commit/07b51abe53e6db99dbe8791d6562ea9b00ce9c8d",
+      "parents": [
+        "c8d69796606882117d259df46f8c28f5d9ba951d"
+      ],
+      "tree": "d63e66c625e842918e121b0894084fc6db0b29f6",
+      "paths": [
+        "grammers-mtsender/src/sender.rs"
+      ],
+      "git_show_sha256": "e2b625f420e804fd6c1114b857455e4d9be2f5408b563f228fe343748bcafb39",
+      "canonical_full_index_show_sha256": "054ecee47ac5c7fe92226019383eca3dbfe7827a7397c94ca30a6faf605b40e7"
+    },
+    {
+      "commit": "98b7b88dd485d5a8f348a721d37007a70c04c135",
+      "subject": "Derive Debug for Deserialization",
+      "url": "https://codeberg.org/Lonami/grammers/commit/98b7b88dd485d5a8f348a721d37007a70c04c135",
+      "parents": [
+        "07b51abe53e6db99dbe8791d6562ea9b00ce9c8d"
+      ],
+      "tree": "f8a6e21183f6ebe4d36c5a094492c2f572fed181",
+      "paths": [
+        "grammers-mtproto/src/mtp/mod.rs"
+      ],
+      "git_show_sha256": "2e98581e6b03204b861a290a824fb1983923f0c42b887fa4dfb601f167b35be9",
+      "canonical_full_index_show_sha256": "2894f1e9669f9184d10f2c6ae145f4bdd6aba41ed072394a39a6c78107bf7550"
+    },
+    {
+      "commit": "dad55819798b572bbde7a6fbeae35297891b98c4",
+      "subject": "Delete unused -crypto dependency from -mtsender",
+      "url": "https://codeberg.org/Lonami/grammers/commit/dad55819798b572bbde7a6fbeae35297891b98c4",
+      "parents": [
+        "98b7b88dd485d5a8f348a721d37007a70c04c135"
+      ],
+      "tree": "b98b88b9164d7262573dd2595cf1e0a9a3d1df47",
+      "paths": [
+        "grammers-mtsender/Cargo.toml",
+        "grammers-mtsender/DEPS.md"
+      ],
+      "git_show_sha256": "8d40677db177ddd502453caff06d7691b86159802315cc81c08660c9ce96eaa1",
+      "canonical_full_index_show_sha256": "e62cf0762749f0e057b609e370dd8a7c604e0ee075eda10a8214c8e6789c3660"
+    },
+    {
+      "commit": "84cfb99e89456daf79ffd7d82879f73063ca193d",
+      "subject": "Remove DequeBuffer usages from grammers-crypto",
+      "url": "https://codeberg.org/Lonami/grammers/commit/84cfb99e89456daf79ffd7d82879f73063ca193d",
+      "parents": [
+        "dad55819798b572bbde7a6fbeae35297891b98c4"
+      ],
+      "tree": "9f253e92bc22b17b4c961bb3979f101025fad1bc",
+      "paths": [
+        "grammers-crypto/src/auth_key.rs",
+        "grammers-crypto/src/lib.rs",
+        "grammers-mtproto/src/mtp/encrypted.rs"
+      ],
+      "git_show_sha256": "5b9c072c48629826040cb5d9c4263446e2545514cc6f65ddbb72a5545c692edc",
+      "canonical_full_index_show_sha256": "ade083ebe705c763f72429119d3852fc5d72fe983b7d6fe95fd12771f75a7a8c"
+    },
+    {
+      "commit": "d654b0450e9d45bb98697f5131472d242af28bea",
+      "subject": "Move DequeBuffer to grammers-mtproto",
+      "url": "https://codeberg.org/Lonami/grammers/commit/d654b0450e9d45bb98697f5131472d242af28bea",
+      "parents": [
+        "84cfb99e89456daf79ffd7d82879f73063ca193d"
+      ],
+      "tree": "aa47943826d6e0c59854b59397f92675daa28cc4",
+      "paths": [
+        "grammers-crypto/src/deque_buffer.rs",
+        "grammers-crypto/src/lib.rs",
+        "grammers-mtproto/src/connection.rs",
+        "grammers-mtproto/src/deque_buffer.rs",
+        "grammers-mtproto/src/lib.rs",
+        "grammers-mtproto/src/mtp/encrypted.rs",
+        "grammers-mtproto/src/mtp/mod.rs",
+        "grammers-mtproto/src/mtp/plain.rs",
+        "grammers-mtproto/src/transport/abridged.rs",
+        "grammers-mtproto/src/transport/full.rs",
+        "grammers-mtproto/src/transport/intermediate.rs",
+        "grammers-mtproto/src/transport/mod.rs",
+        "grammers-mtproto/src/transport/obfuscated.rs"
+      ],
+      "git_show_sha256": "ce0aadf86a34b68eb06802f30d908c1534a80c21f068a76d8c13feac9fc6faad",
+      "saved_patch": "d654b04.patch",
+      "canonical_full_index_show_sha256": "0cfca23134f3d232b361ee6db3e6b90ee8b71dc76fbc96cedd5bd46b0ad13649"
+    },
+    {
+      "commit": "4ca2263e5678d2e85414aa8c2f469c1341d3a143",
+      "subject": "Add missing doc-comment for extend_back",
+      "url": "https://codeberg.org/Lonami/grammers/commit/4ca2263e5678d2e85414aa8c2f469c1341d3a143",
+      "parents": [
+        "d654b0450e9d45bb98697f5131472d242af28bea"
+      ],
+      "tree": "f70b046a41c072b7a8c03fb59644301312adb2da",
+      "paths": [
+        "grammers-mtproto/src/deque_buffer.rs"
+      ],
+      "git_show_sha256": "990245fe02eb0db74c8b7c2ae53634d8f4532ad1eefcb872a124679eb7b40c8a",
+      "canonical_full_index_show_sha256": "1116e719f742864fb9e090c068ae223eab9128d982aef4aa77b926d0327dc353"
+    },
+    {
+      "commit": "58f7bd1e3c17113c62b5fa19362726f7f9185887",
+      "subject": "Make upload_media public and avoid redundant clone (#86)",
+      "url": "https://codeberg.org/Lonami/grammers/commit/58f7bd1e3c17113c62b5fa19362726f7f9185887",
+      "parents": [
+        "4ca2263e5678d2e85414aa8c2f469c1341d3a143"
+      ],
+      "tree": "96d9125850592687a00eba3fc8d90762a6db1d22",
+      "paths": [
+        "grammers-client/src/client/messages.rs"
+      ],
+      "git_show_sha256": "fcdb791491fb1530ab93fec68031bd300a2df57b946de61662fbb913f056b885",
+      "canonical_full_index_show_sha256": "4e61e6b65947ab75f540640a2a9f8a3c147dfc8d5255be278b9abf49b1ee1c13"
+    },
+    {
+      "commit": "ad7b4725f7ad62a93ddd251035405b628e1bed1e",
+      "subject": "Reevaluate sizes of and refactor buffers to prevent connection reset loops",
+      "url": "https://codeberg.org/Lonami/grammers/commit/ad7b4725f7ad62a93ddd251035405b628e1bed1e",
+      "parents": [
+        "58f7bd1e3c17113c62b5fa19362726f7f9185887"
+      ],
+      "tree": "f159a11ce2f1e426a57116cecb70af151cddf79d",
+      "paths": [
+        "grammers-crypto/src/lib.rs",
+        "grammers-mtproto/src/lib.rs",
+        "grammers-mtproto/src/manual_tl.rs",
+        "grammers-mtproto/src/mtp/encrypted.rs",
+        "grammers-mtproto/src/transport/mod.rs"
+      ],
+      "git_show_sha256": "52bb38bc7590fbd709d6b1e20c3296510878507cb44bade61267948c6c2205f4",
+      "saved_patch": "ad7b472.patch",
+      "canonical_full_index_show_sha256": "24a77e6a5adc0d872bb2342ec2fac30dd2924e574f2b9d851632f2d63d3f17c5"
+    },
+    {
+      "commit": "1e31e73cd9797790905bbea82cd75adcbe6f1242",
+      "subject": "Return request too large error to user instead of panic",
+      "url": "https://codeberg.org/Lonami/grammers/commit/1e31e73cd9797790905bbea82cd75adcbe6f1242",
+      "parents": [
+        "ad7b4725f7ad62a93ddd251035405b628e1bed1e"
+      ],
+      "tree": "b6a848cab4195dd926806330668e97b852a18fc9",
+      "paths": [
+        "grammers-mtsender/src/sender.rs",
+        "grammers-mtsender/src/sender_pool.rs"
+      ],
+      "git_show_sha256": "72eeaa1ce312d55cf27c98dcc78ad47f0516f3501835a9366b445f77033a9737",
+      "saved_patch": "1e31e73.patch",
+      "canonical_full_index_show_sha256": "b4b81c5178d3cd230aba6f659b54f11b8e284dd874b89d9090abe7b019714aa4"
+    }
+  ],
+  "canonical_hash_note": "Full-index hashes added for configuration-independent optional Git verification; original saved patches and their hashes retained."
+}

@@ -1,0 +1,2865 @@
+diff --git a/grammers-client/src/client/auth.rs b/grammers-client/src/client/auth.rs
+index 93dfe7d..6a867e1 100644
+--- a/grammers-client/src/client/auth.rs
++++ b/grammers-client/src/client/auth.rs
+@@ -193,7 +193,9 @@ impl Client {
+     pub async fn is_authorized(&self) -> Result<bool, InvocationError> {
+         match self.invoke(&tl::functions::updates::GetState {}).await {
+             Ok(_) => Ok(true),
+-            Err(InvocationError::Rpc(e)) if e.code == 401 => Ok(false),
++            Err(e) if matches!(e.root_cause(), InvocationError::Rpc(rpc) if rpc.code == 401) => {
++                Ok(false)
++            }
+             Err(err) => Err(err),
+         }
+     }
+@@ -289,9 +291,12 @@ impl Client {
+ 
+         let result = match self.invoke(&request).await {
+             Ok(x) => x,
+-            Err(InvocationError::Rpc(err)) if err.code == 303 => {
++            Err(err) => {
++                let new_dc_id = match err.root_cause() {
++                    InvocationError::Rpc(rpc) if rpc.code == 303 => migration_dc(rpc.value)?,
++                    _ => return Err(err),
++                };
+                 let old_dc_id = self.0.session.home_dc_id()?;
+-                let new_dc_id = migration_dc(err.value)?;
+                 // Disconnect from current DC to cull the now-unused connection.
+                 // This also gives a chance for the new home DC to export its authorization
+                 // if there's a need to connect back to the old DC after having logged in.
+@@ -299,7 +304,6 @@ impl Client {
+                 self.0.session.set_home_dc_id(new_dc_id).await?;
+                 self.invoke(&request).await?
+             }
+-            Err(e) => return Err(e),
+         };
+ 
+         match result {
+@@ -368,9 +372,12 @@ impl Client {
+ 
+         let sent_code: tl::types::auth::SentCode = match self.invoke(&request).await {
+             Ok(x) => login_code_response(x)?,
+-            Err(InvocationError::Rpc(err)) if err.code == 303 => {
++            Err(err) => {
++                let new_dc_id = match err.root_cause() {
++                    InvocationError::Rpc(rpc) if rpc.code == 303 => migration_dc(rpc.value)?,
++                    _ => return Err(err),
++                };
+                 let old_dc_id = self.0.session.home_dc_id()?;
+-                let new_dc_id = migration_dc(err.value)?;
+                 // Disconnect from current DC to cull the now-unused connection.
+                 // This also gives a chance for the new home DC to export its authorization
+                 // if there's a need to connect back to the old DC after having logged in.
+@@ -378,7 +385,6 @@ impl Client {
+                 self.0.session.set_home_dc_id(new_dc_id).await?;
+                 login_code_response(self.invoke(&request).await?)?
+             }
+-            Err(e) => return Err(e),
+         };
+ 
+         Ok(LoginToken {
+diff --git a/grammers-client/src/client/files.rs b/grammers-client/src/client/files.rs
+index c63fded..a832fdc 100644
+--- a/grammers-client/src/client/files.rs
++++ b/grammers-client/src/client/files.rs
+@@ -69,26 +69,29 @@ where
+     let mut authorized_dcs = Vec::new();
+     loop {
+         let dc = route.load(Ordering::Relaxed);
+-        match invoke(dc).await {
++        let error = match invoke(dc).await {
+             Ok(response) => return Ok(response),
+-            Err(InvocationError::Rpc(error)) if error.name == "AUTH_KEY_UNREGISTERED" => {
++            Err(error) => error,
++        };
++        match error.root_cause() {
++            InvocationError::Rpc(rpc) if rpc.name == "AUTH_KEY_UNREGISTERED" => {
+                 if remaining_recoveries == 0 {
+-                    return Err(InvocationError::Rpc(error));
++                    return Err(error);
+                 }
+                 remaining_recoveries -= 1;
+                 if route.load(Ordering::Relaxed) != dc {
+                     continue;
+                 }
+                 if authorized_dcs.contains(&dc) {
+-                    return Err(InvocationError::Rpc(error));
++                    return Err(error);
+                 }
+                 authorized_dcs.push(dc);
+                 authorize(dc).await?;
+             }
+-            Err(InvocationError::Rpc(error)) if error.code == FILE_MIGRATE_ERROR => {
+-                let migrated_dc = migration_dc(error.value)?;
++            InvocationError::Rpc(rpc) if rpc.code == FILE_MIGRATE_ERROR => {
++                let migrated_dc = migration_dc(rpc.value)?;
+                 if remaining_recoveries == 0 {
+-                    return Err(InvocationError::Rpc(error));
++                    return Err(error);
+                 }
+                 remaining_recoveries -= 1;
+                 // A late response from an earlier route must not replace a newer route
+@@ -98,10 +101,10 @@ where
+                     .is_ok()
+                     && migrated_dc == dc
+                 {
+-                    return Err(InvocationError::Rpc(error));
++                    return Err(error);
+                 }
+             }
+-            Err(error) => return Err(error),
++            _ => return Err(error),
+         }
+     }
+ }
+@@ -1193,6 +1196,63 @@ mod safety_tests {
+         assert_eq!(attempts.get(), 1);
+     }
+ 
++    #[tokio::test]
++    async fn shared_setup_errors_keep_download_migration_and_authorization_recovery() {
++        for depth in [0, 1, 2] {
++            let wrap = |mut error| {
++                for _ in 0..depth {
++                    error = InvocationError::Shared(Arc::new(error));
++                }
++                error
++            };
++            let attempts = std::cell::Cell::new(0);
++            let exports = std::cell::Cell::new(0);
++            let route = AtomicI32::new(2);
++            let result = fetch_download_file(
++                &route,
++                |dc| {
++                    attempts.set(attempts.get() + 1);
++                    std::future::ready(match attempts.get() {
++                        1 => {
++                            assert_eq!(dc, 2);
++                            Err(wrap(file_migrate(4)))
++                        }
++                        2 => {
++                            assert_eq!(dc, 4);
++                            Err(wrap(auth_unregistered()))
++                        }
++                        _ => Ok(file_response()),
++                    })
++                },
++                |dc| {
++                    assert_eq!(dc, 4);
++                    exports.set(exports.get() + 1);
++                    std::future::ready(Ok(()))
++                },
++            )
++            .await;
++            assert!(result.is_ok());
++            assert_eq!(attempts.get(), 3);
++            assert_eq!(exports.get(), 1);
++            assert_eq!(route.load(Ordering::Relaxed), 4);
++        }
++        let shared = Arc::new(auth_unregistered());
++        let attempts = std::cell::Cell::new(0);
++        let result = fetch_download_file(
++            &AtomicI32::new(2),
++            |_| {
++                attempts.set(attempts.get() + 1);
++                std::future::ready(Err(InvocationError::Shared(Arc::clone(&shared))))
++            },
++            |_| async { Ok(()) },
++        )
++        .await;
++        assert!(
++            matches!(result, Err(InvocationError::Shared(error)) if Arc::ptr_eq(&error, &shared))
++        );
++        assert_eq!(attempts.get(), 2);
++    }
++
+     #[tokio::test]
+     async fn repeated_auth_failure_exports_once_and_preserves_rpc_error() {
+         let attempts = std::cell::Cell::new(0);
+diff --git a/grammers-client/src/parsers/html.rs b/grammers-client/src/parsers/html.rs
+index b157f43..ce3efa3 100644
+--- a/grammers-client/src/parsers/html.rs
++++ b/grammers-client/src/parsers/html.rs
+@@ -10,6 +10,7 @@
+ 
+ use std::cell::Cell;
+ 
++use grammers_session::types::PeerId;
+ use grammers_tl_types as tl;
+ use html5ever::tendril::StrTendril;
+ use html5ever::tokenizer::{
+@@ -121,7 +122,7 @@ pub fn parse_html_message(message: &str) -> (String, Vec<tl::enums::MessageEntit
+                         if let Some(user_id) = url
+                             .strip_prefix(MENTION_URL_PREFIX)
+                             .and_then(|id| id.parse::<i64>().ok())
+-                            .filter(|id| *id > 0)
++                            .filter(|id| PeerId::user(*id).is_some())
+                         {
+                             entities.push(
+                                 tl::types::MessageEntityMentionName {
+@@ -542,7 +543,15 @@ mod tests {
+ 
+     #[test]
+     fn malformed_mentions_remain_text_links() {
+-        for id in ["", "abc", "0", "-1", "9223372036854775808"] {
++        for id in [
++            "",
++            "abc",
++            "0",
++            "-1",
++            "9223372036854775808",
++            "2000000000000",
++            "1099511627776",
++        ] {
+             let (text, entities) =
+                 parse_html_message(&format!("<a href=\"tg://user?id={id}\">name</a>"));
+             assert_eq!(text, "name");
+diff --git a/grammers-client/src/parsers/markdown.rs b/grammers-client/src/parsers/markdown.rs
+index 376b367..c3ce878 100644
+--- a/grammers-client/src/parsers/markdown.rs
++++ b/grammers-client/src/parsers/markdown.rs
+@@ -8,6 +8,7 @@
+ 
+ #![cfg(feature = "markdown")]
+ 
++use grammers_session::types::PeerId;
+ use grammers_tl_types as tl;
+ use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
+ 
+@@ -61,7 +62,7 @@ pub fn parse_markdown_message(message: &str) -> (String, Vec<tl::enums::MessageE
+             if let Some(user_id) = dest_url
+                 .strip_prefix(MENTION_URL_PREFIX)
+                 .and_then(|id| id.parse::<i64>().ok())
+-                .filter(|id| *id > 0)
++                .filter(|id| PeerId::user(*id).is_some())
+             {
+                 entities.push(
+                     tl::types::MessageEntityMentionName {
+@@ -235,7 +236,15 @@ mod tests {
+ 
+     #[test]
+     fn malformed_mentions_remain_text_links() {
+-        for id in ["", "abc", "0", "-1", "9223372036854775808"] {
++        for id in [
++            "",
++            "abc",
++            "0",
++            "-1",
++            "9223372036854775808",
++            "2000000000000",
++            "1099511627776",
++        ] {
+             let (text, entities) = parse_markdown_message(&format!("[name](tg://user?id={id})"));
+             assert_eq!(text, "name");
+             assert!(matches!(
+diff --git a/grammers-mtproto/src/authentication.rs b/grammers-mtproto/src/authentication.rs
+index 9f1d460..7ab3809 100644
+--- a/grammers-mtproto/src/authentication.rs
++++ b/grammers-mtproto/src/authentication.rs
+@@ -800,7 +800,7 @@ mod tests {
+         let prime = hex::from_hex(
+             "c71caeb9c6b1c9048e6c522f70f13f73980d40238e3e21c14934d037563d930f48198a0aa7c14058229493d22530f4dbfa336f6e0ac925139543aed44cce7c3720fd51f69458705ac68cd4fe6b6b13abdc9746512969328454f18faf8c595f642477fe96bb2a941d5bcd1d4ac8cc49880708fa9b378e3c4f3a9060bee67cf9a4a4a695811051907e162753b56b0f6b410dba74d8a84b2a14b3144e0ef1284754fd17ed950d5965b4b9dd46582db1178d169c6bc465b0d6ff9ca3928fef5b9ae4e418fc15e83ebea0f87fa9ff5eed70050ded2849f47bf959d956850ce929851f0d8115f635b105ee2e4e15d04b2454bf6f4fadf034b10403119cd8e3b92fcc5b",
+         );
+-        for case in 0..11 {
++        for case in 0..13 {
+             let mut inner = tl::types::ServerDhInnerData {
+                 nonce: [0; 16],
+                 server_nonce: [0; 16],
+@@ -828,6 +828,13 @@ mod tests {
+                         + BigUint::from(1u8))
+                     .to_bytes_be()
+                 }
++                // Keep every other field valid: these must reach the prime /
++                // generator gate, without a later time error masking its loss.
++                11 => inner.g = 2, // The known prime is 3, not 7, modulo 8.
++                12 => {
++                    inner.g = 4; // No subgroup residue restriction.
++                    inner.dh_prime[255] &= !1; // An even 2048-bit composite.
++                }
+                 _ => {}
+             }
+             let inner = tl::enums::ServerDhInnerData::Data(inner).to_bytes();
+@@ -859,7 +866,7 @@ mod tests {
+             );
+             match case {
+                 0 => assert!(result.is_ok(), "valid fixture"),
+-                1 | 5 | 6 => assert!(
++                1 | 5 | 6 | 11 | 12 => assert!(
+                     matches!(result, Err(Error::InvalidDhParameters)),
+                     "case {case}"
+                 ),
+diff --git a/grammers-mtproto/src/mtp/encrypted.rs b/grammers-mtproto/src/mtp/encrypted.rs
+index d7c64a7..a7a3d6c 100644
+--- a/grammers-mtproto/src/mtp/encrypted.rs
++++ b/grammers-mtproto/src/mtp/encrypted.rs
+@@ -325,9 +325,12 @@ impl Encrypted {
+             .as_secs()
+             .min(i64::MAX as u64) as i64;
+ 
+-        let offset = (msg_id >> 32) - now;
+-        if self.time_offset != offset {
+-            self.time_offset = offset;
++        let server_seconds = msg_id >> 32;
++        self.time_offset = server_seconds - now;
++        // Integer-second estimates can move backwards with ordinary latency
++        // jitter. Preserve monotonic IDs unless a substantially fast clock
++        // would otherwise keep generating IDs the server cannot accept.
++        if (self.last_msg_id >> 32) > server_seconds + 3 {
+             self.last_msg_id = 0;
+         }
+     }
+@@ -570,15 +573,22 @@ impl Encrypted {
+             if !in_container {
+                 Self::validate_header(&message)?;
+             }
+-            if (self.received_ids.back().is_some_and(|last| *last >= msg_id)
+-                && self.received_ids.binary_search(&msg_id).is_ok())
+-                || (self.received_ids.len() == 1024 && self.received_ids[0] > msg_id)
++            if self.received_ids.back().is_some_and(|last| *last >= msg_id)
++                && self.received_ids.binary_search(&msg_id).is_ok()
+             {
+                 if message.requires_ack() {
+                     self.queue_ack(msg_id)?;
+                 }
+                 return Ok(());
+             }
++            if self.received_ids.len() == 1024 && self.received_ids[0] > msg_id {
++                // An unseen delayed reply is indistinguishable from an evicted
++                // replay. Do not ACK/drop it and leave its RPC waiting forever;
++                // fail the connection so all outstanding requests are retired.
++                return Err(DeserializeError::InvalidEnvelope {
++                    reason: "server message id predates replay window",
++                });
++            }
+         }
+         // Gzip replaces a body, not its authenticated envelope: acknowledge
+         // once, and release the owned parent before descending to the next body.
+@@ -1739,12 +1749,22 @@ mod tests {
+     }
+ 
+     fn plaintext(session: i64, id: i64, padding: usize) -> Vec<u8> {
++        plaintext_body(session, id, 1, test_rpc_body(4, &true.to_bytes()), padding)
++    }
++
++    fn plaintext_body(
++        session: i64,
++        id: i64,
++        seq_no: i32,
++        body: Vec<u8>,
++        padding: usize,
++    ) -> Vec<u8> {
+         let mut data = 0i64.to_bytes();
+         session.serialize(&mut data);
+         manual_tl::Message {
+             msg_id: id,
+-            seq_no: 1,
+-            body: test_rpc_body(4, &true.to_bytes()),
++            seq_no,
++            body,
+         }
+         .serialize(&mut data);
+         data.resize(data.len() + padding, 0);
+@@ -1778,7 +1798,102 @@ mod tests {
+         }
+         assert_eq!(mtp.received_ids.len(), 1024);
+         assert_eq!(mtp.received_ids.capacity(), 1024);
+-        assert!(mtp.process_plaintext(&first).unwrap().is_empty());
++        let ack_count = mtp.pending_ack.len();
++        for id in [3, 5] {
++            assert!(matches!(
++                mtp.process_plaintext(&plaintext(session, id, 16)),
++                Err(DeserializeError::InvalidEnvelope {
++                    reason: "server message id predates replay window"
++                })
++            ));
++        }
++        assert_eq!(mtp.pending_ack.len(), ack_count);
++        let retained_id = mtp.received_ids[0];
++        assert!(
++            mtp.process_plaintext(&plaintext(session, retained_id, 16))
++                .unwrap()
++                .is_empty()
++        );
++        assert_eq!(mtp.pending_ack.last(), Some(&retained_id));
++    }
++
++    fn container_body(messages: Vec<manual_tl::Message>) -> Vec<u8> {
++        let mut body = manual_tl::MessageContainer::CONSTRUCTOR_ID.to_bytes();
++        (messages.len() as i32).serialize(&mut body);
++        for message in messages {
++            message.serialize(&mut body);
++        }
++        body
++    }
++
++    #[test]
++    fn authenticated_out_of_order_and_inner_replays_deliver_only_once() {
++        let mut mtp = Encrypted::build().finish(auth_key());
++        let session = mtp.session_id;
++        for id in [11, 3, 7] {
++            assert_eq!(
++                mtp.process_plaintext(&plaintext(session, id, 16))
++                    .unwrap()
++                    .len(),
++                1
++            );
++        }
++        assert_eq!(
++            mtp.received_ids.iter().copied().collect::<Vec<_>>(),
++            [3, 7, 11]
++        );
++        let body = container_body(
++            [11, 15, 15, 7]
++                .into_iter()
++                .map(|msg_id| manual_tl::Message {
++                    msg_id,
++                    seq_no: 1,
++                    body: test_rpc_body(msg_id * 4, &true.to_bytes()),
++                })
++                .collect(),
++        );
++        let results = mtp
++            .process_plaintext(&plaintext_body(session, 19, 2, body, 16))
++            .unwrap();
++        assert!(matches!(
++            results.as_slice(),
++            [Deserialization::RpcResult(r)] if r.msg_id == MsgId(60)
++        ));
++        assert_eq!(
++            mtp.received_ids.iter().copied().collect::<Vec<_>>(),
++            [3, 7, 11, 15, 19]
++        );
++        assert_eq!(mtp.pending_ack, [11, 3, 7, 11, 15, 15, 7]);
++        assert!(
++            mtp.process_plaintext(&plaintext(session, 15, 16))
++                .unwrap()
++                .is_empty()
++        );
++    }
++
++    #[test]
++    fn authenticated_inner_reply_below_replay_floor_is_a_connection_error() {
++        let mut mtp = Encrypted::build().finish(auth_key());
++        let session = mtp.session_id;
++        for index in 0..1024 {
++            mtp.process_plaintext(&plaintext(session, index * 4 + 7, 16))
++                .unwrap();
++        }
++        let ack_count = mtp.pending_ack.len();
++        let body = container_body(vec![manual_tl::Message {
++            msg_id: 3,
++            seq_no: 1,
++            body: test_rpc_body(4, &true.to_bytes()),
++        }]);
++        assert!(matches!(
++            mtp.process_plaintext(&plaintext_body(session, 4103, 2, body, 16)),
++            Err(DeserializeError::InvalidEnvelope {
++                reason: "server message id predates replay window"
++            })
++        ));
++        assert_eq!(mtp.pending_ack.len(), ack_count);
++        assert!(!mtp.received_ids.contains(&4103));
++        assert!(mtp.deserialization.is_empty());
+     }
+ 
+     #[test]
+@@ -1834,6 +1949,20 @@ mod tests {
+         assert!(mtp.get_new_msg_id() > 0);
+     }
+ 
++    #[test]
++    fn time_offset_jitter_preserves_monotonic_message_ids() {
++        let mut mtp = Encrypted::build().finish(auth_key());
++        let mut previous = mtp.get_new_msg_id();
++        let seconds = previous >> 32;
++        for delta in [-1, 0, -2, 1, -1, 0] {
++            mtp.correct_time_offset(((seconds + delta) << 32) | 1);
++            assert_eq!(mtp.last_msg_id, previous);
++            let next = mtp.get_new_msg_id();
++            assert!(next > previous);
++            previous = next;
++        }
++    }
++
+     #[test]
+     fn invalid_push_preserves_services_and_salt_packet_excludes_ack() {
+         let mut mtp = Encrypted::build().first_salt(123).finish(auth_key());
+@@ -2059,6 +2188,245 @@ mod tests {
+         ));
+     }
+ 
++    fn future_salts_body(req_msg_id: i64, salts: Vec<tl::types::FutureSalt>) -> Vec<u8> {
++        tl::enums::FutureSalts::Salts(tl::types::FutureSalts {
++            req_msg_id,
++            now: 100,
++            salts: tl::RawVec(salts),
++        })
++        .to_bytes()
++    }
++
++    #[test]
++    fn authenticated_future_salts_handles_internal_external_and_empty_replies() {
++        for req_msg_id in [4, 8] {
++            for count in [0, 3, NUM_FUTURE_SALTS] {
++                let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
++                mtp.salt_request_msg_id = Some(MsgId(4));
++                mtp.salt_request_failures = 3;
++                let body = future_salts_body(
++                    req_msg_id,
++                    (0..count)
++                        .map(|index| tl::types::FutureSalt {
++                            valid_since: index * 10,
++                            valid_until: index * 10 + 1000,
++                            salt: i64::from(index) + 1000,
++                        })
++                        .collect(),
++                );
++                let packet = plaintext_body(mtp.session_id, 7, 0, body.clone(), 16);
++                let results = mtp.process_plaintext(&packet).unwrap();
++                if req_msg_id == 4 {
++                    assert!(results.is_empty());
++                    assert_eq!(mtp.salt_request_msg_id, None);
++                } else {
++                    assert!(
++                        matches!(results.as_slice(), [Deserialization::RpcResult(r)] if r.msg_id == MsgId(req_msg_id) && r.body == body)
++                    );
++                    assert_eq!(mtp.salt_request_msg_id, Some(MsgId(4)));
++                }
++                assert_eq!(mtp.salt_request_failures, 0);
++                assert_eq!(mtp.start_salt_time.unwrap().0, 100);
++                assert_eq!(mtp.salts.len(), count as usize);
++                assert_eq!(
++                    mtp.salts.iter().map(|s| s.valid_since).collect::<Vec<_>>(),
++                    (0..count).rev().map(|index| index * 10).collect::<Vec<_>>()
++                );
++                assert_eq!(mtp.get_current_salt(), if count == 0 { 0 } else { 1000 });
++                assert!(mtp.pending_ack.is_empty());
++            }
++        }
++    }
++
++    #[test]
++    fn authenticated_invalid_future_salts_preserve_service_state() {
++        let invalid = DeserializeError::InvalidEnvelope {
++            reason: "invalid future salts",
++        };
++        let mut cases = vec![(
++            future_salts_body(
++                4,
++                (0..=NUM_FUTURE_SALTS)
++                    .map(|_| tl::types::FutureSalt {
++                        valid_since: 0,
++                        valid_until: 1000,
++                        salt: 1,
++                    })
++                    .collect(),
++            ),
++            invalid.clone(),
++        )];
++        for valid_since in [100, 101] {
++            cases.push((
++                future_salts_body(
++                    4,
++                    vec![tl::types::FutureSalt {
++                        valid_since,
++                        valid_until: 100,
++                        salt: 1,
++                    }],
++                ),
++                invalid.clone(),
++            ));
++        }
++        let mut truncated = future_salts_body(
++            4,
++            vec![tl::types::FutureSalt {
++                valid_since: 0,
++                valid_until: 1000,
++                salt: 1,
++            }],
++        );
++        truncated.truncate(truncated.len() - 4);
++        cases.push((truncated, DeserializeError::MessageBufferTooSmall));
++        let mut scalar = tl::types::FutureSalt::CONSTRUCTOR_ID.to_bytes();
++        0i32.serialize(&mut scalar);
++        1000i32.serialize(&mut scalar);
++        1i64.serialize(&mut scalar);
++        cases.push((
++            scalar,
++            DeserializeError::InvalidEnvelope {
++                reason: "unsolicited future_salt",
++            },
++        ));
++        for (body, expected) in cases {
++            let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
++            mtp.salt_request_msg_id = Some(MsgId(4));
++            mtp.salt_request_failures = 2;
++            let start = (90, Instant::now());
++            mtp.start_salt_time = Some(start);
++            let packet = plaintext_body(mtp.session_id, 7, 0, body, 16);
++            assert_eq!(mtp.process_plaintext(&packet).err(), Some(expected));
++            assert_eq!(mtp.salt_request_msg_id, Some(MsgId(4)));
++            assert_eq!(mtp.salt_request_failures, 2);
++            assert_eq!(mtp.start_salt_time, Some(start));
++            assert_eq!(mtp.salts.len(), 1);
++            assert_eq!(mtp.get_current_salt(), 999);
++            assert!(mtp.deserialization.is_empty());
++            assert!(mtp.received_ids.is_empty());
++            assert!(mtp.pending_ack.is_empty());
++        }
++    }
++
++    #[test]
++    fn authenticated_sibling_rpc_gzip_shares_expansion_budget() {
++        let payload = [0; 128];
++        let packed = manual_tl::GzipPacked::new(&payload).to_bytes();
++        for expanded_bytes in [192, 256] {
++            let mut mtp = Encrypted::build()
++                .decode_limits(DecodeLimits {
++                    gzip_output: payload.len(),
++                    expanded_bytes,
++                    ..Default::default()
++                })
++                .finish(auth_key());
++            let body = container_body(
++                [(3, 4), (7, 8)]
++                    .into_iter()
++                    .map(|(msg_id, req_msg_id)| manual_tl::Message {
++                        msg_id,
++                        seq_no: 1,
++                        body: test_rpc_body(req_msg_id, &packed),
++                    })
++                    .collect(),
++            );
++            let packet = plaintext_body(mtp.session_id, 11, 2, body, 16);
++            let results = mtp.process_plaintext(&packet).unwrap();
++            assert_eq!(results.len(), 2);
++            assert!(
++                matches!(&results[0], Deserialization::RpcResult(r) if r.msg_id == MsgId(4) && r.body == payload)
++            );
++            if expanded_bytes == 256 {
++                assert!(
++                    matches!(&results[1], Deserialization::RpcResult(r) if r.msg_id == MsgId(8) && r.body == payload)
++                );
++            } else {
++                assert!(
++                    matches!(&results[1], Deserialization::Failure(f) if f.msg_id == MsgId(8) && matches!(f.error, DeserializeError::ResourceLimit { .. }))
++                );
++            }
++            assert_eq!(mtp.pending_ack, [3, 7]);
++            let next = plaintext_body(mtp.session_id, 15, 1, test_rpc_body(12, &packed), 16);
++            let results = mtp.process_plaintext(&next).unwrap();
++            assert!(
++                matches!(results.as_slice(), [Deserialization::RpcResult(r)] if r.msg_id == MsgId(12) && r.body == payload)
++            );
++        }
++    }
++
++    #[test]
++    fn authenticated_failed_gzip_crc_charges_sibling_budget() {
++        let mut bad = manual_tl::GzipPacked::new(&[0; 128]);
++        let crc = bad.packed_data.len() - 8;
++        bad.packed_data[crc] ^= 1;
++        let good = manual_tl::GzipPacked::new(&[0; 128]).to_bytes();
++        let mut mtp = Encrypted::build()
++            .decode_limits(DecodeLimits {
++                gzip_output: 128,
++                expanded_bytes: 192,
++                ..Default::default()
++            })
++            .finish(auth_key());
++        let body = container_body(vec![
++            manual_tl::Message {
++                msg_id: 3,
++                seq_no: 1,
++                body: test_rpc_body(4, &bad.to_bytes()),
++            },
++            manual_tl::Message {
++                msg_id: 7,
++                seq_no: 1,
++                body: test_rpc_body(8, &good),
++            },
++        ]);
++        let packet = plaintext_body(mtp.session_id, 11, 2, body, 16);
++        let results = mtp.process_plaintext(&packet).unwrap();
++        assert!(
++            matches!(results.as_slice(), [Deserialization::Failure(first), Deserialization::Failure(second)]
++            if first.msg_id == MsgId(4) && first.error == DeserializeError::DecompressionFailed && second.msg_id == MsgId(8)
++            && matches!(second.error, DeserializeError::ResourceLimit { .. }))
++        );
++        assert_eq!(mtp.pending_ack, [3, 7]);
++    }
++
++    #[test]
++    fn authenticated_sibling_gzip_wrappers_share_expansion_budget() {
++        for expanded_bytes in [24, 32] {
++            let mut mtp = Encrypted::build()
++                .decode_limits(DecodeLimits {
++                    gzip_output: 16,
++                    expanded_bytes,
++                    ..Default::default()
++                })
++                .finish(auth_key());
++            let body = container_body(
++                [(3, 4), (7, 8)]
++                    .into_iter()
++                    .map(|(msg_id, req_msg_id)| manual_tl::Message {
++                        msg_id,
++                        seq_no: 1,
++                        body: manual_tl::GzipPacked::new(&test_rpc_body(
++                            req_msg_id,
++                            &true.to_bytes(),
++                        ))
++                        .to_bytes(),
++                    })
++                    .collect(),
++            );
++            let packet = plaintext_body(mtp.session_id, 11, 2, body, 16);
++            let result = mtp.process_plaintext(&packet);
++            if expanded_bytes == 32 {
++                assert_eq!(result.unwrap().len(), 2);
++            } else {
++                assert!(matches!(
++                    result,
++                    Err(DeserializeError::ResourceLimit { .. })
++                ));
++                assert!(mtp.deserialization.is_empty());
++            }
++        }
++    }
++
+     fn test_rpc_body(id: i64, result: &[u8]) -> Vec<u8> {
+         let mut body = manual_tl::RpcResult::CONSTRUCTOR_ID.to_bytes();
+         body.extend(id.to_bytes());
+diff --git a/grammers-mtproto/src/mtp/plain.rs b/grammers-mtproto/src/mtp/plain.rs
+index 6c88a5d..106adf5 100644
+--- a/grammers-mtproto/src/mtp/plain.rs
++++ b/grammers-mtproto/src/mtp/plain.rs
+@@ -132,6 +132,71 @@ mod tests {
+ 
+     const REQUEST: &[u8] = b"Hey!";
+ 
++    fn reply(auth_key: i64, msg_id: i64, length: i32) -> Vec<u8> {
++        let mut bytes = auth_key.to_bytes();
++        msg_id.serialize(&mut bytes);
++        length.serialize(&mut bytes);
++        bytes.extend_from_slice(REQUEST);
++        bytes
++    }
++
++    #[test]
++    fn plain_deserialize_rejects_invalid_headers_and_lengths() {
++        let mut mtp = Plain::new();
++        for length in 0..20 {
++            assert_eq!(
++                mtp.deserialize(&mut vec![0; length]).err(),
++                Some(DeserializeError::MessageBufferTooSmall)
++            );
++        }
++        assert_eq!(
++            mtp.deserialize(&mut reply(8, 1, 4)).err(),
++            Some(DeserializeError::BadAuthKey {
++                got: 8,
++                expected: 0
++            })
++        );
++        for id in [i64::MIN, -3, 0, 2, 3, 4] {
++            assert_eq!(
++                mtp.deserialize(&mut reply(0, id, 4)).err(),
++                Some(DeserializeError::BadMessageId { got: id })
++            );
++        }
++        for length in [i32::MIN, -4, 0] {
++            assert_eq!(
++                mtp.deserialize(&mut reply(0, 1, length)).err(),
++                Some(DeserializeError::NegativeMessageLength { got: length })
++            );
++        }
++        for length in [1, 3, 5, i32::MAX] {
++            assert_eq!(
++                mtp.deserialize(&mut reply(0, 1, length)).err(),
++                Some(DeserializeError::InvalidEnvelope {
++                    reason: "invalid message envelope"
++                })
++            );
++        }
++        for length in [8, i32::MAX - 3] {
++            assert_eq!(
++                mtp.deserialize(&mut reply(0, 1, length)).err(),
++                Some(DeserializeError::TooLongMessageLength {
++                    got: length as usize,
++                    max_length: 4
++                })
++            );
++        }
++    }
++
++    #[test]
++    fn plain_deserialize_returns_only_the_declared_body() {
++        let mut mtp = Plain::new();
++        let mut bytes = reply(0, 5, 4);
++        bytes.extend_from_slice(&[0; 16]);
++        let results = mtp.deserialize(&mut bytes).unwrap();
++        assert!(matches!(results.as_slice(),
++            [Deserialization::RpcResult(result)] if result.msg_id == MsgId(0) && result.body == REQUEST));
++    }
++
+     #[test]
+     fn ensure_finalize_preserves_buffer() {
+         let mut buffer = DequeBuffer::with_capacity(0, 0);
+diff --git a/grammers-mtsender/src/sender.rs b/grammers-mtsender/src/sender.rs
+index 4283a17..17632b1 100644
+--- a/grammers-mtsender/src/sender.rs
++++ b/grammers-mtsender/src/sender.rs
+@@ -6,8 +6,10 @@
+ // option. This file may not be copied, modified, or distributed
+ // except according to those terms.
+ 
++use std::future::{Future, poll_fn};
+ use std::pin::Pin;
+ use std::sync::atomic::{AtomicI64, Ordering};
++use std::task::Poll;
+ use std::time::{Duration, SystemTime};
+ use std::{io, thread};
+ 
+@@ -356,14 +358,8 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+     /// If an error is returned, the connection should be treated
+     /// as dead and the sender instance recreated.
+     pub async fn step(&mut self) -> Result<Vec<UpdatesLike>, ReadError> {
+-        if self
+-            .liveness
+-            .is_some_and(|(limit, since)| since.elapsed() >= limit)
+-        {
+-            return Err(self.on_error(ReadError::Io(io::Error::new(
+-                io::ErrorKind::TimedOut,
+-                "no valid packet received before liveness deadline",
+-            ))));
++        if self.liveness_expired() {
++            return self.read_expired_liveness().await;
+         }
+         if let Err(error) = self.prepare_read_buffer() {
+             return Err(self.on_error(error));
+@@ -406,6 +402,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+                 })
+             }
+             _ = self.ping_timer.as_mut(), if deadline.is_some() => {
++                if self.liveness_expired() {
++                    return self.read_expired_liveness().await;
++                }
+                 if protocol_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                     self.mtp.on_service_timeout();
+                 }
+@@ -422,6 +421,48 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         }
+     }
+ 
++    fn liveness_expired(&self) -> bool {
++        self.liveness
++            .is_some_and(|(limit, since)| since.elapsed() >= limit)
++    }
++
++    // A delayed task may have a complete reply waiting in the socket. Inspect
++    // ready bytes before expiring, but never wait for more bytes or let partial
++    // traffic extend the deadline. The receive cap bounds this final inspection.
++    async fn read_expired_liveness(&mut self) -> Result<Vec<UpdatesLike>, ReadError> {
++        let mut budget = MAXIMUM_DATA;
++        while budget != 0 {
++            if let Err(error) = self.prepare_read_buffer() {
++                return Err(self.on_error(error));
++            }
++            let end = self.read_buffer.len().min(self.read_tail + budget);
++            let ready = {
++                let (mut reader, _) = self.stream.split();
++                let mut read = std::pin::pin!(tokio::task::unconstrained(
++                    reader.read(&mut self.read_buffer[self.read_tail..end])
++                ));
++                poll_fn(|cx| Poll::Ready(read.as_mut().poll(cx))).await
++            };
++            match ready {
++                Poll::Ready(Ok(n)) => match self.on_net_read(n) {
++                    Ok(updates) => {
++                        if !self.liveness_expired() {
++                            return Ok(updates);
++                        }
++                        budget -= n;
++                    }
++                    Err(error) => return Err(self.on_error(error)),
++                },
++                Poll::Ready(Err(error)) => return Err(self.on_error(error.into())),
++                Poll::Pending => break,
++            }
++        }
++        Err(self.on_error(ReadError::Io(io::Error::new(
++            io::ErrorKind::TimedOut,
++            "no valid packet received before liveness deadline",
++        ))))
++    }
++
+     fn prepare_read_buffer(&mut self) -> Result<(), ReadError> {
+         if self.read_tail == self.read_buffer.len() {
+             if self.read_tail >= MAXIMUM_DATA {
+@@ -863,10 +904,11 @@ pub async fn connect<T: Transport>(
+ // CPU-bound PQ factorization, primality validation and DH exponentiation must not block I/O.
+ // Started jobs cannot be preempted; hold their capacity until they finish even
+ // if the handshake caller cancels. Waiting for capacity is cancel-safe.
++static DH_JOBS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
++
+ async fn run_dh_job<T: Send + 'static>(
+     job: impl FnOnce() -> Result<T, authentication::Error> + Send + 'static,
+ ) -> Result<T, InvocationError> {
+-    static DH_JOBS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+     let permit = DH_JOBS
+         .acquire()
+         .await
+@@ -939,6 +981,8 @@ pub async fn connect_with_auth<T: Transport>(
+ mod optimization_tests {
+     use super::*;
+ 
++    static DH_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
++
+     fn send_message_fixture(message: &str) -> Vec<u8> {
+         // Minimal SendMessage wire fixture: silent, self peer, text, random id.
+         let mut body = tl::functions::messages::SendMessage::CONSTRUCTOR_ID
+@@ -1693,6 +1737,7 @@ mod optimization_tests {
+ 
+     #[tokio::test(flavor = "current_thread")]
+     async fn dh_job_does_not_block_single_thread_io_progress() {
++        let _guard = DH_TEST_LOCK.lock().await;
+         let (tx, rx) = std::sync::mpsc::channel();
+         let job = run_dh_job(move || Ok(rx.recv_timeout(Duration::from_secs(2)).is_ok()));
+         let peer = async {
+@@ -1705,6 +1750,7 @@ mod optimization_tests {
+ 
+     #[tokio::test(flavor = "current_thread")]
+     async fn factorization_step_runs_with_current_thread_progress() {
++        let _guard = DH_TEST_LOCK.lock().await;
+         let (request, data) = authentication::step1().unwrap();
+         let response = tl::types::ResPq {
+             nonce: request.nonce,
+@@ -1733,6 +1779,135 @@ mod optimization_tests {
+         );
+     }
+ 
++    #[tokio::test(flavor = "current_thread")]
++    async fn four_started_dh_jobs_retain_capacity_after_caller_cancellation() {
++        let _guard = DH_TEST_LOCK.lock().await;
++        let mut jobs = Vec::new();
++        let mut release = Vec::new();
++        for _ in 0..4 {
++            let (started, entered) = oneshot::channel();
++            let (finish, blocking) = std::sync::mpsc::channel();
++            jobs.push(tokio::spawn(run_dh_job(move || {
++                let _ = started.send(());
++                blocking.recv_timeout(Duration::from_secs(5)).unwrap();
++                Ok(())
++            })));
++            release.push(finish);
++            tokio::time::timeout(Duration::from_secs(2), entered)
++                .await
++                .unwrap()
++                .unwrap();
++        }
++        assert_eq!(DH_JOBS.available_permits(), 0);
++        for job in jobs {
++            job.abort();
++            assert!(job.await.unwrap_err().is_cancelled());
++        }
++        assert_eq!(
++            DH_JOBS.available_permits(),
++            0,
++            "cancelled callers must not retire live CPU jobs"
++        );
++        let mut fifth = tokio::spawn(run_dh_job(|| Ok(())));
++        assert!(
++            tokio::time::timeout(Duration::from_millis(25), &mut fifth)
++                .await
++                .is_err()
++        );
++        for finish in release {
++            finish.send(()).unwrap();
++        }
++        tokio::time::timeout(Duration::from_secs(2), fifth)
++            .await
++            .unwrap()
++            .unwrap()
++            .unwrap();
++        let _all_finished = tokio::time::timeout(Duration::from_secs(2), DH_JOBS.acquire_many(4))
++            .await
++            .unwrap()
++            .unwrap();
++    }
++
++    async fn read_plain_request<R: Identifiable + Deserializable>(
++        peer: &mut tokio::net::TcpStream,
++    ) -> R {
++        tokio::time::timeout(Duration::from_secs(2), async {
++            let length = peer.read_u32_le().await.unwrap() as usize;
++            assert!(length >= 36);
++            let mut packet = vec![0; length - 4];
++            peer.read_exact(&mut packet).await.unwrap();
++            deserialize_request(&packet[24..packet.len() - 4]).unwrap()
++        })
++        .await
++        .unwrap()
++    }
++
++    #[tokio::test(flavor = "current_thread")]
++    async fn auth_generation_uses_bounded_jobs_for_both_cpu_steps() {
++        let _guard = DH_TEST_LOCK.lock().await;
++        for stage in [2, 3] {
++            let (sender, mut peer) = pair().await;
++            let mut handshake = tokio::spawn(generate_auth_key(sender));
++            let mut wire = transport::Full::new();
++            let request: tl::functions::ReqPqMulti = read_plain_request(&mut peer).await;
++            let mut gate = if stage == 2 {
++                Some(DH_JOBS.acquire_many(4).await.unwrap())
++            } else {
++                None
++            };
++            let response = tl::enums::ResPq::Pq(tl::types::ResPq {
++                nonce: request.nonce,
++                server_nonce: [1; 16],
++                pq: (17u64 * 19).to_be_bytes().to_vec(),
++                server_public_key_fingerprints: if stage == 2 {
++                    vec![]
++                } else {
++                    vec![-3414540481677951611]
++                },
++            });
++            peer.write_all(&plain_response_with_transport(
++                &response.to_bytes(),
++                &mut wire,
++            ))
++            .await
++            .unwrap();
++            if stage == 3 {
++                let request: tl::functions::ReqDhParams = read_plain_request(&mut peer).await;
++                gate = Some(DH_JOBS.acquire_many(4).await.unwrap());
++                let response = tl::enums::ServerDhParams::Ok(tl::types::ServerDhParamsOk {
++                    nonce: request.nonce,
++                    server_nonce: request.server_nonce,
++                    encrypted_answer: vec![],
++                });
++                peer.write_all(&plain_response_with_transport(
++                    &response.to_bytes(),
++                    &mut wire,
++                ))
++                .await
++                .unwrap();
++            }
++            assert!(
++                tokio::time::timeout(Duration::from_millis(25), &mut handshake)
++                    .await
++                    .is_err(),
++                "authentication step {stage} bypassed the bounded blocking-job path"
++            );
++            drop(gate);
++            let outcome = tokio::time::timeout(Duration::from_secs(2), handshake)
++                .await
++                .unwrap()
++                .unwrap();
++            let Err(InvocationError::Authentication(error)) = outcome else {
++                panic!("expected authentication step {stage} fixture rejection");
++            };
++            assert!(matches!(
++                (stage, error),
++                (2, authentication::Error::UnknownFingerprints { .. })
++                    | (3, authentication::Error::InvalidDhParameters)
++            ));
++        }
++    }
++
+     #[tokio::test]
+     async fn unsent_response_variants_fail_at_the_existing_request_lookup() {
+         for kind in 0..4 {
+@@ -1837,6 +2012,97 @@ mod optimization_tests {
+         assert_eq!(error.io_error().unwrap().kind(), io::ErrorKind::TimedOut);
+     }
+ 
++    fn plain_response_packet(body: &[u8]) -> Vec<u8> {
++        plain_response_with_transport(body, &mut transport::Full::new())
++    }
++
++    fn plain_response_with_transport(body: &[u8], transport: &mut transport::Full) -> Vec<u8> {
++        let mut packet = DequeBuffer::with_capacity(body.len() + 20, LEADING_BUFFER_SPACE);
++        packet.extend(0i64.to_le_bytes());
++        packet.extend(1i64.to_le_bytes());
++        packet.extend((body.len() as i32).to_le_bytes());
++        packet.extend(body.iter().copied());
++        transport.pack(&mut packet);
++        packet[..].to_vec()
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn buffered_reply_after_liveness_deadline_is_processed_before_expiry() {
++        let (mut sender, mut peer) = pair().await;
++        let (tx, rx) = oneshot::channel();
++        sender.enqueue_body(Bytes::from_static(&[1; 4]), tx);
++        sender.try_fill_write();
++        sender.on_net_write(sender.write_buffer.len()).unwrap();
++        sender.set_liveness_timeout(Some(Duration::from_secs(5)));
++        let reply = vec![7; INITIAL_READ_BUFFER_SIZE * 4];
++        peer.write_all(&plain_response_packet(&reply))
++            .await
++            .unwrap();
++        sender.stream.split().0.peek(&mut [0]).await.unwrap();
++        tokio::time::advance(Duration::from_secs(10)).await;
++        sender.step().await.unwrap();
++        assert_eq!(rx.await.unwrap().unwrap(), reply);
++        assert!(!sender.liveness_expired());
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn partial_ready_packet_does_not_extend_liveness_deadline() {
++        let (mut sender, mut peer) = pair().await;
++        sender.set_liveness_timeout(Some(Duration::from_secs(5)));
++        peer.write_all(&plain_response_packet(&[7; 4])[..8])
++            .await
++            .unwrap();
++        sender.stream.split().0.peek(&mut [0]).await.unwrap();
++        tokio::time::advance(Duration::from_secs(5)).await;
++        let expired = Instant::now();
++        let error = sender.step().await.unwrap_err();
++        assert_eq!(error.io_error().unwrap().kind(), io::ErrorKind::TimedOut);
++        assert_eq!(
++            Instant::now(),
++            expired,
++            "expiry must never wait for more bytes"
++        );
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn waiting_step_reports_liveness_expiry_without_another_step() {
++        let (mut sender, _peer) = pair().await;
++        sender.set_liveness_timeout(Some(Duration::from_secs(5)));
++        let started = Instant::now();
++        let error = sender.step().await.unwrap_err();
++        assert_eq!(error.io_error().unwrap().kind(), io::ErrorKind::TimedOut);
++        assert!(started.elapsed() >= Duration::from_secs(5));
++    }
++
++    #[tokio::test]
++    async fn partially_written_keepalive_survives_repeated_ping_deadlines() {
++        let (mut sender, _peer) = encrypted_pair().await;
++        sender.on_ping_timeout();
++        sender.try_fill_write();
++        let frame = sender.write_buffer[..].to_vec();
++        let RequestState::Serialized(original) = &sender.requests[0].state else {
++            panic!("keepalive must be framed");
++        };
++        let original = original.msg_id;
++        sender.on_net_write(1).unwrap();
++        for _ in 0..3 {
++            sender.on_ping_timeout();
++            sender.try_fill_write();
++            assert_eq!(sender.requests.len(), 1);
++            assert!(matches!(&sender.requests[0].state,
++                RequestState::Serialized(pair) if pair.msg_id == original));
++            assert_eq!(&sender.write_buffer[..], frame.as_slice());
++            assert_eq!(sender.write_head, 1);
++        }
++        sender.on_net_write(frame.len() - 1).unwrap();
++        sender.on_ping_timeout();
++        assert_eq!(sender.requests.len(), 1);
++        assert!(matches!(
++            sender.requests[0].state,
++            RequestState::NotSerialized
++        ));
++    }
++
+     #[tokio::test]
+     async fn connection_failures_preserve_delivery_certainty_and_error_source() {
+         use crate::{AutoSleep, RetryContext, RetryPolicy};
+@@ -1854,7 +2120,10 @@ mod optimization_tests {
+                         .unwrap();
+                 }
+             }
+-            let failure = sender.on_error(ReadError::Io(io::Error::from_raw_os_error(104)));
++            let failure = sender.on_error(ReadError::Io(io::Error::new(
++                io::ErrorKind::ConnectionReset,
++                "fixture connection reset",
++            )));
+             let error = rx.await.unwrap().unwrap_err();
+             assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+             let InvocationError::Read {
+@@ -1865,7 +2134,10 @@ mod optimization_tests {
+                 panic!("{error:?}");
+             };
+             assert_eq!(*may_have_been_sent, written.is_some_and(|n| n > 0));
+-            assert_eq!(original.io_error().unwrap().raw_os_error(), Some(104));
++            assert_eq!(
++                original.io_error().unwrap().kind(),
++                io::ErrorKind::ConnectionReset
++            );
+             let ReadError::Shared(shared) = failure else {
+                 panic!("missing shared source");
+             };
+diff --git a/grammers-mtsender/src/sender_pool.rs b/grammers-mtsender/src/sender_pool.rs
+index f2eb5a2..1aa7b53 100644
+--- a/grammers-mtsender/src/sender_pool.rs
++++ b/grammers-mtsender/src/sender_pool.rs
+@@ -1159,7 +1159,7 @@ impl ConnectionSetup {
+             .ok_or(InvocationError::InvalidDc)?;
+         let limit = self.connection_params.connection_timeout;
+         let connecting = self.connect_sender(&dc_option);
+-        let (sender, remote_config) = if let Some(limit) = limit {
++        let (mut sender, remote_config) = if let Some(limit) = limit {
+             tokio::time::timeout(limit, connecting)
+                 .await
+                 .map_err(|_| {
+@@ -1174,14 +1174,25 @@ impl ConnectionSetup {
+         // The initialization deadline covers network work. Storage and another
+         // DC's config merge may take longer and have their own cancellation rules.
+         self.update_config(remote_config).await?;
++        self.persist_connection_key(&mut sender, dc_option).await?;
++        Ok(sender)
++    }
++
++    async fn persist_connection_key(
++        &self,
++        sender: &mut Sender<Transport, mtp::Encrypted>,
++        dc_option: DcOption,
++    ) -> Result<(), InvocationError> {
+         // Concurrent DC setup may refresh endpoints while this handshake runs.
+         // Merge under the same lock as config writes so a stale config cannot
+         // erase a freshly generated key or overwrite refreshed routes.
+         let _guard = self.state.config_lock.lock().await;
+-        let mut dc_option = self.session.dc_option(dc_id)?.unwrap_or(dc_option);
++        let mut dc_option = self.session.dc_option(dc_option.id)?.unwrap_or(dc_option);
+         dc_option.auth_key = Some(sender.auth_key());
+         self.session.set_dc_option(&dc_option).await?;
+-        Ok(sender)
++        // Storage/config-lock latency is not evidence that the peer went silent.
++        sender.set_liveness_timeout(self.connection_params.liveness_timeout);
++        Ok(())
+     }
+ 
+     async fn connect_sender(
+@@ -1538,6 +1549,60 @@ mod optimization_tests {
+     use super::*;
+     use tl::Serializable;
+ 
++    #[tokio::test]
++    async fn ready_connection_queue_yields_before_draining_its_backlog() {
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let (sender, peer) = tokio::join!(
++            connect_with_auth(
++                Transport::new(),
++                ServerAddr::Tcp {
++                    address: listener.local_addr().unwrap()
++                },
++                [0; 256]
++            ),
++            listener.accept()
++        );
++        let _peer = peer.unwrap().0;
++        let (tx, rx) = queue::unbounded_channel();
++        let mut responses = Vec::new();
++        for _ in 0..512 {
++            let (tx_result, rx_result) = oneshot::channel();
++            // Invalid bodies fail synchronously without socket progress, so
++            // the ready queue itself must not monopolize the runtime.
++            tx.send(Rpc {
++                body: Bytes::from_static(&[0; 3]),
++                permit: None,
++                tx: tx_result,
++            })
++            .unwrap();
++            responses.push(rx_result);
++        }
++        let session = erase(Arc::new(
++            grammers_session::storages::MemorySession::default(),
++        ));
++        let runner = run_sender(sender.unwrap(), rx, None, 2, session, Arc::default());
++        tokio::pin!(runner);
++        tokio::select! { biased;
++            _ = &mut runner => panic!("open connection should remain active"),
++            _ = std::future::ready(()) => {}
++        }
++        let mut completed = 0;
++        for result in &mut responses {
++            match result.try_recv() {
++                Ok(Err(InvocationError::Io(error))) => {
++                    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
++                    completed += 1;
++                }
++                Err(oneshot::error::TryRecvError::Empty) => {}
++                other => panic!("unexpected request outcome: {other:?}"),
++            }
++        }
++        assert!(
++            (1..responses.len()).contains(&completed),
++            "completed {completed}"
++        );
++    }
++
+     #[tokio::test]
+     async fn socket_failure_drains_unframed_queue_with_original_error_and_permits() {
+         use crate::configuration::{AutoSleep, RetryPolicy};
+@@ -1616,7 +1681,18 @@ mod optimization_tests {
+             "fixture must leave a real queue behind the socket failure"
+         );
+         assert_eq!(capacity.available_permits(), 512);
+-        assert!(tx.is_closed());
++        let body = Bytes::from_static(&[1; 4]);
++        let (response, _result) = oneshot::channel();
++        let rejected = tx
++            .send(Rpc {
++                body: body.clone(),
++                permit: None,
++                tx: response,
++            })
++            .err()
++            .unwrap()
++            .0;
++        assert_eq!(rejected.body.as_ptr(), body.as_ptr());
+     }
+ 
+     async fn cache_self_user<S: Session>(session: &S)
+@@ -1704,6 +1780,7 @@ mod optimization_tests {
+     struct RecoverySession {
+         memory: grammers_session::storages::MemorySession,
+         fail_state: AtomicBool,
++        dc_write_delay: Duration,
+     }
+ 
+     impl Session for RecoverySession {
+@@ -1731,6 +1808,7 @@ mod optimization_tests {
+         ) -> grammers_session::BoxFuture<'_, Result<(), Self::Error>> {
+             let option = option.clone();
+             Box::pin(async move {
++                tokio::time::sleep(self.dc_write_delay).await;
+                 self.memory
+                     .set_dc_option(&option)
+                     .await
+@@ -1786,6 +1864,169 @@ mod optimization_tests {
+         }
+     }
+ 
++    #[tokio::test(start_paused = true)]
++    async fn slow_setup_storage_rearms_connection_liveness_after_key_persistence() {
++        let session = Arc::new(RecoverySession {
++            memory: Default::default(),
++            fail_state: AtomicBool::new(false),
++            dc_write_delay: Duration::from_secs(10),
++        });
++        let pool = SenderPool::with_configuration(
++            Arc::clone(&session),
++            1,
++            ConnectionParams {
++                liveness_timeout: Some(Duration::from_secs(4)),
++                ..Default::default()
++            },
++        );
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let (sender, _peer) = tokio::join!(
++            connect_with_auth(
++                Transport::new(),
++                ServerAddr::Tcp {
++                    address: listener.local_addr().unwrap()
++                },
++                [7; 256]
++            ),
++            listener.accept(),
++        );
++        let mut sender = sender.unwrap();
++        sender.set_liveness_timeout(Some(Duration::from_secs(4)));
++        let dc_option = session.dc_option(2).unwrap().unwrap();
++        let started = tokio::time::Instant::now();
++        pool.runner
++            .setup_context()
++            .persist_connection_key(&mut sender, dc_option)
++            .await
++            .unwrap();
++        assert!(started.elapsed() >= Duration::from_secs(10));
++        assert_eq!(
++            session.dc_option(2).unwrap().unwrap().auth_key,
++            Some([7; 256])
++        );
++        sender.step().await.unwrap();
++    }
++
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++    async fn setup_task_panic_retires_live_waiters_and_their_permits() {
++        let (mut pool, _listener) = silent_pool(ConnectionParams {
++            max_pending_requests: std::num::NonZeroUsize::new(2),
++            ..Default::default()
++        })
++        .await;
++        let trackers = [
++            crate::InvocationTracker::default(),
++            crate::InvocationTracker::default(),
++        ];
++        let mut waiters = Vec::new();
++        for tracker in &trackers {
++            waiters.push(
++                pool.handle
++                    .start_invoke_shared(4, Bytes::from_static(&[1; 4]), tracker.try_acquire())
++                    .unwrap(),
++            );
++            let request = pool.runner.request_rx.recv().await.unwrap();
++            assert!(pool.runner.process_request(request).await.is_continue());
++        }
++        assert_eq!(pool.runner.pending.len(), 1);
++        assert_eq!(pool.runner.pending[0].requests.len(), 2);
++        let capacity = Arc::clone(pool.runner.state.capacity.as_ref().unwrap());
++        assert_eq!(capacity.available_permits(), 0);
++        pool.runner.pending[0].abort_handle.abort();
++        pool.runner.pending[0].abort_handle = pool.runner.setup_pool.spawn(async {
++            panic!("setup panic fixture");
++        });
++        let result = tokio::time::timeout(Duration::from_secs(1), pool.runner.run_checked())
++            .await
++            .unwrap();
++        assert_eq!(result, Err(PoolRunError::TaskPanicked));
++        for (waiter, tracker) in waiters.into_iter().zip(trackers) {
++            assert!(waiter.await.is_err());
++            assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
++        }
++        assert_eq!(capacity.available_permits(), 2);
++        assert!(pool.handle.status().stopped);
++        assert!(pool.handle.thin.1.read().unwrap().entries.is_empty());
++    }
++
++    #[tokio::test]
++    async fn receiver_startup_repairs_bad_saved_channels_and_keeps_valid_rows() {
++        use grammers_session::types::{ChannelState, UpdateState, UpdatesState};
++        let session = Arc::new(grammers_session::storages::MemorySession::default());
++        let saved = UpdatesState {
++            pts: 100,
++            qts: 0,
++            date: 1,
++            seq: 0,
++            channels: vec![
++                ChannelState { id: 7, pts: 10 },
++                ChannelState { id: -1, pts: 10 },
++                ChannelState { id: 8, pts: -1 },
++                ChannelState { id: 20, pts: 11 },
++            ],
++        };
++        assert!(grammers_session::updates::MessageBoxes::try_load(saved.clone()).is_err());
++        session
++            .set_update_state(UpdateState::All(saved))
++            .await
++            .unwrap();
++        let pool = SenderPool::new(Arc::clone(&session), 1);
++        let receiver = crate::UpdatesReceiver::create(
++            pool.handle.thin.clone(),
++            erase(Arc::clone(&session)),
++            pool.updates,
++            crate::UpdatesConfiguration { catch_up: true },
++        )
++        .await
++        .unwrap();
++        receiver.sync_update_state().await.unwrap();
++        let mut repaired = session.updates_state().await.unwrap();
++        repaired.channels.sort_by_key(|channel| channel.id);
++        assert_eq!(
++            repaired.channels,
++            vec![
++                ChannelState { id: 7, pts: 10 },
++                ChannelState { id: 20, pts: 11 }
++            ]
++        );
++        assert_eq!((repaired.pts, repaired.date, repaired.seq), (100, 1, 0));
++    }
++
++    #[tokio::test(start_paused = true)]
++    async fn receiver_created_before_login_rechecks_self_while_next_is_waiting() {
++        for catch_up in [false, true] {
++            let session = Arc::new(grammers_session::storages::MemorySession::default());
++            let mut pool = SenderPool::new(Arc::clone(&session), 1);
++            let mut receiver = crate::UpdatesReceiver::create(
++                pool.handle.thin.clone(),
++                erase(Arc::clone(&session)),
++                pool.updates,
++                crate::UpdatesConfiguration { catch_up },
++            )
++            .await
++            .unwrap();
++            let update_tx = pool.runner.updates_tx.clone().unwrap();
++            let responder = async {
++                tokio::task::yield_now().await;
++                assert!(pool.runner.request_rx.try_recv().is_err());
++                cache_self_user(session.as_ref()).await;
++                expect_get_state(&mut pool.runner)
++                    .await
++                    .send(Ok(state_reply()))
++                    .unwrap();
++                update_tx.send(config_update()).await.unwrap();
++            };
++            let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
++                tokio::join!(receiver.next(), responder)
++            })
++            .await
++            .unwrap();
++            assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
++            assert_eq!(session.updates_state().await.unwrap().pts, 100);
++            assert_eq!(pool.handle.home_failure_generation(), 0);
++        }
++    }
++
+     async fn expect_get_state(
+         runner: &mut SenderPoolRunner,
+     ) -> oneshot::Sender<Result<Vec<u8>, InvocationError>> {
+@@ -1827,6 +2068,7 @@ mod optimization_tests {
+         let session = Arc::new(RecoverySession {
+             memory: Default::default(),
+             fail_state: AtomicBool::new(false),
++            dc_write_delay: Duration::ZERO,
+         });
+         cache_self_user(session.as_ref()).await;
+         let channels = vec![ChannelState { id: 7, pts: 10 }];
+@@ -1880,6 +2122,105 @@ mod optimization_tests {
+         assert_eq!(saved.channels, channels);
+     }
+ 
++    #[tokio::test]
++    async fn invalid_socket_channel_does_not_start_recovery_or_block_updates() {
++        let session = Arc::new(grammers_session::storages::MemorySession::default());
++        let pool = SenderPool::new(Arc::clone(&session), 1);
++        let mut receiver = crate::UpdatesReceiver::create(
++            pool.handle.thin.clone(),
++            erase(session),
++            pool.updates,
++            crate::UpdatesConfiguration { catch_up: true },
++        )
++        .await
++        .unwrap();
++        let update_tx = pool.runner.updates_tx.as_ref().unwrap();
++        update_tx
++            .send(UpdatesLike::Updates(
++                tl::types::UpdateShort {
++                    date: 1,
++                    update: tl::types::UpdateChannelTooLong {
++                        channel_id: i64::MAX,
++                        pts: Some(1),
++                    }
++                    .into(),
++                }
++                .into(),
++            ))
++            .await
++            .unwrap();
++        update_tx.send(config_update()).await.unwrap();
++        let update = tokio::time::timeout(Duration::from_secs(1), receiver.next())
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(update.0[0].0, tl::enums::Update::Config);
++    }
++
++    #[tokio::test]
++    async fn invalid_get_state_preserves_storage_and_retries_recovery() {
++        use grammers_session::types::{ChannelState, UpdateState, UpdatesState};
++        let session = Arc::new(grammers_session::storages::MemorySession::default());
++        cache_self_user(session.as_ref()).await;
++        let saved = UpdatesState {
++            channels: vec![ChannelState { id: 7, pts: 10 }],
++            ..Default::default()
++        };
++        session
++            .set_update_state(UpdateState::All(saved.clone()))
++            .await
++            .unwrap();
++        let mut pool = SenderPool::new(Arc::clone(&session), 1);
++        let mut receiver = crate::UpdatesReceiver::create(
++            pool.handle.thin.clone(),
++            erase(Arc::clone(&session)),
++            pool.updates,
++            crate::UpdatesConfiguration { catch_up: true },
++        )
++        .await
++        .unwrap();
++        for field in 0..4 {
++            let mut state = tl::types::updates::State {
++                pts: 100,
++                qts: 0,
++                date: 1,
++                seq: 1,
++                unread_count: 0,
++            };
++            *match field {
++                0 => &mut state.pts,
++                1 => &mut state.qts,
++                2 => &mut state.date,
++                _ => &mut state.seq,
++            } = -1;
++            let (result, ()) = tokio::join!(receiver.next(), async {
++                expect_get_state(&mut pool.runner)
++                    .await
++                    .send(Ok(tl::enums::updates::State::State(state).to_bytes()))
++                    .unwrap();
++            });
++            assert!(matches!(
++                result,
++                Err(InvocationError::Deserialize(
++                    grammers_mtproto::mtp::DeserializeError::InvalidEnvelope { .. }
++                ))
++            ));
++            assert_eq!(session.updates_state().await.unwrap(), saved);
++        }
++        let update_tx = pool.runner.updates_tx.clone().unwrap();
++        let (result, ()) = tokio::join!(receiver.next(), async {
++            expect_get_state(&mut pool.runner)
++                .await
++                .send(Ok(state_reply()))
++                .unwrap();
++            update_tx.send(config_update()).await.unwrap();
++        });
++        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
++        let recovered = session.updates_state().await.unwrap();
++        assert_eq!(recovered.pts, 100);
++        assert_eq!(recovered.channels, saved.channels);
++    }
++
+     #[tokio::test]
+     async fn logged_out_home_failure_does_not_request_account_state() {
+         let session = Arc::new(grammers_session::storages::MemorySession::default());
+@@ -2299,7 +2640,7 @@ mod optimization_tests {
+         );
+     }
+ 
+-    #[tokio::test]
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+     async fn full_update_queue_does_not_hide_home_failure_notification() {
+         let pool = SenderPool::new(
+             Arc::new(grammers_session::storages::MemorySession::default()),
+@@ -2310,15 +2651,41 @@ mod optimization_tests {
+         let tx = pool.runner.updates_tx.as_ref().unwrap();
+         while tx.try_send(UpdatesLike::ConnectionClosed).is_ok() {}
+         let old = handle.home_failure_generation();
+-        state.home_failures.fetch_add(1, Ordering::Release);
+-        state.home_failure.notify_waiters();
+-        assert!(forward_update(tx, state, UpdatesLike::ConnectionClosed).is_err());
+-        tokio::time::timeout(Duration::from_secs(1), handle.wait_home_failure(old))
+-            .await
+-            .unwrap();
++        let before = handle.status().dropped_updates;
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let (sender, peer) = tokio::join!(
++            connect_with_auth(
++                Transport::new(),
++                ServerAddr::Tcp {
++                    address: listener.local_addr().unwrap()
++                },
++                [0; 256]
++            ),
++            listener.accept(),
++        );
++        let (_rpc_tx, rpc_rx) = queue::unbounded_channel();
++        drop(peer.unwrap());
++        let (outcome, ()) = tokio::time::timeout(Duration::from_secs(1), async {
++            tokio::join!(
++                run_sender(
++                    sender.unwrap(),
++                    rpc_rx,
++                    Some(tx.clone()),
++                    pool.runner.session.home_dc_id().unwrap(),
++                    Arc::clone(&pool.runner.session),
++                    Arc::clone(state)
++                ),
++                handle.wait_home_failure(old),
++            )
++        })
++        .await
++        .unwrap();
++        assert!(outcome.1.is_err());
++        assert_eq!(handle.home_failure_generation(), old + 1);
++        assert_eq!(handle.status().dropped_updates, before + 1);
+     }
+ 
+-    #[tokio::test]
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+     async fn same_dc_initialization_is_shared_and_other_dcs_remain_responsive() {
+         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+         let address = listener.local_addr().unwrap();
+@@ -2424,11 +2791,11 @@ mod optimization_tests {
+                 qts: 0,
+                 date: 1,
+                 seq: 0,
+-                channels: (1..=3).map(|id| ChannelState { id, pts: 10 }).collect(),
++                channels: (1..=4).map(|id| ChannelState { id, pts: 10 }).collect(),
+             }))
+             .await
+             .unwrap();
+-        for id in [2, 3] {
++        for id in [2, 3, 4] {
+             session
+                 .cache_peer(PeerInfo::Channel {
+                     id,
+@@ -2441,7 +2808,7 @@ mod optimization_tests {
+         let mut pool = SenderPool::new(Arc::clone(&session), 1);
+         let mut receiver = crate::UpdatesReceiver::create(
+             pool.handle.thin.clone(),
+-            erase(session),
++            erase(Arc::clone(&session)),
+             pool.updates,
+             crate::UpdatesConfiguration { catch_up: true },
+         )
+@@ -2457,7 +2824,7 @@ mod optimization_tests {
+             }
+         };
+         let responder = async {
+-            for expected in [0, 2, 3] {
++            for expected in [0, 2, 3, 4] {
+                 let (body, tx) = loop {
+                     match pool.runner.request_rx.recv().await.unwrap() {
+                         Request::Invoke { body, tx, .. } => break (body, tx),
+@@ -2496,6 +2863,14 @@ mod optimization_tests {
+                                 }
+                                 .into(),
+                             ))
++                        } else if expected == 3 {
++                            Err(InvocationError::Shared(Arc::new(InvocationError::Rpc(
++                                tl::types::RpcError {
++                                    error_code: 500,
++                                    error_message: "INTERNAL".into(),
++                                }
++                                .into(),
++                            ))))
+                         } else {
+                             Ok(tl::enums::updates::ChannelDifference::Difference(
+                                 tl::types::updates::ChannelDifference {
+@@ -2519,6 +2894,26 @@ mod optimization_tests {
+         })
+         .await
+         .unwrap();
++        receiver.sync_update_state().await.unwrap();
++        let saved = session.updates_state().await.unwrap();
++        assert!(
++            saved
++                .channels
++                .iter()
++                .any(|channel| channel.id == 1 && channel.pts == 10)
++        );
++        assert!(
++            saved
++                .channels
++                .iter()
++                .any(|channel| channel.id == 3 && channel.pts == 10)
++        );
++        assert!(
++            saved
++                .channels
++                .iter()
++                .any(|channel| channel.id == 4 && channel.pts == 11)
++        );
+     }
+ 
+     #[tokio::test]
+@@ -2624,7 +3019,7 @@ mod optimization_tests {
+         (SenderPool::with_configuration(session, 1, params), listener)
+     }
+ 
+-    #[tokio::test]
++    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+     async fn two_hundred_cold_cancellations_close_peer_without_quit() {
+         use tokio::io::AsyncReadExt;
+         let (pool, listener) = silent_pool(ConnectionParams::default()).await;
+diff --git a/grammers-mtsender/src/updates_receiver.rs b/grammers-mtsender/src/updates_receiver.rs
+index 59a055a..24da7c0 100644
+--- a/grammers-mtsender/src/updates_receiver.rs
++++ b/grammers-mtsender/src/updates_receiver.rs
+@@ -8,6 +8,7 @@
+ 
+ use std::collections::VecDeque;
+ use std::sync::Arc;
++use std::time::Duration;
+ 
+ use grammers_session::storages::ErasedSession;
+ use grammers_session::types::{PeerId, PeerInfo, UpdateState, UpdatesState};
+@@ -40,12 +41,13 @@ async fn prepare_channel_difference(
+     mut request: tl::functions::updates::GetChannelDifference,
+     session: Arc<ErasedSession>,
+     message_box: &mut MessageBoxes,
+-) -> Result<
+-    Option<tl::functions::updates::GetChannelDifference>,
+-    Box<dyn std::error::Error + Send + Sync>,
+-> {
++) -> Result<Option<tl::functions::updates::GetChannelDifference>, InvocationError> {
+     let id = match &request.channel {
+-        tl::enums::InputChannel::Channel(channel) => PeerId::channel_unchecked(channel.channel_id),
++        tl::enums::InputChannel::Channel(channel) => PeerId::channel(channel.channel_id).ok_or(
++            grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
++                reason: "invalid channel update-state identifier",
++            },
++        )?,
+         _ => unreachable!(),
+     };
+ 
+@@ -79,7 +81,7 @@ async fn prepare_channel_difference(
+             channel_id = ?id,
+             "cannot getChannelDifference as we're missing its hash",
+         );
+-        message_box.end_channel_difference(PrematureEndReason::Banned);
++        message_box.defer_channel_difference(Duration::from_secs(1));
+         Ok(None)
+     }
+ }
+@@ -99,12 +101,7 @@ impl UpdatesReceiver {
+             .into());
+         }
+         let message_box = if configuration.catch_up {
+-            MessageBoxes::try_load(session.updates_state().await?).map_err(|_| {
+-                std::io::Error::new(
+-                    std::io::ErrorKind::InvalidData,
+-                    "invalid saved update state",
+-                )
+-            })?
++            MessageBoxes::load(session.updates_state().await?)
+         } else {
+             // If the user doesn't want to bother with catching up on previous update, start with
+             // pristine state instead.
+@@ -141,6 +138,9 @@ impl UpdatesReceiver {
+ 
+         loop {
+             tokio::task::consume_budget().await;
++            if !self.should_get_state && !self.message_box.has_primary_state() {
++                self.should_get_state = session.peer(PeerId::self_user()).await?.is_some();
++            }
+             let generation = self.handle.home_failure_generation();
+             if generation != self.home_failure_generation {
+                 self.should_get_state |= !self.message_box.has_primary_state()
+@@ -152,6 +152,14 @@ impl UpdatesReceiver {
+             if self.should_get_state {
+                 match self.invoke(&tl::functions::updates::GetState {}).await {
+                     Ok(tl::enums::updates::State::State(state)) => {
++                        // Validate before persisting or changing the in-memory
++                        // state. A rejected reply must leave recovery armed.
++                        if state.pts < 0 || state.qts < 0 || state.date < 0 || state.seq < 0 {
++                            return Err(grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
++                                reason: "invalid account update state",
++                            }
++                            .into());
++                        }
+                         session
+                             .clone()
+                             .set_update_state(UpdateState::All(UpdatesState {
+@@ -265,8 +273,9 @@ impl UpdatesReceiver {
+                         }
+                         continue;
+                     }
+-                    Err(InvocationError::Rpc(rpc_error)) if rpc_error.code == 500 => {
+-                        warn!("Telegram is having internal issues: {:#?}", rpc_error);
++                    Err(e) if matches!(e.root_cause(), InvocationError::Rpc(rpc_error) if rpc_error.code == 500) =>
++                    {
++                        warn!("Telegram is having internal issues: {:#?}", e.root_cause());
+                         {
+                             self.message_box
+                                 .end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+@@ -288,8 +297,17 @@ impl UpdatesReceiver {
+                 continue;
+             }
+ 
++            // A stream can be created before login. Session caching does not
++            // signal this receiver, so periodically recheck only while account
++            // state is missing; this never sends RPCs before a self user exists.
++            let deadline = tokio::time::Instant::from_std(deadline);
++            let deadline = if self.message_box.has_primary_state() {
++                deadline
++            } else {
++                deadline.min(tokio::time::Instant::now() + Duration::from_secs(1))
++            };
+             let received = tokio::select! {
+-                result = timeout_at(deadline.into(), self.updates.recv()) => result,
++                result = timeout_at(deadline, self.updates.recv()) => result,
+                 _ = self.handle.wait_home_failure(self.home_failure_generation) => continue,
+             };
+             match received {
+diff --git a/grammers-session/src/message_box/adaptor.rs b/grammers-session/src/message_box/adaptor.rs
+index 6cff6ce..df6f529 100644
+--- a/grammers-session/src/message_box/adaptor.rs
++++ b/grammers-session/src/message_box/adaptor.rs
+@@ -494,11 +494,21 @@ impl PtsInfo {
+             _ => true,
+         };
+         valid_peer
+-            && Self::from_update(update)
+-                .is_none_or(|info| info.count >= 0 && info.pts >= info.count)
++            && Self::raw_from_update(update).is_none_or(|info| {
++                info.count >= 0
++                    && (info.pts == NO_PTS || info.pts >= info.count)
++                    && match info.key {
++                        Key::Channel(id) => crate::types::PeerId::channel(id).is_some(),
++                        _ => true,
++                    }
++            })
+     }
+ 
+     pub(super) fn from_update(update: &tl::enums::Update) -> Option<Self> {
++        Self::raw_from_update(update).filter(|info| info.pts != NO_PTS)
++    }
++
++    fn raw_from_update(update: &tl::enums::Update) -> Option<Self> {
+         use tl::enums::Update::*;
+         match update {
+             NewMessage(u) => Some(Self {
+@@ -758,6 +768,5 @@ impl PtsInfo {
+             PaidReactionPrivacy(_) => None,
+             _ => None,
+         }
+-        .filter(|info| info.pts != NO_PTS)
+     }
+ }
+diff --git a/grammers-session/src/message_box/defs.rs b/grammers-session/src/message_box/defs.rs
+index 8837424..64ae99d 100644
+--- a/grammers-session/src/message_box/defs.rs
++++ b/grammers-session/src/message_box/defs.rs
+@@ -68,6 +68,10 @@ pub(super) struct LiveEntry {
+     /// Next instant when we would get the update difference if no updates arrived before then.
+     pub(super) deadline: Instant,
+ 
++    /// Pending recovery may wait until this deadline before another attempt.
++    /// The key stays pending so socket updates cannot skip its backlog.
++    pub(super) recovery_deferred: bool,
++
+     /// If the entry has a gap and may soon trigger the need to get difference.
+     pub(super) possible_gap: Option<PossibleGap>,
+ }
+diff --git a/grammers-session/src/message_box/mod.rs b/grammers-session/src/message_box/mod.rs
+index 2bc3834..14e5e2b 100644
+--- a/grammers-session/src/message_box/mod.rs
++++ b/grammers-session/src/message_box/mod.rs
+@@ -28,7 +28,7 @@
+ //! (by waiting for a short time)
+ //! or because we got the difference for the corresponding entry.
+ //!
+-//! While there are entries for which their difference must be fetched,
++//! While there are entries whose difference is ready to be fetched,
+ //! [`MessageBoxes::check_deadlines`] will always return [`Instant::now`],
+ //! since "now" is the time to get the difference.
+ 
+@@ -48,9 +48,9 @@ use defs::{LiveEntry, NO_DATE, NO_PTS, NO_SEQ, POSSIBLE_GAP_TIMEOUT, PossibleGap
+ use grammers_tl_types as tl;
+ #[cfg(test)]
+ use tests::Instant;
+-use tracing::{debug, info, trace};
++use tracing::{debug, info, trace, warn};
+ 
+-use crate::types::{ChannelState, UpdatesState};
++use crate::types::{ChannelState, PeerId, UpdatesState};
+ 
+ fn next_updates_deadline() -> Instant {
+     Instant::now() + defs::NO_UPDATES_TIMEOUT
+@@ -63,6 +63,16 @@ fn update_sort_key(update: &tl::enums::Update) -> i32 {
+     }
+ }
+ 
++fn retain_valid_updates(updates: &mut Vec<tl::enums::Update>) {
++    updates.retain(|update| {
++        let valid = PtsInfo::valid_update(update);
++        if !valid {
++            warn!("ignoring malformed update within difference result");
++        }
++        valid
++    });
++}
++
+ impl MessageBox {
+     pub fn pts(&self) -> i32 {
+         match self {
+@@ -112,7 +122,22 @@ impl MessageBoxes {
+ 
+     /// Create a [`MessageBoxes`] from a previously known update state.
+     pub fn load(mut state: UpdatesState) -> Self {
++        if state.pts < NO_PTS || state.qts < NO_PTS || state.date < NO_DATE || state.seq < NO_SEQ {
++            warn!("repairing invalid saved account update counters");
++            state.pts = state.pts.max(NO_PTS);
++            state.qts = state.qts.max(NO_PTS);
++            state.date = state.date.max(NO_DATE);
++            state.seq = state.seq.max(NO_SEQ);
++        }
++        state.channels.retain(|channel| {
++            let valid = PeerId::channel(channel.id).is_some() && channel.pts >= NO_PTS;
++            if !valid {
++                warn!("discarding invalid saved channel update state");
++            }
++            valid
++        });
+         if state.pts == NO_PTS && state.qts > NO_PTS {
++            warn!("discarding saved QTS without primary state");
+             // A QTS alone cannot form a valid getDifference request. Relearn
+             // account state instead of creating a fictitious common PTS of 0.
+             state.qts = NO_PTS;
+@@ -129,6 +154,7 @@ impl MessageBoxes {
+                 key: Key::Common,
+                 pts: state.pts.max(NO_PTS),
+                 deadline,
++                recovery_deferred: false,
+                 possible_gap: None,
+             });
+         }
+@@ -137,6 +163,7 @@ impl MessageBoxes {
+                 key: Key::Secondary,
+                 pts: state.qts,
+                 deadline,
++                recovery_deferred: false,
+                 possible_gap: None,
+             });
+         }
+@@ -149,6 +176,7 @@ impl MessageBoxes {
+                     key: Key::Channel(c.id),
+                     pts: c.pts,
+                     deadline,
++                    recovery_deferred: false,
+                     possible_gap: None,
+                 }),
+         );
+@@ -157,6 +185,7 @@ impl MessageBoxes {
+         // invariants. Keep the older position so recovery cannot skip updates.
+         entries.dedup_by(|later, earlier| {
+             if later.key == earlier.key {
++                warn!("merging duplicate saved channel state at the older position");
+                 earlier.pts = earlier.pts.min(later.pts);
+                 true
+             } else {
+@@ -185,7 +214,7 @@ impl MessageBoxes {
+             || state
+                 .channels
+                 .iter()
+-                .any(|channel| channel.id <= 0 || channel.pts < 0)
++                .any(|channel| PeerId::channel(channel.id).is_none() || channel.pts < 0)
+         {
+             return Err(Gap);
+         }
+@@ -238,6 +267,7 @@ impl MessageBoxes {
+                 key,
+                 pts,
+                 deadline: next_updates_deadline(),
++                recovery_deferred: false,
+                 possible_gap: None,
+             });
+         }
+@@ -283,37 +313,44 @@ impl MessageBoxes {
+     /// Return the next deadline when receiving updates should timeout.
+     ///
+     /// If a deadline expired, the corresponding entries will be marked as needing to get its difference.
+-    /// While there are entries pending of getting their difference, this method returns the current instant.
++    /// Ready differences return an expired deadline. Deferred recovery retains
++    /// its pending state but wakes at its retry deadline.
+     pub fn check_deadlines(&mut self) -> Instant {
+         let now = Instant::now();
++        let ready_deadline = self.next_deadline.min(now);
+ 
+-        if !self.getting_diff_for.is_empty() {
++        if now < self.next_deadline && self.getting_diff_for.is_empty() {
+             return self.next_deadline;
+         }
+ 
+         if now >= self.next_deadline {
+-            self.getting_diff_for
+-                .extend(self.entries.iter().filter_map(|entry| {
+-                    if now >= entry.effective_deadline() {
+-                        debug!(?entry, "deadline for forcibly fetching updates met");
+-                        Some(entry.key)
+-                    } else {
+-                        None
+-                    }
+-                }));
+-
+-            // When extending `getting_diff_for`, it's important to have the moral equivalent of
+-            // `begin_get_diff` (that is, clear possible gaps if we're now getting difference).
+-            for i in 0..self.getting_diff_for.len() {
+-                self.update_entry(self.getting_diff_for[i], |entry| entry.possible_gap = None);
++            for entry in &mut self.entries {
++                if entry.recovery_deferred && now >= entry.deadline {
++                    entry.recovery_deferred = false;
++                }
++                if now >= entry.effective_deadline() && !self.getting_diff_for.contains(&entry.key)
++                {
++                    debug!(?entry, "deadline for forcibly fetching updates met");
++                    entry.possible_gap = None;
++                    entry.recovery_deferred = false;
++                    self.getting_diff_for.push(entry.key);
++                }
+             }
++        }
+ 
+-            // To avoid hogging up all CPU by sleeping for no duration,
+-            // if the deadline was met but there's no state to fetch,
+-            // advance the deadline.
+-            if self.getting_diff_for.is_empty() {
+-                self.next_deadline = next_updates_deadline();
+-            }
++        self.next_deadline = self
++            .entries
++            .iter()
++            .filter(|entry| !self.getting_diff_for.contains(&entry.key) || entry.recovery_deferred)
++            .map(LiveEntry::effective_deadline)
++            .min()
++            .unwrap_or_else(next_updates_deadline);
++
++        if self.getting_diff_for.iter().any(|&key| {
++            self.entry(key)
++                .is_some_and(|entry| !entry.recovery_deferred)
++        }) {
++            return ready_deadline;
+         }
+ 
+         self.next_deadline
+@@ -335,6 +372,10 @@ impl MessageBoxes {
+                 .entries
+                 .iter()
+                 .fold(deadline, |d, entry| d.min(entry.effective_deadline()));
++        } else {
++            // Pending entries may be excluded from the cached deadline. A
++            // shorter timeout must still wake the receiver after recovery ends.
++            self.next_deadline = self.next_deadline.min(deadline);
+         }
+     }
+ 
+@@ -362,12 +403,14 @@ impl MessageBoxes {
+             key: Key::Common,
+             pts: state.pts,
+             deadline,
++            recovery_deferred: false,
+             possible_gap: None,
+         });
+         self.set_entry(LiveEntry {
+             key: Key::Secondary,
+             pts: state.qts,
+             deadline,
++            recovery_deferred: false,
+             possible_gap: None,
+         });
+         self.date = state.date;
+@@ -385,6 +428,7 @@ impl MessageBoxes {
+                 key: Key::Channel(id),
+                 pts,
+                 deadline: next_updates_deadline(),
++                recovery_deferred: false,
+                 possible_gap: None,
+             });
+         }
+@@ -415,6 +459,7 @@ impl MessageBoxes {
+             None => return,
+         };
+         self.getting_diff_for.remove(i);
++        self.update_entry(key, |entry| entry.recovery_deferred = false);
+         self.reset_deadline(key, next_updates_deadline());
+ 
+         debug_assert!(
+@@ -473,6 +518,11 @@ impl MessageBoxes {
+             }
+         };
+ 
++        if date < 0 || seq < 0 || seq_start < 0 {
++            self.try_begin_get_diff(Key::Common);
++            return Err(Gap);
++        }
++
+         let account_pending = force.is_empty()
+             && (self.getting_diff_for.contains(&Key::Common)
+                 || self.getting_diff_for.contains(&Key::Secondary));
+@@ -548,6 +598,7 @@ impl MessageBoxes {
+                         key,
+                         pts,
+                         deadline,
++                        recovery_deferred: false,
+                         possible_gap: None,
+                     });
+                 }
+@@ -587,6 +638,9 @@ impl MessageBoxes {
+                 continue;
+             }
+             if info.key == Key::Secondary && self.entry(Key::Common).is_none() {
++                // Deliver pre-login bot/secret updates without constructing
++                // QTS-only state that cannot form a getDifference request.
++                result.push((update, mk_state(None)));
+                 continue;
+             }
+ 
+@@ -596,6 +650,7 @@ impl MessageBoxes {
+                     key: info.key,
+                     pts: info.pts - info.count,
+                     deadline,
++                    recovery_deferred: false,
+                     possible_gap: None,
+                 },
+                 |entry| {
+@@ -779,7 +834,8 @@ impl MessageBoxes {
+     }
+ 
+     /// Checked account-difference path for untrusted server responses. An
+-    /// invalid response leaves state unchanged and reports `Gap`.
++    /// invalid state leaves state unchanged and reports `Gap`. Malformed
++    /// individual updates are skipped without discarding valid siblings.
+     pub fn try_apply_difference(
+         &mut self,
+         difference: tl::enums::updates::Difference,
+@@ -796,13 +852,8 @@ impl MessageBoxes {
+         let valid = match &difference {
+             tl::enums::updates::Difference::Empty(d) => d.date >= 0 && d.seq >= 0,
+             tl::enums::updates::Difference::TooLong(d) => d.pts >= 0,
+-            tl::enums::updates::Difference::Difference(d) => {
+-                valid_state(&d.state) && d.other_updates.iter().all(PtsInfo::valid_update)
+-            }
+-            tl::enums::updates::Difference::Slice(d) => {
+-                valid_state(&d.intermediate_state)
+-                    && d.other_updates.iter().all(PtsInfo::valid_update)
+-            }
++            tl::enums::updates::Difference::Difference(d) => valid_state(&d.state),
++            tl::enums::updates::Difference::Slice(d) => valid_state(&d.intermediate_state),
+         };
+         if !valid {
+             return Err(Gap);
+@@ -832,6 +883,7 @@ impl MessageBoxes {
+         };
+ 
+         // other_updates can contain things like UpdateChannelTooLong and UpdateNewChannelMessage.
++        retain_valid_updates(&mut updates);
+         // We need to process those as if they were socket updates to discard any we have already handled.
+         // If the channel's difference is planned to be handled, skip its updates
+         updates.retain(|update| {
+@@ -893,7 +945,13 @@ impl MessageBoxes {
+     /// The first channel currently getting its difference, as `(key, channel_id)`, if any.
+     fn channel_in_diff(&self) -> Option<(Key, i64)> {
+         self.getting_diff_for.iter().find_map(|&key| match key {
+-            Key::Channel(id) => Some((key, id)),
++            Key::Channel(id)
++                if self
++                    .entry(key)
++                    .is_some_and(|entry| !entry.recovery_deferred) =>
++            {
++                Some((key, id))
++            }
+             _ => None,
+         })
+     }
+@@ -935,18 +993,23 @@ impl MessageBoxes {
+ 
+         trace!(channel_id, ?difference, "applying channel difference");
+ 
+-        self.update_entry(key, |entry| entry.possible_gap = None);
++        self.update_entry(key, |entry| {
++            entry.possible_gap = None;
++            entry.recovery_deferred = false;
++        });
+ 
+         let tl::types::updates::ChannelDifference {
+             r#final,
+             pts,
+             timeout,
+             new_messages,
+-            other_updates: updates,
++            other_updates: mut updates,
+             chats,
+             users,
+         } = adaptor::adapt_channel_difference(difference);
+ 
++        retain_valid_updates(&mut updates);
++
+         if r#final {
+             debug!(
+                 "handling channel {} difference; no longer getting diff",
+@@ -999,7 +1062,9 @@ impl MessageBoxes {
+ 
+     /// Validate externally supplied channel differences before mutating state.
+     /// `Err(Gap)` leaves the state unchanged so the caller can report the
+-    /// protocol failure. Legacy [`Self::apply_channel_difference`] is retained.
++    /// protocol failure. Invalid individual updates are skipped while valid
++    /// siblings and the channel state advance. Legacy
++    /// [`Self::apply_channel_difference`] is retained.
+     pub fn try_apply_channel_difference(
+         &mut self,
+         difference: tl::enums::updates::ChannelDifference,
+@@ -1007,9 +1072,7 @@ impl MessageBoxes {
+         let (_, channel_id) = self.channel_in_diff().ok_or(Gap)?;
+         let valid = match &difference {
+             tl::enums::updates::ChannelDifference::Empty(d) => d.pts >= NO_PTS,
+-            tl::enums::updates::ChannelDifference::Difference(d) => {
+-                d.pts >= NO_PTS && d.other_updates.iter().all(PtsInfo::valid_update)
+-            }
++            tl::enums::updates::ChannelDifference::Difference(d) => d.pts >= NO_PTS,
+             tl::enums::updates::ChannelDifference::TooLong(d) => match &d.dialog {
+                 tl::enums::Dialog::Dialog(dialog) => {
+                     dialog.pts.is_some_and(|pts| pts >= NO_PTS)
+@@ -1024,6 +1087,21 @@ impl MessageBoxes {
+         Ok(self.apply_channel_difference(difference))
+     }
+ 
++    /// Postpone the first ready channel difference without abandoning its gap.
++    /// Socket PTS updates stay suppressed until a difference resolves it, while
++    /// other channels remain eligible for recovery. The delay is capped at the
++    /// normal no-updates timeout.
++    pub fn defer_channel_difference(&mut self, retry_after: Duration) {
++        let (key, _) = self
++            .channel_in_diff()
++            .expect("deferring channel difference requires a ready channel");
++        self.update_entry(key, |entry| entry.recovery_deferred = true);
++        self.reset_deadline(
++            key,
++            Instant::now() + retry_after.min(defs::NO_UPDATES_TIMEOUT),
++        );
++    }
++
+     pub fn end_channel_difference(&mut self, reason: PrematureEndReason) {
+         let (key, channel_id) = self
+             .channel_in_diff()
+diff --git a/grammers-session/src/message_box/tests.rs b/grammers-session/src/message_box/tests.rs
+index da15f42..c9b1398 100644
+--- a/grammers-session/src/message_box/tests.rs
++++ b/grammers-session/src/message_box/tests.rs
+@@ -25,6 +25,92 @@ thread_local! {
+     static NOW: RefCell<Instant> = const { RefCell::new(Instant(Duration::ZERO)) };
+ }
+ 
++#[test]
++fn final_channel_timeout_replaces_deadline_computed_during_recovery() {
++    reset_time();
++    let mut boxes = MessageBoxes::load(UpdatesState {
++        channels: vec![ChannelState { id: 7, pts: 10 }],
++        ..Default::default()
++    });
++    advance_time_by(Duration::from_secs(1));
++    assert_eq!(boxes.check_deadlines(), Instant::now());
++    advance_time_by(Duration::from_secs(1));
++    boxes
++        .try_apply_channel_difference(
++            tl::types::updates::ChannelDifferenceEmpty {
++                r#final: true,
++                pts: 11,
++                timeout: Some(5),
++            }
++            .into(),
++        )
++        .unwrap();
++    assert_eq!(
++        boxes.check_deadlines(),
++        Instant::now() + Duration::from_secs(5)
++    );
++    advance_time_by(Duration::from_secs(5));
++    assert_eq!(boxes.check_deadlines(), Instant::now());
++    assert_eq!(
++        boxes.get_channel_difference(),
++        Some(get_channel_difference(7, 11))
++    );
++}
++
++#[test]
++fn malformed_socket_metadata_cannot_poison_recovery_state() {
++    let saved = UpdatesState {
++        pts: 100,
++        qts: 0,
++        date: 1,
++        seq: 1,
++        channels: vec![ChannelState { id: 7, pts: 10 }],
++    };
++    for (date, seq_start, seq) in [(-1, 0, 0), (1, -1, 0), (1, 0, -1)] {
++        let mut boxes = MessageBoxes::try_load(saved.clone()).unwrap();
++        assert!(
++            boxes
++                .process_updates(UpdatesLike::Updates(
++                    tl::types::UpdatesCombined {
++                        date,
++                        seq_start,
++                        seq,
++                        updates: vec![tl::enums::Update::Config],
++                        users: vec![],
++                        chats: vec![],
++                    }
++                    .into()
++                ))
++                .is_err()
++        );
++        assert_eq!(boxes.session_state(), saved);
++    }
++    for id in [i64::MIN, -1, 0, 997852516353, 1002147483648, i64::MAX] {
++        let mut invalid = saved.clone();
++        invalid.channels.push(ChannelState { id, pts: 10 });
++        assert!(MessageBoxes::try_load(invalid).is_err());
++        for pts in [0, 10] {
++            let mut boxes = MessageBoxes::try_load(saved.clone()).unwrap();
++            assert!(
++                boxes
++                    .process_updates(UpdatesLike::Updates(
++                        tl::types::UpdateShort {
++                            date: 1,
++                            update: tl::types::UpdateChannelTooLong {
++                                channel_id: id,
++                                pts: Some(pts)
++                            }
++                            .into(),
++                        }
++                        .into()
++                    ))
++                    .is_err()
++            );
++            assert_eq!(boxes.session_state(), saved);
++        }
++    }
++}
++
+ #[test]
+ fn relearning_primary_state_preserves_saved_channel_recovery() {
+     let channels = vec![ChannelState { id: 7, pts: 10 }];
+@@ -684,15 +770,19 @@ fn live_qts_without_primary_state_does_not_create_orphan_secondary() {
+             date: 1,
+             qts,
+         });
+-        assert!(
+-            boxes
+-                .process_updates(UpdatesLike::Updates(
+-                    tl::types::UpdateShort { update, date: 1 }.into()
+-                ))
+-                .unwrap()
+-                .0
+-                .is_empty()
+-        );
++        let delivered = boxes
++            .process_updates(UpdatesLike::Updates(
++                tl::types::UpdateShort {
++                    update: update.clone(),
++                    date: 1,
++                }
++                .into(),
++            ))
++            .unwrap()
++            .0;
++        assert_eq!(delivered.len(), 1);
++        assert_eq!(delivered[0].0, update);
++        assert!(delivered[0].1.message_box.is_none());
+         assert!(boxes.is_empty());
+         assert!(boxes.get_difference().is_none());
+     }
+@@ -955,3 +1045,399 @@ fn test_common_and_channel_difference_do_not_duplicate_message() {
+ 
+     assert_eq!(updates.len(), 1);
+ }
++
++#[test]
++fn zero_counter_updates_preserve_siblings_on_socket_and_difference_paths() {
++    for path in 0..3 {
++        let zero_updates = vec![
++            tl::types::UpdateChannelParticipant {
++                via_chatlist: false,
++                channel_id: 7,
++                date: 13,
++                actor_id: 2,
++                user_id: 3,
++                prev_participant: None,
++                new_participant: Some(
++                    tl::types::ChannelParticipant {
++                        user_id: 3,
++                        date: 13,
++                        subscription_until_date: None,
++                        rank: None,
++                    }
++                    .into(),
++                ),
++                invite: None,
++                qts: 0,
++            }
++            .into(),
++            tl::types::UpdateBotStopped {
++                stopped: true,
++                user_id: 1,
++                date: 1,
++                qts: 0,
++            }
++            .into(),
++            update(0),
++            channel_update(7, 0),
++            tl::enums::Update::Config,
++        ];
++        let sibling = if path == 2 {
++            channel_update(7, 11)
++        } else {
++            update(101)
++        };
++        let mut other_updates = zero_updates.clone();
++        other_updates.push(sibling.clone());
++        let mut boxes = MessageBoxes::new();
++        boxes.set_state(state(12, 34, 100, 78));
++        boxes.try_set_channel_state(7, 10);
++        let delivered = match path {
++            0 => boxes.process_updates(UpdatesLike::Updates(
++                tl::types::Updates {
++                    updates: other_updates,
++                    users: vec![],
++                    chats: vec![],
++                    date: 13,
++                    seq: 35,
++                }
++                .into(),
++            )),
++            1 => {
++                boxes.try_begin_get_diff(super::Key::Common);
++                boxes.try_apply_difference(
++                    tl::types::updates::Difference {
++                        new_messages: vec![],
++                        new_encrypted_messages: vec![],
++                        other_updates,
++                        chats: vec![],
++                        users: vec![],
++                        state: state(13, 35, 101, 79).into(),
++                    }
++                    .into(),
++                )
++            }
++            _ => {
++                boxes.try_begin_get_diff(super::Key::Channel(7));
++                boxes.try_apply_channel_difference(
++                    tl::types::updates::ChannelDifference {
++                        r#final: true,
++                        pts: 11,
++                        timeout: None,
++                        new_messages: vec![],
++                        other_updates,
++                        chats: vec![],
++                        users: vec![],
++                    }
++                    .into(),
++                )
++            }
++        }
++        .unwrap()
++        .0;
++        assert_eq!(delivered.len(), zero_updates.len() + 1);
++        for expected in zero_updates {
++            assert!(
++                delivered
++                    .iter()
++                    .any(|(u, s)| *u == expected && s.message_box.is_none())
++            );
++        }
++        assert!(
++            delivered
++                .iter()
++                .any(|(u, s)| *u == sibling && s.message_box.is_some())
++        );
++        assert_eq!(boxes.session_state().qts, if path == 1 { 79 } else { 78 });
++        assert_eq!(boxes.session_state().pts, if path == 2 { 100 } else { 101 });
++        assert_eq!(
++            boxes.session_state().channels[0].pts,
++            if path == 2 { 11 } else { 10 }
++        );
++        assert!(boxes.get_difference().is_none());
++        assert!(boxes.get_channel_difference().is_none());
++    }
++    for invalid in [
++        tl::types::UpdateDeleteMessages {
++            messages: vec![],
++            pts: 0,
++            pts_count: -1,
++        }
++        .into(),
++        channel_update(-1, 0),
++    ] {
++        let mut boxes = MessageBoxes::new();
++        boxes.set_state(state(12, 34, 100, 78));
++        let before = boxes.session_state();
++        assert!(
++            boxes
++                .process_updates(UpdatesLike::Updates(
++                    tl::types::UpdateShort {
++                        update: invalid,
++                        date: 13
++                    }
++                    .into()
++                ))
++                .is_err()
++        );
++        assert_eq!(boxes.session_state(), before);
++    }
++}
++
++#[test]
++fn malformed_difference_elements_do_not_block_account_or_channel_progress() {
++    for path in 0..3 {
++        let mut boxes = MessageBoxes::new();
++        boxes.set_state(state(12, 34, 100, 78));
++        boxes.try_set_channel_state(7, 10);
++        let sibling = if path == 2 {
++            channel_update(7, 11)
++        } else {
++            update(101)
++        };
++        let other_updates = vec![
++            update(-1),
++            channel_update(-1, 11),
++            tl::enums::Update::Config,
++            sibling.clone(),
++        ];
++        let new_messages = vec![
++            tl::types::MessageEmpty {
++                id: 42,
++                peer_id: None,
++            }
++            .into(),
++        ];
++        let delivered = if path == 2 {
++            boxes.try_begin_get_diff(super::Key::Channel(7));
++            boxes.try_apply_channel_difference(
++                tl::types::updates::ChannelDifference {
++                    r#final: false,
++                    pts: 11,
++                    timeout: None,
++                    new_messages,
++                    other_updates,
++                    chats: vec![],
++                    users: vec![],
++                }
++                .into(),
++            )
++        } else {
++            boxes.try_begin_get_diff(super::Key::Common);
++            let difference = if path == 0 {
++                tl::types::updates::Difference {
++                    new_messages,
++                    new_encrypted_messages: vec![],
++                    other_updates,
++                    chats: vec![],
++                    users: vec![],
++                    state: state(13, 35, 101, 78).into(),
++                }
++                .into()
++            } else {
++                tl::types::updates::DifferenceSlice {
++                    new_messages,
++                    new_encrypted_messages: vec![],
++                    other_updates,
++                    chats: vec![],
++                    users: vec![],
++                    intermediate_state: state(13, 35, 101, 78).into(),
++                }
++                .into()
++            };
++            boxes.try_apply_difference(difference)
++        }
++        .unwrap()
++        .0;
++        assert_eq!(delivered.len(), 3);
++        assert!(delivered.iter().any(|(u, _)| *u == sibling));
++        assert!(
++            delivered
++                .iter()
++                .any(|(u, _)| *u == tl::enums::Update::Config)
++        );
++        if path == 2 {
++            assert_eq!(boxes.get_channel_difference().unwrap().pts, 11);
++            boxes
++                .try_apply_channel_difference(
++                    tl::types::updates::ChannelDifferenceEmpty {
++                        r#final: true,
++                        pts: 12,
++                        timeout: None,
++                    }
++                    .into(),
++                )
++                .unwrap();
++            assert!(boxes.get_channel_difference().is_none());
++        } else {
++            assert_eq!(boxes.session_state().pts, 101);
++            if path == 1 {
++                assert_eq!(boxes.get_difference().unwrap().pts, 101);
++                boxes
++                    .try_apply_difference(
++                        tl::types::updates::DifferenceEmpty { date: 14, seq: 36 }.into(),
++                    )
++                    .unwrap();
++            }
++            assert!(boxes.get_difference().is_none());
++        }
++    }
++}
++
++#[test]
++fn tolerant_saved_state_repair_preserves_valid_channels() {
++    let valid_channels = vec![
++        ChannelState { id: 7, pts: 10 },
++        ChannelState { id: 20, pts: 30 },
++    ];
++    for invalid_counter in 0..5 {
++        let mut saved = UpdatesState {
++            pts: 100,
++            qts: 78,
++            date: 12,
++            seq: 34,
++            channels: valid_channels.clone(),
++        };
++        saved.channels.extend([
++            ChannelState { id: -1, pts: 5 },
++            ChannelState {
++                id: i64::MAX,
++                pts: 5,
++            },
++            ChannelState { id: 8, pts: -1 },
++        ]);
++        match invalid_counter {
++            0 => saved.pts = -1,
++            1 => saved.qts = -1,
++            2 => saved.date = -1,
++            3 => saved.seq = -1,
++            _ => {}
++        }
++        assert!(MessageBoxes::try_load(saved.clone()).is_err());
++        let boxes = MessageBoxes::load(saved);
++        assert_eq!(boxes.session_state().channels, valid_channels);
++        assert_eq!(boxes.has_primary_state(), invalid_counter != 0);
++        let repaired = boxes.session_state();
++        let expected = match invalid_counter {
++            0 => (0, 0, 0, 0),
++            1 => (100, 0, 12, 34),
++            2 => (100, 78, 0, 34),
++            3 => (100, 78, 12, 0),
++            _ => (100, 78, 12, 34),
++        };
++        assert_eq!(
++            (repaired.pts, repaired.qts, repaired.date, repaired.seq),
++            expected
++        );
++        if invalid_counter != 0 {
++            assert_eq!(boxes.get_difference().unwrap().pts, 100);
++        }
++    }
++}
++
++#[test]
++fn deferred_channel_keeps_backlog_and_does_not_steal_another_channels_response() {
++    reset_time();
++    let mut boxes = MessageBoxes::load(UpdatesState {
++        channels: vec![
++            ChannelState { id: 7, pts: 10 },
++            ChannelState { id: 8, pts: 20 },
++        ],
++        ..Default::default()
++    });
++    assert!(
++        boxes
++            .process_updates(channel_updates(7, 0, 0, 11))
++            .unwrap()
++            .0
++            .is_empty()
++    );
++    boxes.defer_channel_difference(Duration::from_secs(5));
++    assert_eq!(
++        boxes.get_channel_difference(),
++        Some(get_channel_difference(8, 20))
++    );
++    // Readiness must not change the target while channel 8's RPC is in flight.
++    advance_time_by(Duration::from_secs(5));
++    boxes
++        .try_apply_channel_difference(
++            tl::types::updates::ChannelDifferenceEmpty {
++                r#final: true,
++                pts: 21,
++                timeout: None,
++            }
++            .into(),
++        )
++        .unwrap();
++    assert_eq!(
++        boxes.session_state().channels,
++        vec![
++            ChannelState { id: 7, pts: 10 },
++            ChannelState { id: 8, pts: 21 }
++        ]
++    );
++    assert!(boxes.get_channel_difference().is_none());
++    assert!(
++        boxes
++            .process_updates(channel_updates(7, 0, 0, 12))
++            .unwrap()
++            .0
++            .is_empty()
++    );
++    assert_eq!(boxes.check_deadlines(), Instant::now());
++    assert_eq!(
++        boxes.get_channel_difference(),
++        Some(get_channel_difference(7, 10))
++    );
++    let backlog = vec![channel_update(7, 11), channel_update(7, 12)];
++    let delivered = boxes
++        .try_apply_channel_difference(
++            tl::types::updates::ChannelDifference {
++                r#final: true,
++                pts: 12,
++                timeout: None,
++                new_messages: vec![],
++                other_updates: backlog.clone(),
++                chats: vec![],
++                users: vec![],
++            }
++            .into(),
++        )
++        .unwrap()
++        .0;
++    assert_eq!(
++        delivered.into_iter().map(|(u, _)| u).collect::<Vec<_>>(),
++        backlog
++    );
++    assert_eq!(
++        boxes
++            .process_updates(channel_updates(7, 0, 0, 13))
++            .unwrap()
++            .0
++            .len(),
++        1
++    );
++}
++
++#[test]
++fn all_deferred_channels_wait_until_the_earliest_retry() {
++    reset_time();
++    let mut boxes = MessageBoxes::load(UpdatesState {
++        channels: vec![
++            ChannelState { id: 7, pts: 10 },
++            ChannelState { id: 8, pts: 20 },
++        ],
++        ..Default::default()
++    });
++    boxes.defer_channel_difference(Duration::from_secs(5));
++    boxes.defer_channel_difference(Duration::from_secs(10));
++    assert!(boxes.get_channel_difference().is_none());
++    let retry = Instant::now() + Duration::from_secs(5);
++    assert_eq!(boxes.check_deadlines(), retry);
++    assert_eq!(boxes.check_deadlines(), retry);
++    advance_time_by(Duration::from_secs(5));
++    assert_eq!(boxes.check_deadlines(), Instant::now());
++    assert_eq!(
++        boxes.get_channel_difference(),
++        Some(get_channel_difference(7, 10))
++    );
++}
+diff --git a/grammers-session/src/peer.rs b/grammers-session/src/peer.rs
+index d5da303..6acb258 100644
+--- a/grammers-session/src/peer.rs
++++ b/grammers-session/src/peer.rs
+@@ -173,13 +173,13 @@ impl PeerId {
+ 
+     /// Creates a peer identity for a small group chat.
+     pub fn chat(id: i64) -> Option<Self> {
+-        CHAT_ID_RANGE.contains(&id).then_some(Self(-id))
++        CHAT_ID_RANGE.contains(&id).then(|| Self(-id))
+     }
+ 
+     /// Creates a peer identity for a broadcast channel, megagroup, gigagroup or monoforum.
+     pub fn channel(id: i64) -> Option<Self> {
+         (SUPERGROUP_AND_CHANNEL_ID_RANGE.contains(&id) || MONOFORUM_ID_RANGE.contains(&id))
+-            .then_some(Self(-(1000000000000 + id)))
++            .then(|| Self(-(1000000000000 + id)))
+     }
+ 
+     /// Creates a peer identity from a [Bot API dialog ID](https://core.telegram.org/api/bots/ids).
+@@ -1081,6 +1081,19 @@ impl<'a> TryFrom<&'a tl::types::ChannelForbidden> for ChannelKind {
+ mod cache_merge_tests {
+     use super::*;
+ 
++    #[test]
++    fn checked_peer_ids_reject_extremes_before_arithmetic() {
++        for id in [i64::MIN, -1, 0, i64::MAX] {
++            assert!(PeerId::chat(id).is_none());
++            assert!(PeerId::channel(id).is_none());
++        }
++        for id in [1, 997852516352, 1002147483649, 3000000000000] {
++            assert_eq!(PeerId::channel(id).unwrap().bare_id(), Some(id));
++        }
++        assert!(PeerId::channel(997852516353).is_none());
++        assert!(PeerId::channel(1002147483648).is_none());
++    }
++
+     #[test]
+     fn new_user_information_replaces_cached_values_without_erasing_missing_fields() {
+         let mut peer = PeerInfo::User {

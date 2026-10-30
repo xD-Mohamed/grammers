@@ -1,0 +1,18 @@
+{
+  "checkpoint": "5f0cb0511416e666b5476c078c0aaa86d9bce69e",
+  "reused_candidate_source_manifest": "../../round2/source-inputs.json",
+  "verified_source_inputs": 171,
+  "control_patch": "no-sender-budget.patch",
+  "control_patch_sha256": "b4c48f7475f46c7e40c9255e584c34de3808dc7e6114eb3fe4ce2d3064571cbf",
+  "build_command": "cargo test --offline --locked --release -p grammers-mtsender --test loopback --no-run --message-format=json",
+  "build_environment": {
+    "CARGO_BUILD_JOBS": "1",
+    "CARGO_TARGET_DIR": "shared build cache, copied executable before subsequent builds"
+  },
+  "control_source": "git archive 5f0cb0511416e666b5476c078c0aaa86d9bce69e, then apply only no-sender-budget.patch",
+  "binaries": {
+    "no_sender_budget": "e5c2d7359e3220cc5ecd17a0dcd270c34696b1d3148c088c228ca8e9aec956d7",
+    "retained_budget": "b998705b63a63288e5537fa473d76766a28d76c918c61648275e6248da6eec53"
+  },
+  "limits": "The reused binary matches round-two receipt; all 171 production/test/manifest inputs match the committed checkpoint. Native effort is not measured by benchmark provenance."
+}

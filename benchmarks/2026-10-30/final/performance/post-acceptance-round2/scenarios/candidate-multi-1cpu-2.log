@@ -1,0 +1,34 @@
+benchmark_binary_sha256=18a5a263b0e6cd628ecd79f8079c878a39bd97aea47036ba8d2c633b7353a7f6
+
+running 1 test
+test loopback_rpc_cost ... Plain round 0: sampled RPC latency p50/p95/p99 214.0/292.3/416.1 us (1669 samples)
+Plain reply (1592 B) round 0: 70838 RPC/s; client thread 0.00 us user + 0.00 us kernel, 0 cycles per RPC
+CLIENT_WORKER_CPU user_us=311595 sys_us=433866
+CLIENT_WORKER_CPU user_us=300660 sys_us=446927
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 3.84s
+
+	Command being timed: "<binary> --exact loopback_rpc_cost --ignored --nocapture --test-threads=1"
+	User time (seconds): 2.69
+	System time (seconds): 2.67
+	Percent of CPU this job got: 139%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.83
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 11224
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 172775
+	Voluntary context switches: 22654
+	Involuntary context switches: 2145
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -8,6 +8,7 @@
 
 #![cfg(feature = "markdown")]
 
+use grammers_session::types::PeerId;
 use grammers_tl_types as tl;
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
@@ -61,7 +62,7 @@ pub fn parse_markdown_message(message: &str) -> (String, Vec<tl::enums::MessageE
             if let Some(user_id) = dest_url
                 .strip_prefix(MENTION_URL_PREFIX)
                 .and_then(|id| id.parse::<i64>().ok())
-                .filter(|id| *id > 0)
+                .filter(|id| PeerId::user(*id).is_some())
             {
                 entities.push(
                     tl::types::MessageEntityMentionName {
@@ -235,7 +236,15 @@ mod tests {
 
     #[test]
     fn malformed_mentions_remain_text_links() {
-        for id in ["", "abc", "0", "-1", "9223372036854775808"] {
+        for id in [
+            "",
+            "abc",
+            "0",
+            "-1",
+            "9223372036854775808",
+            "2000000000000",
+            "1099511627776",
+        ] {
             let (text, entities) = parse_markdown_message(&format!("[name](tg://user?id={id})"));
             assert_eq!(text, "name");
             assert!(matches!(

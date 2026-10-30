@@ -81,6 +81,9 @@ pub struct ConnectionParams {
 
     /// Optional maximum time without a complete valid inbound packet. This
     /// detects silent established connections; it is not a per-RPC deadline.
+    /// Partial socket reads do not reset it, so a slow or large response may
+    /// expire despite ongoing transport progress. Allow enough time to receive
+    /// a complete packet, or leave this disabled (`None`).
     pub liveness_timeout: Option<Duration>,
 
     /// Independent inbound decompression/work limits, applied before initialization.
@@ -143,8 +146,14 @@ pub struct AutoSleep {
     /// The (inclusive) threshold below which the library should automatically sleep.
     pub threshold: Duration,
 
-    /// `Some` if I/O errors should be treated as a flood error that would last the specified duration.
-    /// This duration will ignore the `threshold` and always be slept on I/O errors while `tries` is not exceeded.
+    /// Delay for retryable connection I/O errors, independent of `threshold`
+    /// and still bounded by `tries`. Retries `ConnectionRefused`, `ConnectionReset`,
+    /// `ConnectionAborted`, `NotConnected`, `BrokenPipe`, `TimedOut`,
+    /// `UnexpectedEof`, `NetworkDown`, `NetworkUnreachable`, and `HostUnreachable`.
+    /// For [`InvocationError::Read`], the request must be definitely unsent.
+    /// Legacy [`InvocationError::Io`] has no delivery marker and retries these
+    /// same kinds; producers must use `Read` for failures after possible delivery.
+    /// Other error kinds, including overload and invalid data, are not retried.
     pub io_errors_as_flood_of: Option<Duration>,
 }
 

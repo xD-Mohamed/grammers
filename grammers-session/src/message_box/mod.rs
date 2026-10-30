@@ -16,7 +16,7 @@
 //! (this `struct` is the "entry point").
 //! At any given time,
 //! the message box may be either getting difference for them
-//! (entry is in [`MessageBoxes::getting_diff_for`])
+//! (entry has `recovery_pending` set, even while a retry is deferred)
 //! or not.
 //! If not getting difference,
 //! a possible gap may be found for the updates
@@ -28,7 +28,7 @@
 //! (by waiting for a short time)
 //! or because we got the difference for the corresponding entry.
 //!
-//! While there are entries for which their difference must be fetched,
+//! While there are entries whose difference is ready to be fetched,
 //! [`MessageBoxes::check_deadlines`] will always return [`Instant::now`],
 //! since "now" is the time to get the difference.
 
@@ -38,6 +38,7 @@ mod defs;
 mod tests;
 
 use std::cmp::Ordering;
+use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 #[cfg(not(test))]
 use std::time::Instant;
@@ -48,9 +49,11 @@ use defs::{LiveEntry, NO_DATE, NO_PTS, NO_SEQ, POSSIBLE_GAP_TIMEOUT, PossibleGap
 use grammers_tl_types as tl;
 #[cfg(test)]
 use tests::Instant;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 
-use crate::types::{ChannelState, UpdatesState};
+use crate::types::{ChannelState, PeerId, UpdatesState};
+
+const MAX_CHANNEL_DEFERRALS: u8 = 30;
 
 fn next_updates_deadline() -> Instant {
     Instant::now() + defs::NO_UPDATES_TIMEOUT
@@ -61,6 +64,16 @@ fn update_sort_key(update: &tl::enums::Update) -> i32 {
         Some(info) => info.pts.saturating_sub(info.count),
         None => NO_PTS,
     }
+}
+
+fn retain_valid_updates(updates: &mut Vec<tl::enums::Update>) {
+    updates.retain(|update| {
+        let valid = PtsInfo::valid_update(update);
+        if !valid {
+            warn!("ignoring malformed update within difference result");
+        }
+        valid
+    });
 }
 
 impl MessageBox {
@@ -105,14 +118,37 @@ impl MessageBoxes {
             entries: Vec::new(),
             date: NO_DATE,
             seq: NO_SEQ,
-            getting_diff_for: Vec::new(),
+            getting_diff_for: VecDeque::new(),
+            ready_diff_count: 0,
+            exhausted_channels: BTreeSet::new(),
             next_deadline: next_updates_deadline(),
         }
     }
 
-    /// Create a [`MessageBoxes`] from a previously known update state.
+    /// Restore saved update state, repairing unusable counters with warnings.
+    ///
+    /// Negative counters become zero, invalid channel rows are discarded, and
+    /// duplicate channels retain their oldest position. A QTS without primary
+    /// PTS is discarded together with account date/sequence state so the caller
+    /// can obtain fresh account state. Valid channels and counters are retained.
+    /// All retained positions start with recovery pending.
     pub fn load(mut state: UpdatesState) -> Self {
+        if state.pts < NO_PTS || state.qts < NO_PTS || state.date < NO_DATE || state.seq < NO_SEQ {
+            warn!("repairing invalid saved account update counters");
+            state.pts = state.pts.max(NO_PTS);
+            state.qts = state.qts.max(NO_PTS);
+            state.date = state.date.max(NO_DATE);
+            state.seq = state.seq.max(NO_SEQ);
+        }
+        state.channels.retain(|channel| {
+            let valid = PeerId::channel(channel.id).is_some() && channel.pts >= NO_PTS;
+            if !valid {
+                warn!("discarding invalid saved channel update state");
+            }
+            valid
+        });
         if state.pts == NO_PTS && state.qts > NO_PTS {
+            warn!("discarding saved QTS without primary state");
             // A QTS alone cannot form a valid getDifference request. Relearn
             // account state instead of creating a fictitious common PTS of 0.
             state.qts = NO_PTS;
@@ -121,7 +157,7 @@ impl MessageBoxes {
         }
         trace!(?state, "created new message box with state");
         let mut entries = Vec::with_capacity(2 + state.channels.len());
-        let mut getting_diff_for = Vec::with_capacity(2 + state.channels.len());
+        let mut getting_diff_for = VecDeque::with_capacity(2 + state.channels.len());
         let deadline = next_updates_deadline();
 
         if state.pts > NO_PTS {
@@ -129,6 +165,9 @@ impl MessageBoxes {
                 key: Key::Common,
                 pts: state.pts.max(NO_PTS),
                 deadline,
+                recovery_deferred: false,
+                recovery_pending: true,
+                recovery_deferrals: 0,
                 possible_gap: None,
             });
         }
@@ -137,6 +176,9 @@ impl MessageBoxes {
                 key: Key::Secondary,
                 pts: state.qts,
                 deadline,
+                recovery_deferred: false,
+                recovery_pending: true,
+                recovery_deferrals: 0,
                 possible_gap: None,
             });
         }
@@ -149,6 +191,9 @@ impl MessageBoxes {
                     key: Key::Channel(c.id),
                     pts: c.pts,
                     deadline,
+                    recovery_deferred: false,
+                    recovery_pending: true,
+                    recovery_deferrals: 0,
                     possible_gap: None,
                 }),
         );
@@ -157,6 +202,7 @@ impl MessageBoxes {
         // invariants. Keep the older position so recovery cannot skip updates.
         entries.dedup_by(|later, earlier| {
             if later.key == earlier.key {
+                warn!("merging duplicate saved channel state at the older position");
                 earlier.pts = earlier.pts.min(later.pts);
                 true
             } else {
@@ -167,16 +213,21 @@ impl MessageBoxes {
         getting_diff_for.extend(entries.iter().map(|entry| entry.key));
 
         Self {
+            ready_diff_count: getting_diff_for.len(),
             entries,
             date: state.date,
             seq: state.seq,
             getting_diff_for,
+            exhausted_channels: BTreeSet::new(),
             next_deadline: deadline,
         }
     }
 
-    /// Load saved update state without issuing recovery requests from invalid
-    /// counters. In particular, a known QTS requires a known common PTS.
+    /// Reject negative counters or invalid channel identifiers before loading.
+    ///
+    /// Valid input still receives the normalization documented by [`Self::load`]:
+    /// duplicate channels keep their oldest position, and QTS without primary
+    /// PTS is cleared. Use [`Self::load`] to repair rather than reject invalid rows.
     pub fn try_load(state: UpdatesState) -> Result<Self, Gap> {
         if state.pts < 0
             || state.qts < 0
@@ -185,7 +236,7 @@ impl MessageBoxes {
             || state
                 .channels
                 .iter()
-                .any(|channel| channel.id <= 0 || channel.pts < 0)
+                .any(|channel| PeerId::channel(channel.id).is_none() || channel.pts < 0)
         {
             return Err(Gap);
         }
@@ -197,6 +248,10 @@ impl MessageBoxes {
             .binary_search_by_key(&key, |entry| entry.key)
             .map(|i| &self.entries[i])
             .ok()
+    }
+
+    fn is_getting_diff(&self, key: Key) -> bool {
+        self.entry(key).is_some_and(|entry| entry.recovery_pending)
     }
 
     fn update_entry(&mut self, key: Key, updater: impl FnOnce(&mut LiveEntry)) -> bool {
@@ -238,6 +293,9 @@ impl MessageBoxes {
                 key,
                 pts,
                 deadline: next_updates_deadline(),
+                recovery_deferred: false,
+                recovery_pending: false,
+                recovery_deferrals: 0,
                 possible_gap: None,
             });
         }
@@ -283,37 +341,49 @@ impl MessageBoxes {
     /// Return the next deadline when receiving updates should timeout.
     ///
     /// If a deadline expired, the corresponding entries will be marked as needing to get its difference.
-    /// While there are entries pending of getting their difference, this method returns the current instant.
+    /// Ready differences return an expired deadline. Deferred recovery retains
+    /// its pending state but wakes at its retry deadline.
     pub fn check_deadlines(&mut self) -> Instant {
         let now = Instant::now();
+        let ready_deadline = self.next_deadline.min(now);
 
-        if !self.getting_diff_for.is_empty() {
-            return self.next_deadline;
+        if now < self.next_deadline {
+            return if self.ready_diff_count != 0 {
+                ready_deadline
+            } else {
+                self.next_deadline
+            };
         }
 
         if now >= self.next_deadline {
-            self.getting_diff_for
-                .extend(self.entries.iter().filter_map(|entry| {
-                    if now >= entry.effective_deadline() {
-                        debug!(?entry, "deadline for forcibly fetching updates met");
-                        Some(entry.key)
-                    } else {
-                        None
-                    }
-                }));
-
-            // When extending `getting_diff_for`, it's important to have the moral equivalent of
-            // `begin_get_diff` (that is, clear possible gaps if we're now getting difference).
-            for i in 0..self.getting_diff_for.len() {
-                self.update_entry(self.getting_diff_for[i], |entry| entry.possible_gap = None);
+            for entry in &mut self.entries {
+                if entry.recovery_deferred && now >= entry.deadline {
+                    entry.recovery_deferred = false;
+                    self.ready_diff_count += 1;
+                    self.getting_diff_for.push_back(entry.key);
+                }
+                if now >= entry.effective_deadline() && !entry.recovery_pending {
+                    debug!(?entry, "deadline for forcibly fetching updates met");
+                    entry.possible_gap = None;
+                    entry.recovery_deferred = false;
+                    entry.recovery_pending = true;
+                    entry.recovery_deferrals = 0;
+                    self.ready_diff_count += 1;
+                    self.getting_diff_for.push_back(entry.key);
+                }
             }
+        }
 
-            // To avoid hogging up all CPU by sleeping for no duration,
-            // if the deadline was met but there's no state to fetch,
-            // advance the deadline.
-            if self.getting_diff_for.is_empty() {
-                self.next_deadline = next_updates_deadline();
-            }
+        self.next_deadline = self
+            .entries
+            .iter()
+            .filter(|entry| !entry.recovery_pending || entry.recovery_deferred)
+            .map(LiveEntry::effective_deadline)
+            .min()
+            .unwrap_or_else(next_updates_deadline);
+
+        if self.ready_diff_count != 0 {
+            return ready_deadline;
         }
 
         self.next_deadline
@@ -335,6 +405,10 @@ impl MessageBoxes {
                 .entries
                 .iter()
                 .fold(deadline, |d, entry| d.min(entry.effective_deadline()));
+        } else {
+            // Pending entries may be excluded from the cached deadline. A
+            // shorter timeout must still wake the receiver after recovery ends.
+            self.next_deadline = self.next_deadline.min(deadline);
         }
     }
 
@@ -362,12 +436,18 @@ impl MessageBoxes {
             key: Key::Common,
             pts: state.pts,
             deadline,
+            recovery_deferred: false,
+            recovery_pending: false,
+            recovery_deferrals: 0,
             possible_gap: None,
         });
         self.set_entry(LiveEntry {
             key: Key::Secondary,
             pts: state.qts,
             deadline,
+            recovery_deferred: false,
+            recovery_pending: false,
+            recovery_deferrals: 0,
             possible_gap: None,
         });
         self.date = state.date;
@@ -385,6 +465,9 @@ impl MessageBoxes {
                 key: Key::Channel(id),
                 pts,
                 deadline: next_updates_deadline(),
+                recovery_deferred: false,
+                recovery_pending: false,
+                recovery_deferrals: 0,
                 possible_gap: None,
             });
         }
@@ -395,9 +478,15 @@ impl MessageBoxes {
     ///
     /// Clears any previous gaps.
     fn try_begin_get_diff(&mut self, key: Key) {
-        if !self.getting_diff_for.contains(&key) {
-            if self.update_entry(key, |entry| entry.possible_gap = None) {
-                self.getting_diff_for.push(key);
+        if !self.is_getting_diff(key) {
+            if self.update_entry(key, |entry| {
+                entry.possible_gap = None;
+                entry.recovery_pending = true;
+                entry.recovery_deferred = false;
+                entry.recovery_deferrals = 0;
+            }) {
+                self.getting_diff_for.push_back(key);
+                self.ready_diff_count += 1;
             } else {
                 info!(
                     ?key,
@@ -410,11 +499,23 @@ impl MessageBoxes {
     /// Finish getting difference for the given entry, and resets its deadline.
     /// Does nothing if no difference was being fetched for the given key.
     fn try_end_get_diff(&mut self, key: Key) {
-        let i = match self.getting_diff_for.iter().position(|&k| k == key) {
-            Some(i) => i,
-            None => return,
+        let Some(entry) = self.entry(key).filter(|entry| entry.recovery_pending) else {
+            return;
         };
-        self.getting_diff_for.remove(i);
+        if !entry.recovery_deferred {
+            let index = self
+                .getting_diff_for
+                .iter()
+                .position(|&k| k == key)
+                .expect("ready recovery must be queued");
+            self.getting_diff_for.remove(index);
+            self.ready_diff_count -= 1;
+        }
+        self.update_entry(key, |entry| {
+            entry.recovery_pending = false;
+            entry.recovery_deferred = false;
+            entry.recovery_deferrals = 0;
+        });
         self.reset_deadline(key, next_updates_deadline());
 
         debug_assert!(
@@ -473,9 +574,13 @@ impl MessageBoxes {
             }
         };
 
+        if date < 0 || seq < 0 || seq_start < 0 {
+            self.try_begin_get_diff(Key::Common);
+            return Err(Gap);
+        }
+
         let account_pending = force.is_empty()
-            && (self.getting_diff_for.contains(&Key::Common)
-                || self.getting_diff_for.contains(&Key::Secondary));
+            && (self.is_getting_diff(Key::Common) || self.is_getting_diff(Key::Secondary));
         let new_date = if date == NO_DATE || account_pending {
             self.date
         } else {
@@ -540,14 +645,19 @@ impl MessageBoxes {
             if let tl::enums::Update::ChannelTooLong(u) = update {
                 // Can skip this one early since no processing can be done for the entry.
                 let key = Key::Channel(u.channel_id);
-                if self.getting_diff_for.contains(&key) {
+                if self.is_getting_diff(key) {
                     continue;
                 }
-                if let Some(pts) = u.pts {
+                if let Some(pts) = u.pts.filter(|pts| *pts > NO_PTS)
+                    && self.entry(key).is_none()
+                {
                     self.set_entry(LiveEntry {
                         key,
                         pts,
                         deadline,
+                        recovery_deferred: false,
+                        recovery_pending: false,
+                        recovery_deferrals: 0,
                         possible_gap: None,
                     });
                 }
@@ -580,13 +690,16 @@ impl MessageBoxes {
                 result.push((update, mk_state(Some(info.into()))));
                 continue;
             }
-            if self.getting_diff_for.contains(&info.key) {
+            if self.is_getting_diff(info.key) {
                 // Socket updates cannot advance or deliver a sequence whose
                 // backlog is being fetched. Difference will deliver them once.
                 have_unresolved_gaps = true;
                 continue;
             }
             if info.key == Key::Secondary && self.entry(Key::Common).is_none() {
+                // Deliver pre-login bot/secret updates without constructing
+                // QTS-only state that cannot form a getDifference request.
+                result.push((update, mk_state(None)));
                 continue;
             }
 
@@ -596,6 +709,9 @@ impl MessageBoxes {
                     key: info.key,
                     pts: info.pts - info.count,
                     deadline,
+                    recovery_deferred: false,
+                    recovery_pending: false,
+                    recovery_deferrals: 0,
                     possible_gap: None,
                 },
                 |entry| {
@@ -688,7 +804,7 @@ impl MessageBoxes {
     /// Return the request that needs to be made to get the difference, if any.
     pub fn get_difference(&self) -> Option<tl::functions::updates::GetDifference> {
         for entry in [Key::Common, Key::Secondary] {
-            if self.getting_diff_for.contains(&entry) {
+            if self.is_getting_diff(entry) {
                 let pts = self.entry(Key::Common).map(|entry| entry.pts)?;
 
                 let gd = tl::functions::updates::GetDifference {
@@ -715,10 +831,7 @@ impl MessageBoxes {
         difference: tl::enums::updates::Difference,
     ) -> UpdateAndPeers {
         trace!(?difference, "applying account difference");
-        debug_assert!(
-            self.getting_diff_for.contains(&Key::Common)
-                || self.getting_diff_for.contains(&Key::Secondary)
-        );
+        debug_assert!(self.is_getting_diff(Key::Common) || self.is_getting_diff(Key::Secondary));
         let finish: bool;
         let result = match difference {
             tl::enums::updates::Difference::Empty(diff) => {
@@ -779,14 +892,13 @@ impl MessageBoxes {
     }
 
     /// Checked account-difference path for untrusted server responses. An
-    /// invalid response leaves state unchanged and reports `Gap`.
+    /// invalid state leaves state unchanged and reports `Gap`. Malformed
+    /// individual updates are skipped without discarding valid siblings.
     pub fn try_apply_difference(
         &mut self,
         difference: tl::enums::updates::Difference,
     ) -> Result<UpdateAndPeers, Gap> {
-        if !self.getting_diff_for.contains(&Key::Common)
-            && !self.getting_diff_for.contains(&Key::Secondary)
-        {
+        if !self.is_getting_diff(Key::Common) && !self.is_getting_diff(Key::Secondary) {
             return Err(Gap);
         }
         let valid_state = |state: &tl::enums::updates::State| {
@@ -796,13 +908,8 @@ impl MessageBoxes {
         let valid = match &difference {
             tl::enums::updates::Difference::Empty(d) => d.date >= 0 && d.seq >= 0,
             tl::enums::updates::Difference::TooLong(d) => d.pts >= 0,
-            tl::enums::updates::Difference::Difference(d) => {
-                valid_state(&d.state) && d.other_updates.iter().all(PtsInfo::valid_update)
-            }
-            tl::enums::updates::Difference::Slice(d) => {
-                valid_state(&d.intermediate_state)
-                    && d.other_updates.iter().all(PtsInfo::valid_update)
-            }
+            tl::enums::updates::Difference::Difference(d) => valid_state(&d.state),
+            tl::enums::updates::Difference::Slice(d) => valid_state(&d.intermediate_state),
         };
         if !valid {
             return Err(Gap);
@@ -832,6 +939,7 @@ impl MessageBoxes {
         };
 
         // other_updates can contain things like UpdateChannelTooLong and UpdateNewChannelMessage.
+        retain_valid_updates(&mut updates);
         // We need to process those as if they were socket updates to discard any we have already handled.
         // If the channel's difference is planned to be handled, skip its updates
         updates.retain(|update| {
@@ -839,7 +947,7 @@ impl MessageBoxes {
                 return true;
             };
             if let Key::Channel(_) = info.key {
-                !self.getting_diff_for.contains(&info.key)
+                !self.is_getting_diff(info.key)
             } else {
                 true
             }
@@ -934,18 +1042,25 @@ impl MessageBoxes {
             .expect("applying channel difference to have a channel in getting_diff_for");
 
         trace!(channel_id, ?difference, "applying channel difference");
+        self.exhausted_channels.remove(&channel_id);
 
-        self.update_entry(key, |entry| entry.possible_gap = None);
+        self.update_entry(key, |entry| {
+            entry.possible_gap = None;
+            entry.recovery_deferred = false;
+            entry.recovery_deferrals = 0;
+        });
 
         let tl::types::updates::ChannelDifference {
             r#final,
             pts,
             timeout,
             new_messages,
-            other_updates: updates,
+            other_updates: mut updates,
             chats,
             users,
         } = adaptor::adapt_channel_difference(difference);
+
+        retain_valid_updates(&mut updates);
 
         if r#final {
             debug!(
@@ -991,7 +1106,7 @@ impl MessageBoxes {
         // after each page. Keep its entry active so gap tracking is unchanged.
         if !r#final && let Some(index) = self.getting_diff_for.iter().position(|k| *k == key) {
             self.getting_diff_for.remove(index);
-            self.getting_diff_for.push(key);
+            self.getting_diff_for.push_back(key);
         }
 
         (result_updates, users, chats)
@@ -999,7 +1114,9 @@ impl MessageBoxes {
 
     /// Validate externally supplied channel differences before mutating state.
     /// `Err(Gap)` leaves the state unchanged so the caller can report the
-    /// protocol failure. Legacy [`Self::apply_channel_difference`] is retained.
+    /// protocol failure. Invalid individual updates are skipped while valid
+    /// siblings and the channel state advance. Legacy
+    /// [`Self::apply_channel_difference`] is retained.
     pub fn try_apply_channel_difference(
         &mut self,
         difference: tl::enums::updates::ChannelDifference,
@@ -1007,9 +1124,7 @@ impl MessageBoxes {
         let (_, channel_id) = self.channel_in_diff().ok_or(Gap)?;
         let valid = match &difference {
             tl::enums::updates::ChannelDifference::Empty(d) => d.pts >= NO_PTS,
-            tl::enums::updates::ChannelDifference::Difference(d) => {
-                d.pts >= NO_PTS && d.other_updates.iter().all(PtsInfo::valid_update)
-            }
+            tl::enums::updates::ChannelDifference::Difference(d) => d.pts >= NO_PTS,
             tl::enums::updates::ChannelDifference::TooLong(d) => match &d.dialog {
                 tl::enums::Dialog::Dialog(dialog) => {
                     dialog.pts.is_some_and(|pts| pts >= NO_PTS)
@@ -1022,6 +1137,71 @@ impl MessageBoxes {
             return Err(Gap);
         }
         Ok(self.apply_channel_difference(difference))
+    }
+
+    /// Postpone the first ready channel difference for a bounded retry grace.
+    ///
+    /// Socket PTS updates remain suppressed during at most 30 deferrals while
+    /// other channels may recover. A further deferral warns and discards the
+    /// unavailable channel's saved position, allowing later socket updates to
+    /// start fresh; its unrecovered backlog is lost. Successful recovery resets
+    /// the allowance, as does learning usable access through
+    /// [`Self::channel_difference_accessible`]. Exhaustion survives entry removal:
+    /// later gaps with no usable access discard their backlog on the first miss.
+    /// The receiver retries missing hashes every second, giving
+    /// about 30 seconds of grace. Each supplied delay is capped at the normal
+    /// no-updates timeout.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no channel difference is ready to be fetched.
+    pub fn defer_channel_difference(&mut self, retry_after: Duration) {
+        let (key, channel_id) = self
+            .channel_in_diff()
+            .expect("deferring channel difference requires a ready channel");
+        if self.exhausted_channels.contains(&channel_id)
+            || self
+                .entry(key)
+                .is_some_and(|entry| entry.recovery_deferrals >= MAX_CHANNEL_DEFERRALS)
+        {
+            warn!(
+                channel_id,
+                "channel recovery grace exhausted; discarding backlog position to resume live updates"
+            );
+            self.exhausted_channels.insert(channel_id);
+            self.try_end_get_diff(key);
+            self.pop_entry(key);
+            return;
+        }
+        self.update_entry(key, |entry| {
+            entry.recovery_deferred = true;
+            entry.recovery_deferrals += 1;
+        });
+        self.ready_diff_count -= 1;
+        let index = self
+            .getting_diff_for
+            .iter()
+            .position(|&queued| queued == key)
+            .expect("ready channel must be queued");
+        self.getting_diff_for.remove(index);
+        let deadline = Instant::now() + retry_after.min(defs::NO_UPDATES_TIMEOUT);
+        self.update_entry(key, |entry| entry.deadline = deadline);
+        // Keep a conservative earlier wake; recompute on expiry, not per channel.
+        self.next_deadline = self.next_deadline.min(deadline);
+    }
+
+    /// Reset missing-access grace for the first ready channel after usable access
+    /// is found. Successful channel differences reset the same state automatically.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no channel difference is ready to be fetched.
+    pub fn channel_difference_accessible(&mut self) {
+        let (key, channel_id) = self
+            .channel_in_diff()
+            .expect("accessible channel difference requires a ready channel");
+        self.exhausted_channels.remove(&channel_id);
+        self.update_entry(key, |entry| entry.recovery_deferrals = 0);
     }
 
     pub fn end_channel_difference(&mut self, reason: PrematureEndReason) {
@@ -1052,10 +1232,11 @@ pub enum PrematureEndReason {
     /// The channel state must be kept,
     /// and getting its difference retried in the future.
     TemporaryServerIssues,
-    /// The logged-in account has been banned from the channel and won't
-    /// be able to fetch the difference in the future.
+    /// The channel cannot be recovered with the current access or request.
+    /// Includes documented channel-specific RPC rejections.
     ///
     /// The channel state will be removed,
-    /// and getting its difference should not be retried in the future.
+    /// so this failed recovery is not retried. Later live updates may establish
+    /// a fresh position and a subsequent recovery attempt.
     Banned,
 }

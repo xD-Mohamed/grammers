@@ -1,0 +1,8 @@
+
+running 1 test
+test message_box::tests::benchmark_missing_hash_retry_pass ... missing_hash_retry channels=1000 initial_pass_ns=14961985 retry_pass_ns=15753451
+missing_hash_retry channels=10000 initial_pass_ns=4421643675 retry_pass_ns=4310135567
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 48 filtered out; finished in 8.76s
+

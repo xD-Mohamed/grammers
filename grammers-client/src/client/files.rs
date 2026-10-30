@@ -69,26 +69,29 @@ where
     let mut authorized_dcs = Vec::new();
     loop {
         let dc = route.load(Ordering::Relaxed);
-        match invoke(dc).await {
+        let error = match invoke(dc).await {
             Ok(response) => return Ok(response),
-            Err(InvocationError::Rpc(error)) if error.name == "AUTH_KEY_UNREGISTERED" => {
+            Err(error) => error,
+        };
+        match error.root_cause() {
+            InvocationError::Rpc(rpc) if rpc.name == "AUTH_KEY_UNREGISTERED" => {
                 if remaining_recoveries == 0 {
-                    return Err(InvocationError::Rpc(error));
+                    return Err(error);
                 }
                 remaining_recoveries -= 1;
                 if route.load(Ordering::Relaxed) != dc {
                     continue;
                 }
                 if authorized_dcs.contains(&dc) {
-                    return Err(InvocationError::Rpc(error));
+                    return Err(error);
                 }
                 authorized_dcs.push(dc);
                 authorize(dc).await?;
             }
-            Err(InvocationError::Rpc(error)) if error.code == FILE_MIGRATE_ERROR => {
-                let migrated_dc = migration_dc(error.value)?;
+            InvocationError::Rpc(rpc) if rpc.code == FILE_MIGRATE_ERROR => {
+                let migrated_dc = migration_dc(rpc.value)?;
                 if remaining_recoveries == 0 {
-                    return Err(InvocationError::Rpc(error));
+                    return Err(error);
                 }
                 remaining_recoveries -= 1;
                 // A late response from an earlier route must not replace a newer route
@@ -98,10 +101,10 @@ where
                     .is_ok()
                     && migrated_dc == dc
                 {
-                    return Err(InvocationError::Rpc(error));
+                    return Err(error);
                 }
             }
-            Err(error) => return Err(error),
+            _ => return Err(error),
         }
     }
 }
@@ -1191,6 +1194,63 @@ mod safety_tests {
             matches!(result, Err(InvocationError::Rpc(error)) if error.code == FILE_MIGRATE_ERROR)
         );
         assert_eq!(attempts.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn shared_setup_errors_keep_download_migration_and_authorization_recovery() {
+        for depth in [0, 1, 2] {
+            let wrap = |mut error| {
+                for _ in 0..depth {
+                    error = InvocationError::Shared(Arc::new(error));
+                }
+                error
+            };
+            let attempts = std::cell::Cell::new(0);
+            let exports = std::cell::Cell::new(0);
+            let route = AtomicI32::new(2);
+            let result = fetch_download_file(
+                &route,
+                |dc| {
+                    attempts.set(attempts.get() + 1);
+                    std::future::ready(match attempts.get() {
+                        1 => {
+                            assert_eq!(dc, 2);
+                            Err(wrap(file_migrate(4)))
+                        }
+                        2 => {
+                            assert_eq!(dc, 4);
+                            Err(wrap(auth_unregistered()))
+                        }
+                        _ => Ok(file_response()),
+                    })
+                },
+                |dc| {
+                    assert_eq!(dc, 4);
+                    exports.set(exports.get() + 1);
+                    std::future::ready(Ok(()))
+                },
+            )
+            .await;
+            assert!(result.is_ok());
+            assert_eq!(attempts.get(), 3);
+            assert_eq!(exports.get(), 1);
+            assert_eq!(route.load(Ordering::Relaxed), 4);
+        }
+        let shared = Arc::new(auth_unregistered());
+        let attempts = std::cell::Cell::new(0);
+        let result = fetch_download_file(
+            &AtomicI32::new(2),
+            |_| {
+                attempts.set(attempts.get() + 1);
+                std::future::ready(Err(InvocationError::Shared(Arc::clone(&shared))))
+            },
+            |_| async { Ok(()) },
+        )
+        .await;
+        assert!(
+            matches!(result, Err(InvocationError::Shared(error)) if Arc::ptr_eq(&error, &shared))
+        );
+        assert_eq!(attempts.get(), 2);
     }
 
     #[tokio::test]

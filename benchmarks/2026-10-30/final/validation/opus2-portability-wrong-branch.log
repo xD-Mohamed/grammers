@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "<clone>/scripts/check-optimization-evidence.py", line 361, in <module>
+    main()
+  File "<clone>/scripts/check-optimization-evidence.py", line 240, in main
+    identity = candidate_identity(repo, worktree=args.expect_worktree,
+  File "<clone>/scripts/check-optimization-evidence.py", line 34, in candidate_identity
+    assert actual['branch'] == branch, 'wrong candidate branch'
+AssertionError: wrong candidate branch

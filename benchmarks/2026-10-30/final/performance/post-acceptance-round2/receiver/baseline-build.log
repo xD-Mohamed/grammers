@@ -1,0 +1,13 @@
+   Compiling grammers-tl-parser v1.2.2 (<control>/grammers-tl-parser)
+   Compiling grammers-tl-gen v0.10.0 (<control>/grammers-tl-gen)
+   Compiling tokio v1.54.0
+   Compiling grammers-tl-types v0.10.0 (<control>/grammers-tl-types)
+   Compiling grammers-crypto v0.10.0 (<control>/grammers-crypto)
+   Compiling hickory-net v0.26.3
+   Compiling hickory-resolver v0.26.3
+   Compiling grammers-session v0.10.0 (<control>/grammers-session)
+   Compiling grammers-mtproto v0.10.0 (<control>/grammers-mtproto)
+   Compiling tokio-socks v0.5.3
+   Compiling grammers-mtsender v0.10.0 (<control>/grammers-mtsender)
+   Compiling grammers-client v0.10.0 (<control>/grammers-client)
+    Finished `release` profile [optimized] target(s) in 1m 37s

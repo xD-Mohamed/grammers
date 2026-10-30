@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use grammers_mtsender::{InvocationError, RpcError};
-use grammers_session::types::{PeerId, PeerKind, PeerRef};
+use grammers_session::types::{PeerId, PeerInfo, PeerKind, PeerRef};
 use grammers_tl_types as tl;
 use tracing::warn;
 
@@ -411,6 +411,9 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
+    /// This call stores self-user login metadata in the session even when
+    /// [`ClientConfiguration::auto_cache_peers`](crate::client::ClientConfiguration::auto_cache_peers)
+    /// is disabled.
     pub async fn get_me(&self) -> Result<User, InvocationError> {
         let mut res = self
             .invoke(&tl::functions::users::GetUsers {
@@ -418,11 +421,32 @@ impl Client {
             })
             .await?;
 
+        let invalid_response = || {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "get_me returned no valid self user",
+            )
+        };
         if res.len() != 1 {
-            panic!("fetching only one user should exactly return one user");
+            return Err(invalid_response().into());
         }
-
-        Ok(User::from_raw(self, res.pop().unwrap()))
+        let raw = res.pop().ok_or_else(invalid_response)?;
+        if !matches!(&raw, tl::enums::User::User(_)) || PeerId::user(raw.id()).is_none() {
+            return Err(invalid_response().into());
+        }
+        let user = User::from_raw(self, raw);
+        // Explicit identity lookup establishes login metadata even when
+        // opportunistic caching of other peers is disabled.
+        self.0
+            .session
+            .cache_peer(PeerInfo::User {
+                id: user.id().bare_id_unchecked(),
+                auth: user.auth(),
+                bot: Some(user.is_bot()),
+                is_self: Some(true),
+            })
+            .await?;
+        Ok(user)
     }
 
     /// Iterate over the participants of a chat.
@@ -916,6 +940,16 @@ impl Client {
         users: Vec<tl::enums::User>,
         chats: Vec<tl::enums::Chat>,
     ) -> PeerMap {
+        let peers = self.peer_map_from_raw(users, chats);
+        self.cache_peer_map(&peers).await;
+        peers
+    }
+
+    pub(crate) fn peer_map_from_raw(
+        &self,
+        users: Vec<tl::enums::User>,
+        chats: Vec<tl::enums::Chat>,
+    ) -> PeerMap {
         let map = users
             .into_iter()
             .map(|user| Peer::from_user(self, user))
@@ -923,11 +957,20 @@ impl Client {
             .map(|peer| (peer.id(), peer))
             .collect::<HashMap<_, _>>();
 
+        PeerMap {
+            map: Arc::new(map),
+            session: Arc::clone(&self.0.session),
+        }
+    }
+
+    pub(crate) async fn cache_peer_map(&self, peers: &PeerMap) {
         let cache_result = if self.0.configuration.auto_cache_peers {
             self.0
                 .session
                 .cache_peers(
-                    map.values()
+                    peers
+                        .map
+                        .values()
                         .filter(|peer| peer.auth().is_some())
                         .map(grammers_session::types::PeerInfo::from)
                         .collect(),
@@ -938,11 +981,6 @@ impl Client {
         };
         if let Err(e) = cache_result {
             warn!(?e, "cache_peer fail");
-        }
-
-        PeerMap {
-            map: Arc::new(map),
-            session: Arc::clone(&self.0.session),
         }
     }
 
@@ -1077,5 +1115,70 @@ mod peer_cache_tests {
                     assert_eq!(session.peer(id).await.unwrap().is_some(), cache);
                 }
             });
+    }
+
+    #[tokio::test]
+    async fn get_me_caches_explicit_self_metadata_with_automatic_cache_disabled() {
+        use tl::{Deserializable, Identifiable, Serializable};
+        for bot in [false, true] {
+            for hash in [None, Some(123)] {
+                let session = Arc::new(MemorySession::default());
+                let pool = SenderPool::new(Arc::clone(&session), 1);
+                let mut client = Client::with_configuration(
+                    pool.handle,
+                    ClientConfiguration {
+                        auto_cache_peers: false,
+                    },
+                );
+                drop(pool.runner);
+                Arc::get_mut(&mut client.0).unwrap().rpc_responder =
+                    Some(Arc::new(move |_, body| {
+                        assert_eq!(
+                            u32::from_le_bytes(body[..4].try_into().unwrap()),
+                            tl::functions::users::GetUsers::CONSTRUCTOR_ID
+                        );
+                        let request =
+                            tl::functions::users::GetUsers::from_bytes(&body[4..]).unwrap();
+                        assert_eq!(request.id, vec![tl::enums::InputUser::UserSelf]);
+                        Ok(vec![super::super::net::test_self_user(7, hash, bot)].to_bytes())
+                    }));
+                let user = client.get_me().await.unwrap();
+                assert_eq!(user.id(), PeerId::user(7).unwrap());
+                assert_eq!(user.is_bot(), bot);
+                assert_eq!(
+                    session.peer(PeerId::self_user()).await.unwrap(),
+                    Some(PeerInfo::User {
+                        id: 7,
+                        auth: hash.map(grammers_session::types::PeerAuth::from_hash),
+                        bot: Some(bot),
+                        is_self: Some(true),
+                    })
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn get_me_rejects_missing_or_invalid_identity_without_caching() {
+        use tl::Serializable;
+        let valid = super::super::net::test_self_user(7, Some(123), false);
+        for users in [
+            Vec::new(),
+            vec![tl::types::UserEmpty { id: 7 }.into()],
+            vec![super::super::net::test_self_user(0, None, false)],
+            vec![valid.clone(), valid],
+        ] {
+            let session = Arc::new(MemorySession::default());
+            let pool = SenderPool::new(Arc::clone(&session), 1);
+            let mut client = Client::new(pool.handle);
+            drop(pool.runner);
+            let bytes = users.to_bytes();
+            Arc::get_mut(&mut client.0).unwrap().rpc_responder =
+                Some(Arc::new(move |_, _| Ok(bytes.clone())));
+            assert!(
+                matches!(client.get_me().await, Err(InvocationError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData)
+            );
+            assert!(session.peer(PeerId::self_user()).await.unwrap().is_none());
+        }
     }
 }

@@ -1,0 +1,29 @@
+test_assume_unchanged_does_not_hide_different_tested_source (test_check_optimization_evidence.CandidateChecks) ... ok
+test_complete_candidate_and_unchanged_schema_pass (test_check_optimization_evidence.CandidateChecks) ... ok
+test_deleted_checkpoint_configuration_cannot_escape_build_identity (test_check_optimization_evidence.CandidateChecks) ... ERROR
+test_each_expected_identity_field_is_enforced (test_check_optimization_evidence.CandidateChecks) ... ok
+test_ignored_cargo_configuration_cannot_escape_build_identity (test_check_optimization_evidence.CandidateChecks) ... ok
+test_ignored_non_json_evidence_cannot_escape_index (test_check_optimization_evidence.CandidateChecks) ... ok
+test_manifest_cannot_omit_tracked_source (test_check_optimization_evidence.CandidateChecks) ... ok
+test_new_staged_toolchain_cannot_reuse_old_build_identity (test_check_optimization_evidence.CandidateChecks) ... ok
+test_staged_schema_change_cannot_reuse_old_build_receipts (test_check_optimization_evidence.CandidateChecks) ... ok
+test_untracked_source_cannot_escape_manifest (test_check_optimization_evidence.CandidateChecks) ... ok
+
+======================================================================
+ERROR: test_deleted_checkpoint_configuration_cannot_escape_build_identity (test_check_optimization_evidence.CandidateChecks)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "<candidate>/scripts/test_check_optimization_evidence.py", line 88, in test_deleted_checkpoint_configuration_cannot_escape_build_identity
+    self.git('rm', '--quiet', '.cargo/config.toml')
+  File "<candidate>/scripts/test_check_optimization_evidence.py", line 36, in git
+    return subprocess.check_output(['git', '-C', str(self.repo), *args],
+  File "/usr/lib/python3.10/subprocess.py", line 421, in check_output
+    return run(*popenargs, stdout=PIPE, timeout=timeout, check=True,
+  File "/usr/lib/python3.10/subprocess.py", line 526, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['git', '-C', '<fixture>/repo', 'rm', '--quiet', '.cargo/config.toml']' returned non-zero exit status 1.
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.254s
+
+FAILED (errors=1)

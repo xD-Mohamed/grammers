@@ -1,0 +1,9 @@
+benchmark_binary_sha256=06000e9dfb68c8d101e1a477a763b5be56a60b47790b5cf19297224bbd03264c
+
+running 1 test
+test benchmark_sqlite_self_lookup_and_live_receiver ... sqlite_live_receiver peers=1000 iterations=256 self_lookup_total_ns=8680086 live_total_ns=9584062
+sqlite_live_receiver peers=100000 iterations=256 self_lookup_total_ns=858002885 live_total_ns=849179871
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.92s
+

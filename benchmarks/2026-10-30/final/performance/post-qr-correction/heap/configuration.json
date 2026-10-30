@@ -1,0 +1,15 @@
+{
+  "source_inputs_sha256": "3dd2d67b630ec29230b1ad179977d56ac06ed7b9d485f8b4032ef47c2202ca43",
+  "binaries": {
+    "baseline": "a69fa15ecf14db57bd3b149189458b86405c1a9f331925d561d49f6c5bc95ae1",
+    "candidate": "a4621eb14b00ec19c9058897d3c3fbd17beaff6d8a2d340b4d446487aa995633"
+  },
+  "environment": {
+    "LOOPBACK_CLIENT_CPUS": "0",
+    "LOOPBACK_SERVER_CPUS": "2,3",
+    "LOOPBACK_RUNTIME": "current",
+    "LOOPBACK_WINDOW_MS": "1500"
+  },
+  "command": "<binary> --exact loopback_session_footprint --ignored --nocapture --test-threads=1",
+  "runs_per_binary": 1
+}

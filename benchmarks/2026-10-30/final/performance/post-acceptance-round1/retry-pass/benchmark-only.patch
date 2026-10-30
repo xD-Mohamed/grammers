@@ -1,0 +1,38 @@
+--- a/grammers-session/src/message_box/tests.rs
++++ b/grammers-session/src/message_box/tests.rs
+@@ -1574,3 +1574,35 @@
+         Some(get_channel_difference(7, 10))
+     );
+ }
++
++#[test]
++#[ignore = "local release component benchmark; run explicitly with --ignored --nocapture"]
++fn benchmark_missing_hash_retry_pass() {
++    use std::hint::black_box;
++    for count in [1_000, 10_000] {
++        reset_time();
++        let mut boxes = MessageBoxes::load(UpdatesState {
++            channels: (1..=count).map(|id| ChannelState { id, pts: 1 }).collect(),
++            ..Default::default()
++        });
++        let mut elapsed = [Duration::ZERO; 2];
++        for duration in &mut elapsed {
++            boxes.check_deadlines();
++            let started = std::time::Instant::now();
++            for _ in 0..count {
++                assert!(black_box(&boxes).get_channel_difference().is_some());
++                black_box(&mut boxes).defer_channel_difference(Duration::from_secs(1));
++                black_box(black_box(&mut boxes).check_deadlines());
++            }
++            *duration = started.elapsed();
++            assert!(boxes.get_channel_difference().is_none());
++            advance_time_by(Duration::from_secs(1));
++        }
++        eprintln!(
++            "missing_hash_retry channels={count} initial_pass_ns={} retry_pass_ns={}",
++            elapsed[0].as_nanos(),
++            elapsed[1].as_nanos()
++        );
++    }
++}
++

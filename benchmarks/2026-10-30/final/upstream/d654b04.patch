@@ -1,0 +1,206 @@
+commit d654b0450e9d45bb98697f5131472d242af28bea
+Author:     Lonami Exo <totufals@hotmail.com>
+AuthorDate: Sun Oct 25 11:33:47 2026 +0100
+Commit:     Lonami Exo <totufals@hotmail.com>
+CommitDate: Sun Oct 25 11:40:35 2026 +0100
+
+    Move DequeBuffer to grammers-mtproto
+
+diff --git a/grammers-crypto/src/lib.rs b/grammers-crypto/src/lib.rs
+index 476afa6..ccfba2c 100644
+--- a/grammers-crypto/src/lib.rs
++++ b/grammers-crypto/src/lib.rs
+@@ -13,7 +13,6 @@
+ 
+ pub mod aes;
+ mod auth_key;
+-mod deque_buffer;
+ mod factorize;
+ pub mod hex;
+ mod obfuscated;
+@@ -24,7 +23,6 @@ pub mod two_factor_auth;
+ use std::fmt;
+ 
+ pub use auth_key::AuthKey;
+-pub use deque_buffer::DequeBuffer;
+ pub use factorize::factorize;
+ pub use obfuscated::ObfuscatedCipher;
+ 
+diff --git a/grammers-mtproto/src/connection.rs b/grammers-mtproto/src/connection.rs
+index cbc8ab0..618f14b 100644
+--- a/grammers-mtproto/src/connection.rs
++++ b/grammers-mtproto/src/connection.rs
+@@ -10,10 +10,10 @@
+ 
+ use std::io;
+ 
+-use grammers_crypto::DequeBuffer;
+ use grammers_tl_types as tl;
+ use tracing::{debug, trace};
+ 
++use crate::DequeBuffer;
+ use crate::authentication::Finished;
+ use crate::mtp::{self, Deserialization, DeserializeError, Encrypted, Mtp, Plain};
+ use crate::transport::Transport;
+diff --git a/grammers-crypto/src/deque_buffer.rs b/grammers-mtproto/src/deque_buffer.rs
+similarity index 100%
+rename from grammers-crypto/src/deque_buffer.rs
+rename to grammers-mtproto/src/deque_buffer.rs
+diff --git a/grammers-mtproto/src/lib.rs b/grammers-mtproto/src/lib.rs
+index cd2b8e8..801402d 100644
+--- a/grammers-mtproto/src/lib.rs
++++ b/grammers-mtproto/src/lib.rs
+@@ -18,11 +18,14 @@
+ 
+ pub mod authentication;
+ pub mod connection;
++mod deque_buffer;
+ mod manual_tl;
+ pub mod mtp;
+ pub mod transport;
+ mod utils;
+ 
++pub use deque_buffer::DequeBuffer;
++
+ /// The default compression threshold to be used.
+ pub const DEFAULT_COMPRESSION_THRESHOLD: Option<usize> = Some(512);
+ 
+diff --git a/grammers-mtproto/src/mtp/encrypted.rs b/grammers-mtproto/src/mtp/encrypted.rs
+index 62d675b..ad23b50 100644
+--- a/grammers-mtproto/src/mtp/encrypted.rs
++++ b/grammers-mtproto/src/mtp/encrypted.rs
+@@ -9,9 +9,7 @@
+ use std::mem;
+ use std::time::{Instant, SystemTime, UNIX_EPOCH};
+ 
+-use grammers_crypto::{
+-    AuthKey, DequeBuffer, decrypt_data_v2, encrypt_data_v2, get_padding_data_v2,
+-};
++use grammers_crypto::{AuthKey, decrypt_data_v2, encrypt_data_v2, get_padding_data_v2};
+ use grammers_tl_types::{self as tl, Cursor, Deserializable, Identifiable, Serializable};
+ use tracing::info;
+ 
+@@ -19,7 +17,7 @@ use super::{
+     Deserialization, DeserializationFailure, DeserializeError, Mtp, RpcResult, RpcResultError,
+ };
+ use crate::utils::StackBuffer;
+-use crate::{MsgId, manual_tl};
++use crate::{DequeBuffer, MsgId, manual_tl};
+ 
+ /// How many future salts to fetch or have stored at a given time.
+ ///
+diff --git a/grammers-mtproto/src/mtp/mod.rs b/grammers-mtproto/src/mtp/mod.rs
+index 68d2ea8..28c17b1 100644
+--- a/grammers-mtproto/src/mtp/mod.rs
++++ b/grammers-mtproto/src/mtp/mod.rs
+@@ -21,7 +21,6 @@ mod plain;
+ 
+ use std::fmt;
+ 
+-use crypto::DequeBuffer;
+ pub use encrypted::{
+     ENCRYPTED_PACKET_HEADER_LEN, Encrypted, MAX_TRANSPORT_HEADER_LEN, MESSAGE_CONTAINER_HEADER_LEN,
+     PLAIN_PACKET_HEADER_LEN,
+@@ -30,7 +29,7 @@ use grammers_crypto as crypto;
+ use grammers_tl_types as tl;
+ pub use plain::Plain;
+ 
+-use crate::{MsgId, transport};
++use crate::{DequeBuffer, MsgId, transport};
+ 
+ /// Manual implementation of Telegram's `rpc_result`.
+ #[derive(Debug)]
+diff --git a/grammers-mtproto/src/mtp/plain.rs b/grammers-mtproto/src/mtp/plain.rs
+index 69a44d3..ff53872 100644
+--- a/grammers-mtproto/src/mtp/plain.rs
++++ b/grammers-mtproto/src/mtp/plain.rs
+@@ -6,10 +6,10 @@
+ // option. This file may not be copied, modified, or distributed
+ // except according to those terms.
+ 
+-use grammers_crypto::DequeBuffer;
+ use grammers_tl_types::{Cursor, Deserializable, Serializable};
+ 
+ use super::{Deserialization, DeserializeError, Mtp, RpcResult};
++use crate::DequeBuffer;
+ use crate::MsgId;
+ 
+ /// An implementation of the [Mobile Transport Protocol] for plaintext
+diff --git a/grammers-mtproto/src/transport/abridged.rs b/grammers-mtproto/src/transport/abridged.rs
+index 0a0542d..f173a3f 100644
+--- a/grammers-mtproto/src/transport/abridged.rs
++++ b/grammers-mtproto/src/transport/abridged.rs
+@@ -6,9 +6,8 @@
+ // option. This file may not be copied, modified, or distributed
+ // except according to those terms.
+ 
+-use grammers_crypto::DequeBuffer;
+-
+ use super::{Error, Tagged, Transport, UnpackedOffset};
++use crate::DequeBuffer;
+ 
+ /// The lightest MTProto transport protocol available.
+ ///
+diff --git a/grammers-mtproto/src/transport/full.rs b/grammers-mtproto/src/transport/full.rs
+index 454b186..613e3d3 100644
+--- a/grammers-mtproto/src/transport/full.rs
++++ b/grammers-mtproto/src/transport/full.rs
+@@ -7,9 +7,9 @@
+ // except according to those terms.
+ 
+ use crc32fast::Hasher;
+-use grammers_crypto::DequeBuffer;
+ 
+ use super::{Error, Transport, UnpackedOffset};
++use crate::DequeBuffer;
+ 
+ /// The basic MTProto transport protocol.
+ ///
+diff --git a/grammers-mtproto/src/transport/intermediate.rs b/grammers-mtproto/src/transport/intermediate.rs
+index d5d06ea..764d509 100644
+--- a/grammers-mtproto/src/transport/intermediate.rs
++++ b/grammers-mtproto/src/transport/intermediate.rs
+@@ -6,9 +6,8 @@
+ // option. This file may not be copied, modified, or distributed
+ // except according to those terms.
+ 
+-use grammers_crypto::DequeBuffer;
+-
+ use super::{Error, Tagged, Transport, UnpackedOffset};
++use crate::DequeBuffer;
+ 
+ /// A light MTProto transport protocol that guarantees data padded to 4 bytes.
+ ///
+diff --git a/grammers-mtproto/src/transport/mod.rs b/grammers-mtproto/src/transport/mod.rs
+index a6a8144..44a9186 100644
+--- a/grammers-mtproto/src/transport/mod.rs
++++ b/grammers-mtproto/src/transport/mod.rs
+@@ -22,10 +22,11 @@ use std::{fmt, ops::Range};
+ 
+ pub use abridged::Abridged;
+ pub use full::Full;
+-use grammers_crypto::DequeBuffer;
+ pub use intermediate::Intermediate;
+ pub use obfuscated::Obfuscated;
+ 
++use crate::DequeBuffer;
++
+ /// The error type reported by the different transports when something is wrong.
+ ///
+ /// Certain transports will only produce certain variants of this error.
+diff --git a/grammers-mtproto/src/transport/obfuscated.rs b/grammers-mtproto/src/transport/obfuscated.rs
+index 2419829..c30c3a1 100644
+--- a/grammers-mtproto/src/transport/obfuscated.rs
++++ b/grammers-mtproto/src/transport/obfuscated.rs
+@@ -6,9 +6,10 @@
+ // option. This file may not be copied, modified, or distributed
+ // except according to those terms.
+ 
+-use grammers_crypto::{DequeBuffer, ObfuscatedCipher};
++use grammers_crypto::ObfuscatedCipher;
+ 
+ use super::{Error, Tagged, Transport, UnpackedOffset};
++use crate::DequeBuffer;
+ 
+ /// Obfuscation layer for other MTProto transport protocols.
+ ///

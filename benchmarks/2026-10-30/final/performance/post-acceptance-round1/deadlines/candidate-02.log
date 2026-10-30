@@ -1,0 +1,8 @@
+
+running 1 test
+test message_box::tests::benchmark_pending_channel_deadlines ... pending_deadlines channels=1000 iterations=32 hot_total_ns=191 hot_ns_per_call=5 expired_sweep_ns=1713
+pending_deadlines channels=10000 iterations=32 hot_total_ns=120 hot_ns_per_call=3 expired_sweep_ns=21931
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 67 filtered out; finished in 0.00s
+

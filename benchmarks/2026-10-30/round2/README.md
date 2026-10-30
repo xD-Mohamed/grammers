@@ -1,8 +1,8 @@
 # Second-review correction evidence
 
 Review checkpoint: `5b16ac41ae9d6b0cdd0bf42df50d6064561bc19e`. The correction
-source and binaries are identified by source.json; no future integration commit
-is invented. [The ledger](../../../REVIEW-ROUND2.md) records all twelve findings,
+was subsequently checkpointed as `5f0cb0511416e666b5476c078c0aaa86d9bce69e`;
+source.json identifies its measured inputs and binaries. [The ledger](../../../REVIEW-ROUND2.md) records all twelve findings,
 the full-budget factorization fixture's limits and the remaining review gate.
 
 The only non-local traffic was one execution of each of the two existing

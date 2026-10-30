@@ -1,0 +1,49 @@
+
+running 1 test
+test loopback_rpc_cost ... Plain round 0: sampled RPC latency p50/p95/p99 207.9/383.4/475.1 us (1632 samples)
+Plain reply (1592 B) round 0: 69327 RPC/s; client thread 6.88 us user + 7.37 us kernel, 0 cycles per RPC
+Plain round 1: sampled RPC latency p50/p95/p99 215.5/384.0/520.2 us (1584 samples)
+Plain reply (1592 B) round 1: 2.00 allocations, 1803 bytes allocated per RPC
+Plain round 2: sampled RPC latency p50/p95/p99 206.7/373.8/680.5 us (1599 samples)
+Plain reply (1592 B) round 2: 67872 RPC/s; client thread 6.74 us user + 7.64 us kernel, 0 cycles per RPC
+Plain round 3: sampled RPC latency p50/p95/p99 205.6/372.4/511.8 us (1631 samples)
+Plain reply (1592 B) round 3: 2.00 allocations, 1801 bytes allocated per RPC
+Plain round 4: sampled RPC latency p50/p95/p99 191.9/350.7/421.1 us (1760 samples)
+Plain reply (1592 B) round 4: 74863 RPC/s; client thread 6.44 us user + 6.87 us kernel, 0 cycles per RPC
+Gzip round 0: sampled RPC latency p50/p95/p99 197.7/405.4/527.5 us (1632 samples)
+Gzip reply (528 B) round 0: 69428 RPC/s; client thread 5.83 us user + 8.45 us kernel, 0 cycles per RPC
+Gzip round 1: sampled RPC latency p50/p95/p99 204.7/426.6/710.2 us (1518 samples)
+Gzip reply (528 B) round 1: 2.00 allocations, 1807 bytes allocated per RPC
+Gzip round 2: sampled RPC latency p50/p95/p99 193.5/388.9/445.2 us (1719 samples)
+Gzip reply (528 B) round 2: 73036 RPC/s; client thread 6.15 us user + 7.42 us kernel, 0 cycles per RPC
+Gzip round 3: sampled RPC latency p50/p95/p99 181.2/354.3/401.0 us (1824 samples)
+Gzip reply (528 B) round 3: 2.00 allocations, 1792 bytes allocated per RPC
+Gzip round 4: sampled RPC latency p50/p95/p99 190.3/378.0/435.6 us (1712 samples)
+Gzip reply (528 B) round 4: 72700 RPC/s; client thread 6.79 us user + 6.86 us kernel, 0 cycles per RPC
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 20.10s
+
+	Command being timed: "<binary> --exact loopback_rpc_cost --ignored --nocapture --test-threads=1"
+	User time (seconds): 15.93
+	System time (seconds): 19.56
+	Percent of CPU this job got: 176%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:20.10
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 11252
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 345074
+	Voluntary context switches: 296256
+	Involuntary context switches: 5817
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

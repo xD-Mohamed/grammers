@@ -6,6 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::sync::Arc;
 use std::{fmt, io};
 
 use grammers_crypto::two_factor_auth::{calculate_2fa, check_p_and_g};
@@ -105,8 +106,7 @@ fn password_parameters(
     if !password.has_password
         || password.srp_id.is_none()
         || !(2..=7).contains(params.3)
-        || b.is_empty()
-        || b.len() > 256
+        || !(248..=256).contains(&b.len())
         || b.iter().all(|byte| *byte == 0)
         || password.secure_random.is_empty()
         || password.secure_random.len() > 256
@@ -114,19 +114,78 @@ fn password_parameters(
     {
         return Err(invalid_password_state());
     }
-    if params.2.len() == 256 {
-        let mut padded_b = [0; 256];
-        padded_b[256 - b.len()..].copy_from_slice(b);
-        if padded_b.as_slice() >= params.2.as_slice() {
-            return Err(invalid_password_state());
-        }
-    }
     Ok(PasswordParameters {
         salt1: params.0,
         salt2: params.1,
         p: params.2,
         g: params.3,
     })
+}
+
+static SRP_JOBS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+#[cfg(test)]
+static SRP_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn run_srp_job<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, InvocationError> + Send + 'static,
+) -> Result<T, InvocationError> {
+    let permit = SRP_JOBS
+        .acquire()
+        .await
+        .expect("SRP semaphore is never closed");
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        job()
+    })
+    .await
+    .map_err(|error| InvocationError::Io(io::Error::other(error)))?
+}
+
+async fn password_proof(
+    info: Box<tl::types::account::Password>,
+    password: Arc<[u8]>,
+) -> Result<
+    (
+        Box<tl::types::account::Password>,
+        Option<tl::functions::auth::CheckPassword>,
+    ),
+    InvocationError,
+> {
+    password_parameters(&info)?;
+    run_srp_job(move || {
+        let PasswordParameters { salt1, salt2, p, g } = password_parameters(&info)?;
+        // Out-of-range B is unusable server parameter state, like bad p.
+        // Returning no proof permits the existing single bounded refresh.
+        let b = info.srp_b.as_deref().ok_or_else(invalid_password_state)?;
+        if p.len() == 256 {
+            let mut padded_b = [0; 256];
+            padded_b[256 - b.len()..].copy_from_slice(b);
+            if padded_b.as_slice() >= p {
+                return Ok((info, None));
+            }
+        }
+        if !check_p_and_g(p, g) {
+            return Ok((info, None));
+        }
+        let (m1, g_a) = calculate_2fa(
+            salt1,
+            salt2,
+            p,
+            g,
+            info.srp_b.clone().ok_or_else(invalid_password_state)?,
+            info.secure_random.clone(),
+            password,
+        );
+        let request = tl::functions::auth::CheckPassword {
+            password: tl::enums::InputCheckPasswordSrp::Srp(tl::types::InputCheckPasswordSrp {
+                srp_id: info.srp_id.ok_or_else(invalid_password_state)?,
+                a: g_a.to_vec(),
+                m1: m1.to_vec(),
+            }),
+        };
+        Ok((info, Some(request)))
+    })
+    .await
 }
 
 fn migration_dc(value: Option<u32>) -> Result<i32, InvocationError> {
@@ -193,7 +252,9 @@ impl Client {
     pub async fn is_authorized(&self) -> Result<bool, InvocationError> {
         match self.invoke(&tl::functions::updates::GetState {}).await {
             Ok(_) => Ok(true),
-            Err(InvocationError::Rpc(e)) if e.code == 401 => Ok(false),
+            Err(e) if matches!(e.root_cause(), InvocationError::Rpc(rpc) if rpc.code == 401) => {
+                Ok(false)
+            }
             Err(err) => Err(err),
         }
     }
@@ -289,9 +350,12 @@ impl Client {
 
         let result = match self.invoke(&request).await {
             Ok(x) => x,
-            Err(InvocationError::Rpc(err)) if err.code == 303 => {
+            Err(err) => {
+                let new_dc_id = match err.root_cause() {
+                    InvocationError::Rpc(rpc) if rpc.code == 303 => migration_dc(rpc.value)?,
+                    _ => return Err(err),
+                };
                 let old_dc_id = self.0.session.home_dc_id()?;
-                let new_dc_id = migration_dc(err.value)?;
                 // Disconnect from current DC to cull the now-unused connection.
                 // This also gives a chance for the new home DC to export its authorization
                 // if there's a need to connect back to the old DC after having logged in.
@@ -299,7 +363,6 @@ impl Client {
                 self.0.session.set_home_dc_id(new_dc_id).await?;
                 self.invoke(&request).await?
             }
-            Err(e) => return Err(e),
         };
 
         match result {
@@ -368,9 +431,12 @@ impl Client {
 
         let sent_code: tl::types::auth::SentCode = match self.invoke(&request).await {
             Ok(x) => login_code_response(x)?,
-            Err(InvocationError::Rpc(err)) if err.code == 303 => {
+            Err(err) => {
+                let new_dc_id = match err.root_cause() {
+                    InvocationError::Rpc(rpc) if rpc.code == 303 => migration_dc(rpc.value)?,
+                    _ => return Err(err),
+                };
                 let old_dc_id = self.0.session.home_dc_id()?;
-                let new_dc_id = migration_dc(err.value)?;
                 // Disconnect from current DC to cull the now-unused connection.
                 // This also gives a chance for the new home DC to export its authorization
                 // if there's a need to connect back to the old DC after having logged in.
@@ -378,7 +444,6 @@ impl Client {
                 self.0.session.set_home_dc_id(new_dc_id).await?;
                 login_code_response(self.invoke(&request).await?)?
             }
-            Err(e) => return Err(e),
         };
 
         Ok(LoginToken {
@@ -511,46 +576,30 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
+    /// CPU validation and proof generation use at most four blocking jobs.
+    /// Cancelling started work lets it finish while retaining its admission slot.
     pub async fn check_password(
         &self,
         password_token: PasswordToken,
         password: impl AsRef<[u8]>,
     ) -> Result<User, SignInError> {
-        let mut password_info = password_token.password;
-        let mut params = password_parameters(&password_info).map_err(SignInError::Other)?;
-
-        // Telegram sent us incorrect parameters, trying to get them again
-        if !check_p_and_g(params.p, params.g) {
-            password_info = self
+        let password: Arc<[u8]> = password.as_ref().into();
+        let (mut password_info, mut check_password) =
+            password_proof(password_token.password, password.clone())
+                .await
+                .map_err(SignInError::Other)?;
+        if check_password.is_none() {
+            let fresh = self
                 .get_password_information()
                 .await
                 .map_err(SignInError::Other)?
                 .password;
-            params = password_parameters(&password_info).map_err(SignInError::Other)?;
-            if !check_p_and_g(params.p, params.g) {
-                return Err(SignInError::Other(invalid_password_state()));
-            }
+            (password_info, check_password) = password_proof(fresh, password)
+                .await
+                .map_err(SignInError::Other)?;
         }
-
-        let PasswordParameters { salt1, salt2, p, g } = params;
-
-        let g_b = password_info
-            .srp_b
-            .clone()
-            .ok_or_else(|| SignInError::Other(invalid_password_state()))?;
-        let a = password_info.secure_random.clone();
-
-        let (m1, g_a) = calculate_2fa(salt1, salt2, p, g, g_b, a, password);
-
-        let check_password = tl::functions::auth::CheckPassword {
-            password: tl::enums::InputCheckPasswordSrp::Srp(tl::types::InputCheckPasswordSrp {
-                srp_id: password_info
-                    .srp_id
-                    .ok_or_else(|| SignInError::Other(invalid_password_state()))?,
-                a: g_a.to_vec(),
-                m1: m1.to_vec(),
-            }),
-        };
+        let check_password =
+            check_password.ok_or_else(|| SignInError::Other(invalid_password_state()))?;
 
         match self.invoke(&check_password).await {
             Ok(tl::enums::auth::Authorization::Authorization(x)) => {
@@ -667,7 +716,7 @@ mod safety_tests {
             }
             .into(),
         );
-        info.srp_b = Some(vec![1]);
+        info.srp_b = Some(vec![1; 256]);
         info.srp_id = Some(0);
         info
     }
@@ -682,7 +731,7 @@ mod safety_tests {
                 1 => info.srp_id = None,
                 2 => info.srp_b = Some(vec![0]),
                 3 => info.srp_b = Some(vec![1; 257]),
-                4 => info.srp_b = Some(vec![255; 256]),
+                4 => info.srp_b = Some(vec![0; 256]),
                 5 => info.secure_random.clear(),
                 6 => info.secure_random = vec![1; 257],
                 7 => info.has_password = false,
@@ -702,6 +751,79 @@ mod safety_tests {
                 "case {case}"
             );
         }
+    }
+
+    #[test]
+    fn password_b_encoding_length_matches_srp_reference_boundaries() {
+        for len in [0, 1, 247, 248, 256, 257] {
+            let mut info = supported_password_info();
+            info.srp_b = Some(vec![1; len]);
+            assert_eq!(
+                password_parameters(&info).is_ok(),
+                (248..=256).contains(&len),
+                "length {len}"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn srp_job_preserves_current_thread_progress() {
+        let _guard = SRP_TEST_LOCK.lock().await;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let job =
+            run_srp_job(move || Ok(rx.recv_timeout(std::time::Duration::from_secs(2)).is_ok()));
+        let peer = async {
+            tokio::task::yield_now().await;
+            let _ = tx.send(());
+        };
+        let (result, ()) = tokio::join!(job, peer);
+        assert!(result.unwrap(), "SRP job blocked the sole async worker");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn started_srp_jobs_keep_capacity_after_cancellation_and_proof_waits() {
+        use std::time::Duration;
+        let _guard = SRP_TEST_LOCK.lock().await;
+        let mut callers = Vec::new();
+        let mut release = Vec::new();
+        for _ in 0..4 {
+            let (started, entered) = tokio::sync::oneshot::channel();
+            let (finish, blocking) = std::sync::mpsc::channel();
+            callers.push(tokio::spawn(run_srp_job(move || {
+                let _ = started.send(());
+                blocking.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(())
+            })));
+            release.push(finish);
+            tokio::time::timeout(Duration::from_secs(2), entered)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert_eq!(SRP_JOBS.available_permits(), 0);
+        for caller in callers {
+            caller.abort();
+            assert!(caller.await.unwrap_err().is_cancelled());
+        }
+        assert_eq!(SRP_JOBS.available_permits(), 0);
+        let mut proof = tokio::spawn(password_proof(
+            Box::new(supported_password_info()),
+            Arc::from(&b"fixture"[..]),
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), &mut proof)
+                .await
+                .is_err()
+        );
+        proof.abort();
+        assert!(matches!(proof.await, Err(error) if error.is_cancelled()));
+        for finish in release {
+            finish.send(()).unwrap();
+        }
+        let _all_finished = tokio::time::timeout(Duration::from_secs(2), SRP_JOBS.acquire_many(4))
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[test]
@@ -751,5 +873,50 @@ mod safety_tests {
         assert!(
             matches!(result, Err(InvocationError::Io(error)) if error.kind() == io::ErrorKind::InvalidData)
         );
+    }
+
+    #[tokio::test]
+    async fn out_of_range_srp_b_refreshes_parameters_only_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tl::{Identifiable, Serializable};
+        let _guard = SRP_TEST_LOCK.lock().await;
+        for p_byte in [255, 254] {
+            let mut info = supported_password_info();
+            info.current_algo = Some(
+                tl::types::PasswordKdfAlgoSha256Sha256Pbkdf2Hmacsha512iter100000Sha256ModPow {
+                    salt1: vec![1],
+                    salt2: vec![2],
+                    p: vec![p_byte; 256],
+                    g: 3,
+                }
+                .into(),
+            );
+            info.srp_b = Some(vec![255; 256]);
+            assert!(password_parameters(&info).is_ok());
+            let pool = SenderPool::new(Arc::new(MemorySession::default()), 1);
+            let mut client = Client::new(pool.handle);
+            drop(pool.runner);
+            let refreshes = Arc::new(AtomicUsize::new(0));
+            let recorded = Arc::clone(&refreshes);
+            Arc::get_mut(&mut client.0).unwrap().rpc_responder = Some(Arc::new(move |_, body| {
+                assert_eq!(
+                    u32::from_le_bytes(body[..4].try_into().unwrap()),
+                    tl::functions::account::GetPassword::CONSTRUCTOR_ID
+                );
+                assert_eq!(
+                    recorded.fetch_add(1, Ordering::Relaxed),
+                    0,
+                    "only one refresh is permitted"
+                );
+                Ok(tl::enums::account::Password::Password(supported_password_info()).to_bytes())
+            }));
+            let result = client
+                .check_password(PasswordToken::new(info), b"unused")
+                .await;
+            assert!(
+                matches!(result, Err(SignInError::Other(InvocationError::Io(error))) if error.kind() == io::ErrorKind::InvalidData)
+            );
+            assert_eq!(refreshes.load(Ordering::Relaxed), 1);
+        }
     }
 }

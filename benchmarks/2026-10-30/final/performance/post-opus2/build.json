@@ -1,0 +1,30 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--release",
+    "-p",
+    "grammers-mtsender",
+    "--test",
+    "loopback",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 28.84,
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+  "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)",
+  "environment": {
+    "CARGO_BUILD_JOBS": "1",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0"
+  },
+  "binaries": {
+    "baseline": "a69fa15ecf14db57bd3b149189458b86405c1a9f331925d561d49f6c5bc95ae1",
+    "candidate": "cb3b75a1008f6485ed81cb17ea564a33486b76b33b614a57754cbd1a3d5630b8"
+  },
+  "source_inputs_sha256": "94c015aac9c37cab1adb435deccca824363a29a043fbe529db05cba32d645b23",
+  "baseline_note": "Reused exact baseline executable identified in prior build receipts; no baseline rebuild claimed."
+}

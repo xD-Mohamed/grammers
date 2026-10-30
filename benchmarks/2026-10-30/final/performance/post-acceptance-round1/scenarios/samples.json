@@ -1,0 +1,186 @@
+{
+  "scheduled_arrival": {
+    "open-warm": {
+      "baseline": {
+        "offered": 30000,
+        "completed": 30000,
+        "errors": 0,
+        "harness_drops": 0,
+        "busy_p99_us": 2563.5,
+        "quiet_p99_us": 2519.6
+      },
+      "candidate": {
+        "offered": 30000,
+        "completed": 30000,
+        "errors": 0,
+        "harness_drops": 0,
+        "busy_p99_us": 2459.5,
+        "quiet_p99_us": 2511.5
+      }
+    },
+    "open-overload": {
+      "baseline": {
+        "offered": 180000,
+        "completed": 119310,
+        "errors": 0,
+        "harness_drops": 60690,
+        "busy_p99_us": 17616.3,
+        "quiet_p99_us": 18887.3
+      },
+      "candidate": {
+        "offered": 180000,
+        "completed": 116712,
+        "errors": 0,
+        "harness_drops": 63288,
+        "busy_p99_us": 41351.0,
+        "quiet_p99_us": 11250.5
+      }
+    },
+    "open-cold": {
+      "baseline": {
+        "offered": 30000,
+        "completed": 29487,
+        "errors": 0,
+        "harness_drops": 513,
+        "busy_p99_us": 56097.7,
+        "quiet_p99_us": 83104.4
+      },
+      "candidate": {
+        "offered": 30000,
+        "completed": 29796,
+        "errors": 0,
+        "harness_drops": 204,
+        "busy_p99_us": 49754.4,
+        "quiet_p99_us": 59685.1
+      }
+    },
+    "open-large": {
+      "baseline": {
+        "offered": 150,
+        "completed": 74,
+        "errors": 76,
+        "harness_drops": 0,
+        "busy_p99_us": 1957.2,
+        "quiet_p99_us": 2094.1
+      },
+      "candidate": {
+        "offered": 150,
+        "completed": 150,
+        "errors": 0,
+        "harness_drops": 0,
+        "busy_p99_us": 10498.1,
+        "quiet_p99_us": 9121.1
+      }
+    },
+    "open-large-burst": {
+      "baseline": {
+        "offered": 3000,
+        "completed": 1500,
+        "errors": 1500,
+        "harness_drops": 0,
+        "busy_p99_us": 104197.2,
+        "quiet_p99_us": 109131.5
+      },
+      "candidate": {
+        "offered": 3000,
+        "completed": 2042,
+        "errors": 0,
+        "harness_drops": 958,
+        "busy_p99_us": 1555526.2,
+        "quiet_p99_us": 1144223.1
+      }
+    }
+  },
+  "runtime": {
+    "current-1cpu": {
+      "baseline": {
+        "rates": [
+          78231,
+          80237,
+          78583
+        ],
+        "median": 78583
+      },
+      "candidate": {
+        "rates": [
+          70124,
+          77231,
+          77878
+        ],
+        "median": 77231
+      }
+    },
+    "multi-1cpu": {
+      "baseline": {
+        "rates": [
+          74857,
+          75783,
+          75505
+        ],
+        "median": 75505
+      },
+      "candidate": {
+        "rates": [
+          71249,
+          72425,
+          79963
+        ],
+        "median": 72425
+      }
+    },
+    "multi-2cpu": {
+      "baseline": {
+        "rates": [
+          90320,
+          85223,
+          93552
+        ],
+        "median": 90320
+      },
+      "candidate": {
+        "rates": [
+          88262,
+          95798,
+          90232
+        ],
+        "median": 90232
+      }
+    },
+    "blocking-1cpu": {
+      "baseline": {
+        "rates": [
+          66445,
+          62326,
+          67431
+        ],
+        "median": 66445
+      },
+      "candidate": {
+        "rates": [
+          65010,
+          61398,
+          70871
+        ],
+        "median": 65010
+      }
+    },
+    "blocking-2cpu": {
+      "baseline": {
+        "rates": [
+          91419,
+          90471,
+          93221
+        ],
+        "median": 91419
+      },
+      "candidate": {
+        "rates": [
+          91806,
+          90136,
+          89477
+        ],
+        "median": 90136
+      }
+    }
+  }
+}

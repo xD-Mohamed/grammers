@@ -1,0 +1,40 @@
+{
+  "method": "Real Git upload-pack clone (--no-local --no-hardlinks --single-branch), no alternates; exact staged file overlay. No commits created.",
+  "checkpoint": "5f0cb0511416e666b5476c078c0aaa86d9bce69e",
+  "candidate_index_tree": "2559b52a7004856d09e76f78ddef579ce3ff12fc",
+  "source_inputs_sha256": "94c015aac9c37cab1adb435deccca824363a29a043fbe529db05cba32d645b23",
+  "artifact_manifest_sha256": "ced0f6dc53ff9e1fdcfeead3c06b9021aefbe34948b14d8af7abfa90f3037fc5",
+  "results": {
+    "main": {
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "log": "opus2-portability-main.log"
+    },
+    "wrong-branch": {
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "log": "opus2-portability-wrong-branch.log"
+    },
+    "missing-upstream": {
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "log": "opus2-portability-missing-upstream.log"
+    },
+    "detached": {
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "log": "opus2-portability-detached.log"
+    },
+    "upstream": {
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "log": "opus2-portability-upstream.log"
+    }
+  },
+  "upstream_fetch": {
+    "remote": "https://codeberg.org/Lonami/grammers.git",
+    "tip": "1e31e73cd9797790905bbea82cd75adcbe6f1242",
+    "exit_code": 0
+  },
+  "candidate_unchanged_after_check": true
+}

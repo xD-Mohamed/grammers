@@ -51,6 +51,8 @@ static UPDATE_IDS: [u32; 9] = [
 
 struct DecodeBudget {
     authenticated: bool,
+    replay_floor: i64,
+    pending_received: Option<Vec<i64>>,
     limits: DecodeLimits,
     remaining: usize,
     work: usize,
@@ -60,6 +62,8 @@ impl DecodeBudget {
     fn new(limits: DecodeLimits) -> Self {
         Self {
             authenticated: false,
+            replay_floor: 0,
+            pending_received: None,
             limits,
             remaining: limits.expanded_bytes,
             work: limits.work,
@@ -111,6 +115,8 @@ pub struct Builder {
 pub struct Encrypted {
     // Allocated on use, bounded to 1024 server envelopes per session.
     received_ids: VecDeque<i64>,
+    // Highest ID actually evicted, not the smallest currently cached ID.
+    received_floor: i64,
     decode_limits: DecodeLimits,
     /// The Authorization Key to use to encrypt payload.
     auth_key: AuthKey,
@@ -153,6 +159,8 @@ pub struct Encrypted {
     /// acknowledgements are batched.
     pending_ack_since: Option<Instant>,
     ack_flush_due: bool,
+    // ACK insertion deferred a user request; give its next attempt priority.
+    request_deferred_by_ack: bool,
 
     /// Pending acknowledgements needed before they are attached to an
     /// outgoing message. 1 attaches them to every message.
@@ -212,8 +220,25 @@ impl Builder {
     /// Finishes the builder and returns the `MTProto` instance with all
     /// the configuration changes applied.
     pub fn finish(self, auth_key: [u8; 256]) -> Encrypted {
-        Encrypted {
+        self.try_finish(auth_key)
+            .expect("failed to generate a secure session_id")
+    }
+
+    /// Construct a session, returning an error if secure randomness is unavailable.
+    pub fn try_finish(self, auth_key: [u8; 256]) -> Result<Encrypted, getrandom::Error> {
+        self.finish_with_rng(auth_key, getrandom::fill)
+    }
+
+    fn finish_with_rng<E>(
+        self,
+        auth_key: [u8; 256],
+        fill: impl FnOnce(&mut [u8]) -> Result<(), E>,
+    ) -> Result<Encrypted, E> {
+        let mut session_id = [0; 8];
+        fill(&mut session_id)?;
+        Ok(Encrypted {
             received_ids: VecDeque::new(),
+            received_floor: 0,
             decode_limits: self.decode_limits,
             auth_key: AuthKey::from_bytes(auth_key),
             time_offset: i64::from(self.time_offset),
@@ -225,22 +250,19 @@ impl Builder {
             start_salt_time: None,
             salt_request_msg_id: None,
             salt_request_failures: 0,
-            session_id: {
-                let mut buffer = [0u8; 8];
-                getrandom::fill(&mut buffer).expect("failed to generate a secure session_id");
-                i64::from_le_bytes(buffer)
-            },
+            session_id: i64::from_le_bytes(session_id),
             sequence: 0,
             last_msg_id: 0,
             pending_ack: vec![],
             pending_ack_since: None,
             ack_flush_due: false,
+            request_deferred_by_ack: false,
             ack_batch: self.ack_batch,
             compression_threshold: self.compression_threshold,
             receive_updates: self.receive_updates,
             deserialization: Vec::new(),
             msg_count: 0,
-        }
+        })
     }
 }
 
@@ -325,9 +347,12 @@ impl Encrypted {
             .as_secs()
             .min(i64::MAX as u64) as i64;
 
-        let offset = (msg_id >> 32) - now;
-        if self.time_offset != offset {
-            self.time_offset = offset;
+        let server_seconds = msg_id >> 32;
+        self.time_offset = server_seconds - now;
+        // Integer-second estimates can move backwards with ordinary latency
+        // jitter. Preserve monotonic IDs unless a substantially fast clock
+        // would otherwise keep generating IDs the server cannot accept.
+        if (self.last_msg_id >> 32) > server_seconds + 3 {
             self.last_msg_id = 0;
         }
     }
@@ -539,9 +564,15 @@ impl Encrypted {
         }
         let mut budget = DecodeBudget::new(self.decode_limits);
         budget.authenticated = true;
+        budget.replay_floor = self.received_floor;
         if let Err(error) = self.process_bounded(message, &mut budget, 0, false) {
             self.deserialization.clear();
             return Err(error);
+        }
+        if let Some(ids) = budget.pending_received {
+            for id in ids {
+                self.remember_received(id);
+            }
         }
 
         // For simplicity, and to avoid passing too much stuff around (RPC results, updates),
@@ -572,7 +603,10 @@ impl Encrypted {
             }
             if (self.received_ids.back().is_some_and(|last| *last >= msg_id)
                 && self.received_ids.binary_search(&msg_id).is_ok())
-                || (self.received_ids.len() == 1024 && self.received_ids[0] > msg_id)
+                || budget
+                    .pending_received
+                    .as_ref()
+                    .is_some_and(|ids| ids.binary_search(&msg_id).is_ok())
             {
                 if message.requires_ack() {
                     self.queue_ack(msg_id)?;
@@ -580,6 +614,7 @@ impl Encrypted {
                 return Ok(());
             }
         }
+        let stale = budget.authenticated && msg_id <= budget.replay_floor;
         // Gzip replaces a body, not its authenticated envelope: acknowledge
         // once, and release the owned parent before descending to the next body.
         loop {
@@ -595,6 +630,21 @@ impl Encrypted {
             self.queue_ack(message.msg_id)?;
         }
 
+        let constructor = message.constructor_id()?;
+        if stale
+            && constructor != manual_tl::RpcResult::CONSTRUCTOR_ID
+            && constructor != manual_tl::MessageContainer::CONSTRUCTOR_ID
+            && constructor != tl::types::Pong::CONSTRUCTOR_ID
+            && constructor != tl::types::FutureSalts::CONSTRUCTOR_ID
+            && constructor != tl::types::BadMsgNotification::CONSTRUCTOR_ID
+            && constructor != tl::types::BadServerSalt::CONSTRUCTOR_ID
+        {
+            // Evicted replays and delayed messages are indistinguishable.
+            // Suppress service/update side effects, but let stale RPC results
+            // retire sent requests. Classify container children individually.
+            return Ok(());
+        }
+
         // Handle all the possible Service Messages:
         // * https://core.telegram.org/mtproto/service_messages
         // * https://core.telegram.org/mtproto/service_messages_about_messages
@@ -602,16 +652,20 @@ impl Encrypted {
         // The order of the `match` here is the same as the order in which the
         // items appear in the documentation (to make it easier to review).
         // TODO verify what needs ack and what doesn't
-        let result = match message.constructor_id()? {
+        let result = match constructor {
             // Response to an RPC query
-            manual_tl::RpcResult::CONSTRUCTOR_ID => self.handle_rpc_result(message, budget, depth),
+            manual_tl::RpcResult::CONSTRUCTOR_ID => {
+                self.handle_rpc_result(message, budget, depth, !stale)
+            }
 
             // Service Messages about Messages
             // Acknowledgment of Receipt
             tl::types::MsgsAck::CONSTRUCTOR_ID => self.handle_ack(message),
             // Notice of Ignored Error Message
             tl::types::BadMsgNotification::CONSTRUCTOR_ID
-            | tl::types::BadServerSalt::CONSTRUCTOR_ID => self.handle_bad_notification(message),
+            | tl::types::BadServerSalt::CONSTRUCTOR_ID => {
+                self.handle_bad_notification(message, !stale)
+            }
             // Request for Message Status Information
             tl::types::MsgsStateReq::CONSTRUCTOR_ID => self.handle_state_req(message),
             // Informational Message regarding Status of Messages
@@ -627,7 +681,7 @@ impl Encrypted {
 
             // Request for several future salts
             tl::types::FutureSalt::CONSTRUCTOR_ID => self.handle_future_salt(message),
-            tl::types::FutureSalts::CONSTRUCTOR_ID => self.handle_future_salts(message),
+            tl::types::FutureSalts::CONSTRUCTOR_ID => self.handle_future_salts(message, !stale),
             // Ping Messages (PING/PONG)
             tl::types::Pong::CONSTRUCTOR_ID => self.handle_pong(message),
             // Request to Destroy Session
@@ -653,19 +707,35 @@ impl Encrypted {
             tl::types::HttpWait::CONSTRUCTOR_ID => self.handle_http_wait(message),
             _ => self.handle_update(message),
         };
-        if result.is_ok() && budget.authenticated {
-            // Evict before inserting, otherwise VecDeque retains 2048 slots
-            // after momentarily reaching 1025 entries.
-            if self.received_ids.len() == 1024 {
-                self.received_ids.pop_front();
-            }
-            if self.received_ids.back().is_none_or(|id| *id < msg_id) {
-                self.received_ids.push_back(msg_id);
-            } else if let Err(index) = self.received_ids.binary_search(&msg_id) {
-                self.received_ids.insert(index, msg_id);
+        if result.is_ok() && budget.authenticated && !stale {
+            if let Some(ids) = &mut budget.pending_received {
+                if let Err(index) = ids.binary_search(&msg_id) {
+                    ids.insert(index, msg_id);
+                }
+            } else {
+                self.remember_received(msg_id);
             }
         }
         result
+    }
+
+    fn remember_received(&mut self, msg_id: i64) {
+        // Retain the highest 1024 IDs without temporarily growing the cache.
+        // A delayed lower ID is itself evicted, preserving a monotonic floor.
+        if self.received_ids.len() == 1024 {
+            let oldest = self.received_ids[0];
+            if msg_id < oldest {
+                self.received_floor = self.received_floor.max(msg_id);
+                return;
+            }
+            self.received_ids.pop_front();
+            self.received_floor = self.received_floor.max(oldest);
+        }
+        if self.received_ids.back().is_none_or(|id| *id < msg_id) {
+            self.received_ids.push_back(msg_id);
+        } else if let Err(index) = self.received_ids.binary_search(&msg_id) {
+            self.received_ids.insert(index, msg_id);
+        }
     }
 
     fn validate_header(message: &manual_tl::MessageView<'_>) -> Result<(), DeserializeError> {
@@ -675,6 +745,18 @@ impl Encrypted {
             });
         }
         Ok(())
+    }
+
+    fn fail_salt_request(&mut self, msg_id: MsgId) -> bool {
+        if self.salt_request_msg_id != Some(msg_id) {
+            return false;
+        }
+        self.salt_request_msg_id = None;
+        self.salt_request_failures = self.salt_request_failures.saturating_add(1);
+        if self.salt_request_failures == 4 {
+            warn!("disabling optional salt prefetch after repeated failure");
+        }
+        true
     }
 
     /// **[Response to an RPC query]**
@@ -764,6 +846,7 @@ impl Encrypted {
         message: manual_tl::MessageView<'_>,
         budget: &mut DecodeBudget,
         mut depth: usize,
+        emit_own_updates: bool,
     ) -> Result<(), DeserializeError> {
         let (req_msg_id, mut result) = match message.body {
             Cow::Borrowed(body) => {
@@ -789,6 +872,9 @@ impl Encrypted {
             {
                 Ok(body) => result = Cow::Owned(body),
                 Err(error) => {
+                    if self.fail_salt_request(msg_id) {
+                        return Ok(());
+                    }
                     self.deserialization
                         .push(Deserialization::Failure(DeserializationFailure {
                             msg_id,
@@ -805,6 +891,9 @@ impl Encrypted {
         let inner_constructor = match inner_constructor {
             Ok(x) => x,
             Err(e) => {
+                if self.fail_salt_request(msg_id) {
+                    return Ok(());
+                }
                 self.deserialization
                     .push(Deserialization::Failure(DeserializationFailure {
                         msg_id,
@@ -813,6 +902,28 @@ impl Encrypted {
                 return Ok(());
             }
         };
+
+        if self.salt_request_msg_id == Some(msg_id) {
+            let valid_salts = inner_constructor == tl::types::FutureSalts::CONSTRUCTOR_ID
+                && matches!(tl::enums::FutureSalts::from_bytes(&result),
+                    Ok(tl::enums::FutureSalts::Salts(ref salts))
+                        if salts.req_msg_id == req_msg_id
+                            && salts.salts.0.len() <= NUM_FUTURE_SALTS as usize
+                            && salts.salts.0.iter().all(|salt| salt.valid_since < salt.valid_until));
+            if valid_salts {
+                return self.handle_future_salts(
+                    manual_tl::MessageView {
+                        msg_id: message.msg_id,
+                        seq_no: message.seq_no,
+                        body: result,
+                    },
+                    emit_own_updates,
+                );
+            }
+            // Optional service failures must not retain a permanent in-flight marker.
+            self.fail_salt_request(msg_id);
+            return Ok(());
+        }
 
         match inner_constructor {
             // RPC Error
@@ -832,7 +943,9 @@ impl Encrypted {
             // rpc_drop_answer acknowledgements are results for that call,
             // not permission to discard the unrelated original request.
             _ => {
-                self.store_own_updates(msg_id, &result);
+                if emit_own_updates {
+                    self.store_own_updates(msg_id, &result);
+                }
                 self.deserialization
                     .push(Deserialization::RpcResult(RpcResult {
                         msg_id,
@@ -976,25 +1089,22 @@ impl Encrypted {
     fn handle_bad_notification(
         &mut self,
         message: manual_tl::MessageView<'_>,
+        apply_service_state: bool,
     ) -> Result<(), DeserializeError> {
         let bad_msg = tl::enums::BadMsgNotification::from_bytes(&message.body)?;
 
-        if self
-            .salt_request_msg_id
-            .is_some_and(|msg_id| msg_id == MsgId(bad_msg.bad_msg_id()))
-        {
-            // Response to internal request, do not propagate.
-            self.salt_request_msg_id = None;
-            self.salt_request_failures = self.salt_request_failures.saturating_add(1);
-            if self.salt_request_failures == 4 {
-                warn!("disabling optional salt prefetch after repeated rejection");
-            }
-        } else {
+        if !self.fail_salt_request(MsgId(bad_msg.bad_msg_id())) {
             self.deserialization
                 .push(Deserialization::BadMessage(super::BadMessage {
                     msg_id: MsgId(bad_msg.bad_msg_id()),
                     code: bad_msg.error_code(),
                 }));
+        }
+
+        if !apply_service_state {
+            // A delayed rejection still retires/retries its matching request,
+            // but must not roll back current salt, clock or sequence state.
+            return Ok(());
         }
 
         let bad_msg = match bad_msg {
@@ -1035,11 +1145,7 @@ impl Encrypted {
             33 => {
                 // Sent `seq_no` was too high (this error doesn't seem to occur).
                 // TODO start with a fresh session rather than guessing
-                self.sequence = self.sequence.checked_sub(16).filter(|n| *n >= 0).ok_or(
-                    DeserializeError::InvalidEnvelope {
-                        reason: "sequence underflow",
-                    },
-                )?;
+                self.sequence = self.sequence.saturating_sub(16).max(0);
             }
             _ => {
                 // Just notify about it.
@@ -1240,6 +1346,7 @@ impl Encrypted {
     fn handle_future_salts(
         &mut self,
         message: manual_tl::MessageView<'_>,
+        apply_service_state: bool,
     ) -> Result<(), DeserializeError> {
         let tl::enums::FutureSalts::Salts(salts) =
             tl::enums::FutureSalts::from_bytes(&message.body)?;
@@ -1251,10 +1358,8 @@ impl Encrypted {
             });
         }
 
-        if self
-            .salt_request_msg_id
-            .is_some_and(|msg_id| msg_id == MsgId(salts.req_msg_id))
-        {
+        let internal = self.salt_request_msg_id == Some(MsgId(salts.req_msg_id));
+        if internal {
             // Response to internal request, do not propagate.
             self.salt_request_msg_id = None;
         } else {
@@ -1265,6 +1370,14 @@ impl Encrypted {
                 }));
         }
 
+        if !apply_service_state || salts.salts.0.is_empty() {
+            // Empty or stale answers cannot replace current service state.
+            // Retire the request but bound repeated ineffective prefetches.
+            if internal {
+                self.salt_request_failures = self.salt_request_failures.saturating_add(1);
+            }
+            return Ok(());
+        }
         self.start_salt_time = Some((salts.now, Instant::now()));
         self.salt_request_failures = 0;
         self.salts = salts.salts.0;
@@ -1446,9 +1559,13 @@ impl Encrypted {
             .authenticated
             .then_some((message.msg_id, message.seq_no));
         // Prevalidate all envelopes once before any service-message side effect.
-        for inner_message in
-            manual_tl::MessageContainer::borrowed_messages_validated(&message.body, parent)?
-        {
+        let messages =
+            manual_tl::MessageContainer::borrowed_messages_validated(&message.body, parent)?;
+        if budget.authenticated {
+            // Keep the floor and cache membership stable throughout a packet.
+            budget.pending_received.get_or_insert_with(Vec::new);
+        }
+        for inner_message in messages {
             self.process_bounded(inner_message?, budget, depth + 1, true)?;
         }
 
@@ -1628,15 +1745,18 @@ impl Mtp for Encrypted {
             return None;
         }
 
-        // If we need to acknowledge messages, this notification goes in with the rest of requests
-        // so that we can also include it. It has priority over user requests because these should
-        // be sent out as soon as possible, unless batching defers it to a later message.
-        if self.ack_due() {
+        // ACKs normally go first. If that prevents a user request from fitting,
+        // give the next attempt priority so incoming traffic cannot starve it.
+        // Finalize can still append ACKs if they fit.
+        let previous_msg_count = self.msg_count;
+        if !self.request_deferred_by_ack && self.ack_due() {
             self.serialize_pending_ack(buffer);
         }
+        let wrote_ack = self.msg_count != previous_msg_count;
 
         // Serialize `MAXIMUM_LENGTH` requests at most.
         if self.msg_count == manual_tl::MessageContainer::MAXIMUM_LENGTH {
+            self.request_deferred_by_ack |= wrote_ack;
             return None;
         }
 
@@ -1663,6 +1783,7 @@ impl Mtp for Encrypted {
 
         if !self.message_fits(buffer, prefix.len() + body.len()) {
             // No more messages fit in this container.
+            self.request_deferred_by_ack |= wrote_ack;
             return None;
         }
 
@@ -1670,6 +1791,7 @@ impl Mtp for Encrypted {
         let msg_id = self.serialize_msg_header(buffer, prefix.len() + body.len(), true);
         buffer.extend(prefix);
         buffer.extend(body);
+        self.request_deferred_by_ack = false;
         Some(msg_id)
     }
 
@@ -1739,16 +1861,41 @@ mod tests {
     }
 
     fn plaintext(session: i64, id: i64, padding: usize) -> Vec<u8> {
+        plaintext_body(session, id, 1, test_rpc_body(4, &true.to_bytes()), padding)
+    }
+
+    fn plaintext_body(
+        session: i64,
+        id: i64,
+        seq_no: i32,
+        body: Vec<u8>,
+        padding: usize,
+    ) -> Vec<u8> {
         let mut data = 0i64.to_bytes();
         session.serialize(&mut data);
         manual_tl::Message {
             msg_id: id,
-            seq_no: 1,
-            body: test_rpc_body(4, &true.to_bytes()),
+            seq_no,
+            body,
         }
         .serialize(&mut data);
         data.resize(data.len() + padding, 0);
         data
+    }
+
+    #[test]
+    fn checked_builder_reports_rng_failure_without_panicking() {
+        assert!(matches!(
+            Encrypted::build().finish_with_rng(auth_key(), |_| Err(())),
+            Err(())
+        ));
+        let mtp = Encrypted::build()
+            .finish_with_rng(auth_key(), |bytes| {
+                bytes.fill(7);
+                Ok::<(), ()>(())
+            })
+            .unwrap();
+        assert_eq!(mtp.session_id, i64::from_le_bytes([7; 8]));
     }
 
     #[test]
@@ -1778,7 +1925,289 @@ mod tests {
         }
         assert_eq!(mtp.received_ids.len(), 1024);
         assert_eq!(mtp.received_ids.capacity(), 1024);
-        assert!(mtp.process_plaintext(&first).unwrap().is_empty());
+        let ack_count = mtp.pending_ack.len();
+        for id in [3, 5] {
+            let results = mtp.process_plaintext(&plaintext(session, id, 16)).unwrap();
+            assert!(matches!(
+                results.as_slice(),
+                [Deserialization::RpcResult(_)]
+            ));
+        }
+        assert_eq!(mtp.pending_ack.len(), ack_count + 2);
+        let retained_id = mtp.received_ids[0];
+        assert!(
+            mtp.process_plaintext(&plaintext(session, retained_id, 16))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(mtp.pending_ack.last(), Some(&retained_id));
+    }
+
+    fn container_body(messages: Vec<manual_tl::Message>) -> Vec<u8> {
+        let mut body = manual_tl::MessageContainer::CONSTRUCTOR_ID.to_bytes();
+        (messages.len() as i32).serialize(&mut body);
+        for message in messages {
+            message.serialize(&mut body);
+        }
+        body
+    }
+
+    #[test]
+    fn authenticated_out_of_order_and_inner_replays_deliver_only_once() {
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let session = mtp.session_id;
+        for id in [11, 3, 7] {
+            assert_eq!(
+                mtp.process_plaintext(&plaintext(session, id, 16))
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        assert_eq!(
+            mtp.received_ids.iter().copied().collect::<Vec<_>>(),
+            [3, 7, 11]
+        );
+        let body = container_body(
+            [11, 15, 15, 7]
+                .into_iter()
+                .map(|msg_id| manual_tl::Message {
+                    msg_id,
+                    seq_no: 1,
+                    body: test_rpc_body(msg_id * 4, &true.to_bytes()),
+                })
+                .collect(),
+        );
+        let results = mtp
+            .process_plaintext(&plaintext_body(session, 19, 2, body, 16))
+            .unwrap();
+        assert!(matches!(
+            results.as_slice(),
+            [Deserialization::RpcResult(r)] if r.msg_id == MsgId(60)
+        ));
+        assert_eq!(
+            mtp.received_ids.iter().copied().collect::<Vec<_>>(),
+            [3, 7, 11, 15, 19]
+        );
+        assert_eq!(mtp.pending_ack, [11, 3, 7, 11, 15, 15, 7]);
+        assert!(
+            mtp.process_plaintext(&plaintext(session, 15, 16))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn authenticated_inner_reply_before_cache_minimum_is_not_assumed_stale() {
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let session = mtp.session_id;
+        for index in 0..1024 {
+            mtp.process_plaintext(&plaintext(session, index * 4 + 7, 16))
+                .unwrap();
+        }
+        let ack_count = mtp.pending_ack.len();
+        let body = container_body(vec![manual_tl::Message {
+            msg_id: 3,
+            seq_no: 1,
+            body: test_rpc_body(4, &true.to_bytes()),
+        }]);
+        assert_eq!(mtp.received_floor, 0);
+        let results = mtp
+            .process_plaintext(&plaintext_body(session, 4103, 2, body, 16))
+            .unwrap();
+        assert!(matches!(
+            results.as_slice(),
+            [Deserialization::RpcResult(_)]
+        ));
+        assert_eq!(mtp.pending_ack.len(), ack_count + 1);
+        assert!(mtp.received_ids.contains(&4103));
+        assert!(mtp.deserialization.is_empty());
+    }
+
+    fn replay_updates() -> Vec<u8> {
+        tl::enums::Updates::Updates(tl::types::Updates {
+            updates: vec![],
+            users: vec![],
+            chats: vec![],
+            date: 100,
+            seq: 1,
+        })
+        .to_bytes()
+    }
+
+    fn fill_replay_cache(mtp: &mut Encrypted, count: i64) {
+        for index in 0..count {
+            mtp.process_plaintext(&plaintext(mtp.session_id, index * 4 + 11, 16))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn container_replay_classification_is_independent_of_sibling_order() {
+        for older_id in [9, 11] {
+            for reverse in [false, true] {
+                let mut mtp = Encrypted::build().finish(auth_key());
+                fill_replay_cache(&mut mtp, 1024);
+                assert_eq!(mtp.received_floor, 0);
+                let mut ids = [5003, older_id];
+                if reverse {
+                    ids.reverse();
+                }
+                let update = replay_updates();
+                let body = container_body(
+                    ids.into_iter()
+                        .map(|msg_id| manual_tl::Message {
+                            msg_id,
+                            seq_no: 1,
+                            body: test_rpc_body(msg_id * 4, &update),
+                        })
+                        .collect(),
+                );
+                let packet = plaintext_body(mtp.session_id, 6003, 2, body, 16);
+                let results = mtp.process_plaintext(&packet).unwrap();
+                let expected = if older_id == 9 { 2 } else { 1 };
+                assert_eq!(
+                    results
+                        .iter()
+                        .filter(|r| matches!(r, Deserialization::OwnUpdate { .. }))
+                        .count(),
+                    expected
+                );
+                assert_eq!(
+                    results
+                        .iter()
+                        .filter(|r| matches!(r, Deserialization::RpcResult(_)))
+                        .count(),
+                    expected
+                );
+                assert_eq!(mtp.received_floor, 15);
+                assert_eq!(mtp.received_ids.len(), 1024);
+            }
+        }
+    }
+
+    #[test]
+    fn stale_rpc_siblings_complete_without_replaying_own_updates() {
+        for stale_error in [false, true] {
+            for reverse in [false, true] {
+                let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
+                fill_replay_cache(&mut mtp, 1026);
+                assert_eq!(mtp.received_floor, 15);
+                let update = replay_updates();
+                let error = tl::enums::RpcError::Error(tl::types::RpcError {
+                    error_code: 400,
+                    error_message: "STALE_TEST".into(),
+                })
+                .to_bytes();
+                let stale_payload = if stale_error { &error } else { &update };
+                let stale_rpc =
+                    test_rpc_body(8, &manual_tl::GzipPacked::new(stale_payload).to_bytes());
+                let mut children = vec![
+                    manual_tl::Message {
+                        msg_id: 5003,
+                        seq_no: 1,
+                        body: test_rpc_body(4, &update),
+                    },
+                    manual_tl::Message {
+                        msg_id: 9,
+                        seq_no: 1,
+                        body: manual_tl::GzipPacked::new(&stale_rpc).to_bytes(),
+                    },
+                ];
+                if reverse {
+                    children.reverse();
+                }
+                let packet = plaintext_body(mtp.session_id, 6003, 2, container_body(children), 16);
+                let results = mtp.process_plaintext(&packet).unwrap();
+                assert_eq!(results.len(), 3);
+                assert!(results.iter().any(
+                    |r| matches!(r, Deserialization::OwnUpdate { msg_id, update: body }
+                    if *msg_id == MsgId(4) && *body == update)
+                ));
+                assert!(!results.iter().any(|r| matches!(r, Deserialization::OwnUpdate { msg_id, .. } if *msg_id == MsgId(8))));
+                assert!(results.iter().any(|r| matches!(r, Deserialization::RpcResult(r) if r.msg_id == MsgId(4) && r.body == update)));
+                if stale_error {
+                    assert!(results.iter().any(|r| matches!(r, Deserialization::RpcError(r) if r.msg_id == MsgId(8) && r.error.error_code == 400)));
+                } else {
+                    assert!(results.iter().any(|r| matches!(r, Deserialization::RpcResult(r) if r.msg_id == MsgId(8) && r.body == update)));
+                }
+                let push = plaintext_body(mtp.session_id, 5, 1, update.clone(), 16);
+                assert!(mtp.process_plaintext(&push).unwrap().is_empty());
+                let salt = tl::enums::BadMsgNotification::BadServerSalt(tl::types::BadServerSalt {
+                    bad_msg_id: 4,
+                    bad_msg_seqno: 1,
+                    error_code: 48,
+                    new_server_salt: 888,
+                })
+                .to_bytes();
+                let packet = plaintext_body(mtp.session_id, 7, 1, salt, 16);
+                assert!(matches!(mtp.process_plaintext(&packet).unwrap().as_slice(),
+                    [Deserialization::BadMessage(bad)] if bad.msg_id == MsgId(4) && bad.code == 48));
+                assert_eq!(mtp.get_current_salt(), 999);
+                let body = container_body(vec![manual_tl::Message {
+                    msg_id: 9,
+                    seq_no: 1,
+                    body: test_rpc_body(12, &update),
+                }]);
+                let packet = plaintext_body(mtp.session_id, 13, 2, body, 16);
+                let results = mtp.process_plaintext(&packet).unwrap();
+                assert!(
+                    matches!(results.as_slice(), [Deserialization::RpcResult(r)] if r.msg_id == MsgId(12) && r.body == update)
+                );
+                assert!(mtp.pending_ack.ends_with(&[5, 7, 9]));
+            }
+        }
+    }
+
+    #[test]
+    fn maximum_inbound_container_preserves_all_results_and_bounds_replay_cache() {
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let body = container_body(
+            (0..1024)
+                .map(|index| manual_tl::Message {
+                    msg_id: index * 4 + 3,
+                    seq_no: 1,
+                    body: test_rpc_body(index * 4, &true.to_bytes()),
+                })
+                .collect(),
+        );
+        let packet = plaintext_body(mtp.session_id, 4099, 2, body, 16);
+        let results = mtp.process_plaintext(&packet).unwrap();
+        assert_eq!(results.len(), 1024);
+        for (index, result) in results.iter().enumerate() {
+            assert!(
+                matches!(result, Deserialization::RpcResult(r) if r.msg_id == MsgId(index as i64 * 4))
+            );
+        }
+        assert_eq!(mtp.pending_ack.len(), 1024);
+        assert_eq!(mtp.received_ids.len(), 1024);
+        assert_eq!(mtp.received_ids.capacity(), 1024);
+        assert_eq!(mtp.received_floor, 3);
+        assert!(mtp.received_ids.contains(&4099));
+    }
+
+    #[test]
+    fn failed_container_does_not_commit_partial_replay_history() {
+        let mut mtp = Encrypted::build().finish(auth_key());
+        fill_replay_cache(&mut mtp, 1024);
+        let before = mtp.received_ids.clone();
+        let body = container_body(vec![
+            manual_tl::Message {
+                msg_id: 5003,
+                seq_no: 1,
+                body: test_rpc_body(4, &true.to_bytes()),
+            },
+            manual_tl::Message {
+                msg_id: 5007,
+                seq_no: 1,
+                body: manual_tl::MessageCopy::CONSTRUCTOR_ID.to_bytes(),
+            },
+        ]);
+        let packet = plaintext_body(mtp.session_id, 6003, 2, body, 16);
+        assert!(mtp.process_plaintext(&packet).is_err());
+        assert!(mtp.deserialization.is_empty());
+        assert_eq!(mtp.received_ids, before);
+        assert_eq!(mtp.received_floor, 0);
     }
 
     #[test]
@@ -1832,6 +2261,58 @@ mod tests {
         assert_eq!(corrected >> 32, server_id >> 32);
         mtp.correct_time_offset(i64::MAX);
         assert!(mtp.get_new_msg_id() > 0);
+    }
+
+    #[test]
+    fn time_offset_jitter_preserves_monotonic_message_ids() {
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let mut previous = mtp.get_new_msg_id();
+        let seconds = previous >> 32;
+        for delta in [-1, 0, -2, 1, -1, 0] {
+            mtp.correct_time_offset(((seconds + delta) << 32) | 1);
+            assert_eq!(mtp.last_msg_id, previous);
+            let next = mtp.get_new_msg_id();
+            assert!(next > previous);
+            previous = next;
+        }
+    }
+
+    #[test]
+    fn high_sequence_rejection_preserves_valid_sibling_results() {
+        for sequence in 0..16 {
+            for reverse in [false, true] {
+                let mut mtp = Encrypted::build().first_salt(123).finish(auth_key());
+                mtp.sequence = sequence;
+                let rejection =
+                    tl::enums::BadMsgNotification::Notification(tl::types::BadMsgNotification {
+                        bad_msg_id: 4,
+                        bad_msg_seqno: sequence,
+                        error_code: 33,
+                    })
+                    .to_bytes();
+                let mut children = vec![
+                    manual_tl::Message {
+                        msg_id: 3,
+                        seq_no: 0,
+                        body: rejection,
+                    },
+                    manual_tl::Message {
+                        msg_id: 7,
+                        seq_no: 0,
+                        body: test_rpc_body(8, &true.to_bytes()),
+                    },
+                ];
+                if reverse {
+                    children.reverse();
+                }
+                let packet = plaintext_body(mtp.session_id, 9, 0, container_body(children), 16);
+                let results = mtp.process_plaintext(&packet).unwrap();
+                assert_eq!(mtp.sequence, 0);
+                assert_eq!(results.len(), 2);
+                assert!(results.iter().any(|r| matches!(r, Deserialization::BadMessage(b) if b.msg_id == MsgId(4) && b.code == 33)));
+                assert!(results.iter().any(|r| matches!(r, Deserialization::RpcResult(r) if r.msg_id == MsgId(8) && r.body == true.to_bytes())));
+            }
+        }
     }
 
     #[test]
@@ -2057,6 +2538,594 @@ mod tests {
             }),
             Err(DeserializeError::InvalidEnvelope { .. })
         ));
+    }
+
+    fn future_salts_body(req_msg_id: i64, salts: Vec<tl::types::FutureSalt>) -> Vec<u8> {
+        tl::enums::FutureSalts::Salts(tl::types::FutureSalts {
+            req_msg_id,
+            now: 100,
+            salts: tl::RawVec(salts),
+        })
+        .to_bytes()
+    }
+
+    #[test]
+    fn stale_direct_pong_remains_an_rpc_completion() {
+        for compressed in [false, true] {
+            let mut mtp = Encrypted::build().finish(auth_key());
+            fill_replay_cache(&mut mtp, 1026);
+            let ack_count = mtp.pending_ack.len();
+            let body = tl::enums::Pong::Pong(tl::types::Pong {
+                msg_id: 12,
+                ping_id: 34,
+            })
+            .to_bytes();
+            let wire_body = if compressed {
+                manual_tl::GzipPacked::new(&body).to_bytes()
+            } else {
+                body.clone()
+            };
+            let packet = plaintext_body(mtp.session_id, 9, 0, wire_body, 16);
+            let results = mtp.process_plaintext(&packet).unwrap();
+            assert!(
+                matches!(results.as_slice(), [Deserialization::RpcResult(r)] if r.msg_id == MsgId(12) && r.body == body)
+            );
+            assert_eq!(mtp.pending_ack.len(), ack_count);
+            assert_eq!(mtp.received_floor, 15);
+            assert!(!mtp.received_ids.contains(&9));
+        }
+    }
+
+    #[test]
+    fn stale_external_future_salts_complete_without_changing_service_state() {
+        for compressed in [false, true] {
+            let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
+            fill_replay_cache(&mut mtp, 1026);
+            let start = (90, Instant::now());
+            mtp.start_salt_time = Some(start);
+            mtp.salt_request_msg_id = Some(MsgId(4));
+            mtp.salt_request_failures = 3;
+            let ack_count = mtp.pending_ack.len();
+            let body = future_salts_body(
+                12,
+                vec![tl::types::FutureSalt {
+                    valid_since: 100,
+                    valid_until: 200,
+                    salt: 777,
+                }],
+            );
+            let wire_body = if compressed {
+                manual_tl::GzipPacked::new(&body).to_bytes()
+            } else {
+                body.clone()
+            };
+            let packet = plaintext_body(mtp.session_id, 9, 0, wire_body, 16);
+            let results = mtp.process_plaintext(&packet).unwrap();
+            assert!(
+                matches!(results.as_slice(), [Deserialization::RpcResult(r)] if r.msg_id == MsgId(12) && r.body == body)
+            );
+            assert_eq!(mtp.salt_request_msg_id, Some(MsgId(4)));
+            assert_eq!(mtp.salt_request_failures, 3);
+            assert_eq!(mtp.start_salt_time, Some(start));
+            assert_eq!(mtp.salts.len(), 1);
+            assert_eq!(mtp.get_current_salt(), 999);
+            assert_eq!(mtp.pending_ack.len(), ack_count);
+            assert_eq!(mtp.received_floor, 15);
+        }
+    }
+
+    #[test]
+    fn stale_internal_future_salts_retire_prefetch_without_installing_salts() {
+        for empty in [false, true] {
+            for failures in [0u8, 3, u8::MAX] {
+                let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
+                fill_replay_cache(&mut mtp, 1026);
+                let start = (90, Instant::now());
+                mtp.start_salt_time = Some(start);
+                mtp.salt_request_msg_id = Some(MsgId(4));
+                mtp.salt_request_failures = failures;
+                let salts = if empty {
+                    vec![]
+                } else {
+                    vec![tl::types::FutureSalt {
+                        valid_since: 100,
+                        valid_until: 200,
+                        salt: 777,
+                    }]
+                };
+                let packet = plaintext_body(mtp.session_id, 9, 0, future_salts_body(4, salts), 16);
+                assert!(mtp.process_plaintext(&packet).unwrap().is_empty());
+                assert_eq!(mtp.salt_request_msg_id, None);
+                assert_eq!(mtp.salt_request_failures, failures.saturating_add(1));
+                assert_eq!(mtp.start_salt_time, Some(start));
+                assert_eq!(mtp.salts.len(), 1);
+                assert_eq!(mtp.get_current_salt(), 999);
+                if failures >= 3 {
+                    let mut buffer = DequeBuffer::with_capacity(0, 0);
+                    assert!(mtp.push(&mut buffer, REQUEST).is_some());
+                    assert_eq!(mtp.salt_request_msg_id, None);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stale_future_salts_are_validated_before_internal_retirement() {
+        let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
+        fill_replay_cache(&mut mtp, 1026);
+        let start = (90, Instant::now());
+        mtp.start_salt_time = Some(start);
+        mtp.salt_request_msg_id = Some(MsgId(4));
+        mtp.salt_request_failures = 3;
+        let body = future_salts_body(
+            4,
+            vec![tl::types::FutureSalt {
+                valid_since: 100,
+                valid_until: 100,
+                salt: 777,
+            }],
+        );
+        let packet = plaintext_body(mtp.session_id, 9, 0, body, 16);
+        assert!(matches!(
+            mtp.process_plaintext(&packet),
+            Err(DeserializeError::InvalidEnvelope {
+                reason: "invalid future salts"
+            })
+        ));
+        assert_eq!(mtp.salt_request_msg_id, Some(MsgId(4)));
+        assert_eq!(mtp.salt_request_failures, 3);
+        assert_eq!(mtp.start_salt_time, Some(start));
+        assert_eq!(mtp.get_current_salt(), 999);
+        assert!(mtp.deserialization.is_empty());
+    }
+
+    #[test]
+    fn stale_rejections_preserve_service_state_and_retire_internal_requests() {
+        for code in [16, 17, 32, 33, 48] {
+            for internal in [false, true] {
+                let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
+                fill_replay_cache(&mut mtp, 1026);
+                mtp.time_offset = 123;
+                mtp.sequence = 42;
+                mtp.last_msg_id = 1000;
+                mtp.salt_request_msg_id = Some(MsgId(if internal { 4 } else { 8 }));
+                let bad = if code == 48 {
+                    tl::enums::BadMsgNotification::BadServerSalt(tl::types::BadServerSalt {
+                        bad_msg_id: 4,
+                        bad_msg_seqno: 1,
+                        error_code: code,
+                        new_server_salt: 777,
+                    })
+                } else {
+                    tl::enums::BadMsgNotification::Notification(tl::types::BadMsgNotification {
+                        bad_msg_id: 4,
+                        bad_msg_seqno: 1,
+                        error_code: code,
+                    })
+                };
+                let packet = plaintext_body(mtp.session_id, 9, 0, bad.to_bytes(), 16);
+                let results = mtp.process_plaintext(&packet).unwrap();
+                if internal {
+                    assert!(results.is_empty());
+                    assert_eq!(mtp.salt_request_msg_id, None);
+                    assert_eq!(mtp.salt_request_failures, 1);
+                } else {
+                    assert!(
+                        matches!(results.as_slice(), [Deserialization::BadMessage(bad)] if bad.msg_id == MsgId(4) && bad.code == code)
+                    );
+                    assert_eq!(mtp.salt_request_msg_id, Some(MsgId(8)));
+                }
+                assert_eq!(mtp.time_offset, 123);
+                assert_eq!(mtp.sequence, 42);
+                assert_eq!(mtp.last_msg_id, 1000);
+                assert_eq!(mtp.get_current_salt(), 999);
+            }
+        }
+    }
+
+    #[test]
+    fn authenticated_future_salts_handles_internal_external_and_empty_replies() {
+        for req_msg_id in [4, 8] {
+            for count in [0, 3, NUM_FUTURE_SALTS] {
+                let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
+                mtp.salt_request_msg_id = Some(MsgId(4));
+                mtp.salt_request_failures = 3;
+                let before_start = (90, Instant::now());
+                mtp.start_salt_time = Some(before_start);
+                let body = future_salts_body(
+                    req_msg_id,
+                    (0..count)
+                        .map(|index| tl::types::FutureSalt {
+                            valid_since: index * 10,
+                            valid_until: index * 10 + 1000,
+                            salt: i64::from(index) + 1000,
+                        })
+                        .collect(),
+                );
+                let packet = plaintext_body(mtp.session_id, 7, 0, body.clone(), 16);
+                let results = mtp.process_plaintext(&packet).unwrap();
+                if req_msg_id == 4 {
+                    assert!(results.is_empty());
+                    assert_eq!(mtp.salt_request_msg_id, None);
+                } else {
+                    assert!(
+                        matches!(results.as_slice(), [Deserialization::RpcResult(r)] if r.msg_id == MsgId(req_msg_id) && r.body == body)
+                    );
+                    assert_eq!(mtp.salt_request_msg_id, Some(MsgId(4)));
+                }
+                if count == 0 {
+                    assert_eq!(
+                        mtp.salt_request_failures,
+                        if req_msg_id == 4 { 4 } else { 3 }
+                    );
+                    assert_eq!(mtp.start_salt_time, Some(before_start));
+                    assert_eq!(mtp.salts.len(), 1);
+                    assert_eq!(mtp.get_current_salt(), 999);
+                } else {
+                    assert_eq!(mtp.salt_request_failures, 0);
+                    assert_eq!(mtp.start_salt_time.unwrap().0, 100);
+                    assert_eq!(mtp.salts.len(), count as usize);
+                    assert_eq!(
+                        mtp.salts.iter().map(|s| s.valid_since).collect::<Vec<_>>(),
+                        (0..count).rev().map(|index| index * 10).collect::<Vec<_>>()
+                    );
+                    assert_eq!(mtp.get_current_salt(), 1000);
+                }
+                assert!(mtp.pending_ack.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn wrapped_salt_prefetch_failures_are_bounded_without_phantom_results() {
+        for kind in 0..7 {
+            for compressed in [false, true] {
+                let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
+                let mut buffer = DequeBuffer::with_capacity(0, 0);
+                for index in 0..4 {
+                    assert!(mtp.push(&mut buffer, REQUEST).is_none());
+                    let request_id = mtp.salt_request_msg_id.unwrap();
+                    mtp.finalize_plain(&mut buffer);
+                    buffer.clear();
+                    let mut result = match kind {
+                        0 => tl::enums::RpcError::Error(tl::types::RpcError {
+                            error_code: 500,
+                            error_message: "INTERNAL".into(),
+                        })
+                        .to_bytes(),
+                        1 => true.to_bytes(),
+                        2 => vec![],
+                        3 => future_salts_body(request_id.0 + 4, vec![]),
+                        4 => future_salts_body(request_id.0, vec![]),
+                        5 => future_salts_body(
+                            request_id.0,
+                            vec![tl::types::FutureSalt {
+                                valid_since: 100,
+                                valid_until: 100,
+                                salt: 456,
+                            }],
+                        ),
+                        _ => GZIP_PACKED_HEADER.to_vec(),
+                    };
+                    if compressed {
+                        result = manual_tl::GzipPacked::new(&result).to_bytes();
+                    }
+                    let packet = plaintext_body(
+                        mtp.session_id,
+                        index * 4 + 3,
+                        0,
+                        test_rpc_body(request_id.0, &result),
+                        16,
+                    );
+                    assert!(
+                        mtp.process_plaintext(&packet).unwrap().is_empty(),
+                        "kind {kind}, compressed {compressed}"
+                    );
+                    assert_eq!(mtp.salt_request_msg_id, None);
+                    assert_eq!(mtp.salt_request_failures, index as u8 + 1);
+                    assert_eq!(mtp.get_current_salt(), 999);
+                }
+                assert!(mtp.push(&mut buffer, REQUEST).is_some());
+                assert_eq!(mtp.salt_request_msg_id, None);
+            }
+        }
+    }
+
+    #[test]
+    fn wrapped_salt_prefetch_success_and_stale_reply_follow_direct_semantics() {
+        for stale in [false, true] {
+            for compressed in [false, true] {
+                let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
+                if stale {
+                    fill_replay_cache(&mut mtp, 1025);
+                }
+                mtp.salt_request_msg_id = Some(MsgId(4));
+                let mut result = future_salts_body(
+                    4,
+                    vec![tl::types::FutureSalt {
+                        valid_since: 0,
+                        valid_until: i32::MAX,
+                        salt: 456,
+                    }],
+                );
+                if compressed {
+                    result = manual_tl::GzipPacked::new(&result).to_bytes();
+                }
+                let packet = plaintext_body(mtp.session_id, 7, 0, test_rpc_body(4, &result), 16);
+                assert!(mtp.process_plaintext(&packet).unwrap().is_empty());
+                assert_eq!(mtp.salt_request_msg_id, None);
+                assert_eq!(mtp.get_current_salt(), if stale { 999 } else { 456 });
+                assert_eq!(mtp.salt_request_failures, u8::from(stale));
+            }
+        }
+    }
+
+    #[test]
+    fn empty_salt_prefetch_replies_preserve_salt_and_eventually_allow_user_request() {
+        let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
+        let mut buffer = DequeBuffer::with_capacity(0, 0);
+        for index in 0..4 {
+            assert!(mtp.push(&mut buffer, REQUEST).is_none());
+            let request_id = mtp.salt_request_msg_id.unwrap();
+            mtp.finalize_plain(&mut buffer);
+            buffer.clear();
+            let body = future_salts_body(request_id.0, vec![]);
+            let packet = plaintext_body(mtp.session_id, index * 4 + 3, 0, body, 16);
+            assert!(mtp.process_plaintext(&packet).unwrap().is_empty());
+            assert_eq!(mtp.get_current_salt(), 999);
+        }
+        assert_eq!(mtp.salt_request_failures, 4);
+        assert!(mtp.push(&mut buffer, REQUEST).is_some());
+        assert_eq!(mtp.salt_request_msg_id, None);
+        assert_eq!(mtp.get_current_salt(), 999);
+    }
+
+    #[test]
+    fn corrected_clock_resets_floor_only_beyond_three_seconds() {
+        let seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        for ahead in [2, 3, 4] {
+            let mut mtp = Encrypted::build().finish(auth_key());
+            let previous = ((seconds + ahead) << 32) | 0xffff_fffc;
+            mtp.last_msg_id = previous;
+            mtp.correct_time_offset((seconds << 32) | 1);
+            if ahead <= 3 {
+                assert_eq!(mtp.last_msg_id, previous);
+                assert!(mtp.get_new_msg_id() > previous);
+            } else {
+                assert_eq!(mtp.last_msg_id, 0);
+                assert!(mtp.get_new_msg_id() < previous);
+            }
+        }
+    }
+
+    #[test]
+    fn continuous_ack_demand_does_not_starve_maximum_user_requests() {
+        for receive_updates in [false, true] {
+            let mut mtp = Encrypted::build()
+                .receive_updates(receive_updates)
+                .compression_threshold(None)
+                .finish(auth_key());
+            let prefix = if receive_updates { 0 } else { 4 };
+            let mut request = vec![
+                0;
+                manual_tl::MessageContainer::MAXIMUM_SIZE
+                    - manual_tl::Message::SIZE_OVERHEAD
+                    - prefix
+            ];
+            request[..4]
+                .copy_from_slice(&tl::functions::help::GetConfig::CONSTRUCTOR_ID.to_le_bytes());
+            let mut buffer = DequeBuffer::with_capacity(0, 0);
+            for round in 0..3 {
+                mtp.queue_ack(round * 4 + 7).unwrap();
+                assert!(mtp.push(&mut buffer, &request).is_none());
+                assert!(mtp.request_deferred_by_ack);
+                mtp.finalize(&mut buffer).unwrap();
+                buffer.clear();
+                mtp.queue_ack(round * 4 + 9).unwrap();
+                let deadline = mtp.pending_ack_since;
+                assert!(mtp.push(&mut buffer, &request).is_some());
+                assert!(!mtp.request_deferred_by_ack);
+                assert_eq!(buffer.len(), manual_tl::MessageContainer::MAXIMUM_SIZE);
+                mtp.finalize(&mut buffer).unwrap();
+                assert_eq!(mtp.pending_ack, [round * 4 + 9]);
+                assert_eq!(mtp.pending_ack_since, deadline);
+                buffer.clear();
+            }
+            mtp.serialize_pending_ack(&mut buffer);
+            assert!(mtp.pending_ack.is_empty());
+        }
+    }
+
+    #[test]
+    fn authenticated_invalid_future_salts_preserve_service_state() {
+        let invalid = DeserializeError::InvalidEnvelope {
+            reason: "invalid future salts",
+        };
+        let mut cases = vec![(
+            future_salts_body(
+                4,
+                (0..=NUM_FUTURE_SALTS)
+                    .map(|_| tl::types::FutureSalt {
+                        valid_since: 0,
+                        valid_until: 1000,
+                        salt: 1,
+                    })
+                    .collect(),
+            ),
+            invalid.clone(),
+        )];
+        for valid_since in [100, 101] {
+            cases.push((
+                future_salts_body(
+                    4,
+                    vec![tl::types::FutureSalt {
+                        valid_since,
+                        valid_until: 100,
+                        salt: 1,
+                    }],
+                ),
+                invalid.clone(),
+            ));
+        }
+        let mut truncated = future_salts_body(
+            4,
+            vec![tl::types::FutureSalt {
+                valid_since: 0,
+                valid_until: 1000,
+                salt: 1,
+            }],
+        );
+        truncated.truncate(truncated.len() - 4);
+        cases.push((truncated, DeserializeError::MessageBufferTooSmall));
+        let mut scalar = tl::types::FutureSalt::CONSTRUCTOR_ID.to_bytes();
+        0i32.serialize(&mut scalar);
+        1000i32.serialize(&mut scalar);
+        1i64.serialize(&mut scalar);
+        cases.push((
+            scalar,
+            DeserializeError::InvalidEnvelope {
+                reason: "unsolicited future_salt",
+            },
+        ));
+        for (body, expected) in cases {
+            let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
+            mtp.salt_request_msg_id = Some(MsgId(4));
+            mtp.salt_request_failures = 2;
+            let start = (90, Instant::now());
+            mtp.start_salt_time = Some(start);
+            let packet = plaintext_body(mtp.session_id, 7, 0, body, 16);
+            assert_eq!(mtp.process_plaintext(&packet).err(), Some(expected));
+            assert_eq!(mtp.salt_request_msg_id, Some(MsgId(4)));
+            assert_eq!(mtp.salt_request_failures, 2);
+            assert_eq!(mtp.start_salt_time, Some(start));
+            assert_eq!(mtp.salts.len(), 1);
+            assert_eq!(mtp.get_current_salt(), 999);
+            assert!(mtp.deserialization.is_empty());
+            assert!(mtp.received_ids.is_empty());
+            assert!(mtp.pending_ack.is_empty());
+        }
+    }
+
+    #[test]
+    fn authenticated_sibling_rpc_gzip_shares_expansion_budget() {
+        let payload = [0; 128];
+        let packed = manual_tl::GzipPacked::new(&payload).to_bytes();
+        for expanded_bytes in [192, 256] {
+            let mut mtp = Encrypted::build()
+                .decode_limits(DecodeLimits {
+                    gzip_output: payload.len(),
+                    expanded_bytes,
+                    ..Default::default()
+                })
+                .finish(auth_key());
+            let body = container_body(
+                [(3, 4), (7, 8)]
+                    .into_iter()
+                    .map(|(msg_id, req_msg_id)| manual_tl::Message {
+                        msg_id,
+                        seq_no: 1,
+                        body: test_rpc_body(req_msg_id, &packed),
+                    })
+                    .collect(),
+            );
+            let packet = plaintext_body(mtp.session_id, 11, 2, body, 16);
+            let results = mtp.process_plaintext(&packet).unwrap();
+            assert_eq!(results.len(), 2);
+            assert!(
+                matches!(&results[0], Deserialization::RpcResult(r) if r.msg_id == MsgId(4) && r.body == payload)
+            );
+            if expanded_bytes == 256 {
+                assert!(
+                    matches!(&results[1], Deserialization::RpcResult(r) if r.msg_id == MsgId(8) && r.body == payload)
+                );
+            } else {
+                assert!(
+                    matches!(&results[1], Deserialization::Failure(f) if f.msg_id == MsgId(8) && matches!(f.error, DeserializeError::ResourceLimit { .. }))
+                );
+            }
+            assert_eq!(mtp.pending_ack, [3, 7]);
+            let next = plaintext_body(mtp.session_id, 15, 1, test_rpc_body(12, &packed), 16);
+            let results = mtp.process_plaintext(&next).unwrap();
+            assert!(
+                matches!(results.as_slice(), [Deserialization::RpcResult(r)] if r.msg_id == MsgId(12) && r.body == payload)
+            );
+        }
+    }
+
+    #[test]
+    fn authenticated_failed_gzip_crc_charges_sibling_budget() {
+        let mut bad = manual_tl::GzipPacked::new(&[0; 128]);
+        let crc = bad.packed_data.len() - 8;
+        bad.packed_data[crc] ^= 1;
+        let good = manual_tl::GzipPacked::new(&[0; 128]).to_bytes();
+        let mut mtp = Encrypted::build()
+            .decode_limits(DecodeLimits {
+                gzip_output: 128,
+                expanded_bytes: 192,
+                ..Default::default()
+            })
+            .finish(auth_key());
+        let body = container_body(vec![
+            manual_tl::Message {
+                msg_id: 3,
+                seq_no: 1,
+                body: test_rpc_body(4, &bad.to_bytes()),
+            },
+            manual_tl::Message {
+                msg_id: 7,
+                seq_no: 1,
+                body: test_rpc_body(8, &good),
+            },
+        ]);
+        let packet = plaintext_body(mtp.session_id, 11, 2, body, 16);
+        let results = mtp.process_plaintext(&packet).unwrap();
+        assert!(
+            matches!(results.as_slice(), [Deserialization::Failure(first), Deserialization::Failure(second)]
+            if first.msg_id == MsgId(4) && first.error == DeserializeError::DecompressionFailed && second.msg_id == MsgId(8)
+            && matches!(second.error, DeserializeError::ResourceLimit { .. }))
+        );
+        assert_eq!(mtp.pending_ack, [3, 7]);
+    }
+
+    #[test]
+    fn authenticated_sibling_gzip_wrappers_share_expansion_budget() {
+        for expanded_bytes in [24, 32] {
+            let mut mtp = Encrypted::build()
+                .decode_limits(DecodeLimits {
+                    gzip_output: 16,
+                    expanded_bytes,
+                    ..Default::default()
+                })
+                .finish(auth_key());
+            let body = container_body(
+                [(3, 4), (7, 8)]
+                    .into_iter()
+                    .map(|(msg_id, req_msg_id)| manual_tl::Message {
+                        msg_id,
+                        seq_no: 1,
+                        body: manual_tl::GzipPacked::new(&test_rpc_body(
+                            req_msg_id,
+                            &true.to_bytes(),
+                        ))
+                        .to_bytes(),
+                    })
+                    .collect(),
+            );
+            let packet = plaintext_body(mtp.session_id, 11, 2, body, 16);
+            let result = mtp.process_plaintext(&packet);
+            if expanded_bytes == 32 {
+                assert_eq!(result.unwrap().len(), 2);
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(DeserializeError::ResourceLimit { .. })
+                ));
+                assert!(mtp.deserialization.is_empty());
+            }
+        }
     }
 
     fn test_rpc_body(id: i64, result: &[u8]) -> Vec<u8> {

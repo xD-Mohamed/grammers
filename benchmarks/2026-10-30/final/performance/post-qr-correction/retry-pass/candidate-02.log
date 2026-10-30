@@ -1,0 +1,9 @@
+benchmark_binary_sha256=8b4dd32bde766905da611b8e0a374299f6eb7f5539e4d473cebe87883f5d6c99
+
+running 1 test
+test message_box::tests::benchmark_missing_hash_retry_pass ... missing_hash_retry channels=1000 initial_pass_ns=158748 retry_pass_ns=148288
+missing_hash_retry channels=10000 initial_pass_ns=1858125 retry_pass_ns=1858826
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 53 filtered out; finished in 0.00s
+

@@ -1,0 +1,90 @@
+
+running 1 test
+test loopback_session_footprint ... 400 sessions, one connection each, gzip-packed replies
+pool created, not connected: 2103 B/session live client heap
+       896 B x   1.00/session =     896 B
+       280 B x   1.00/session =     280 B
+       256 B x   1.00/session =     256 B
+        72 B x   2.00/session =     144 B
+       144 B x   1.00/session =     144 B
+        96 B x   1.00/session =      96 B
+        88 B x   1.00/session =      88 B
+        48 B x   1.00/session =      48 B
+        40 B x   1.00/session =      40 B
+        32 B x   1.00/session =      32 B
+         8 B x   3.00/session =      24 B
+        24 B x   1.00/session =      24 B
+        16 B x   1.00/session =      16 B
+      4096 B x   0.00/session =      10 B
+connected after one RPC: 7911 B/session live client heap
+      1792 B x   1.00/session =    1792 B
+      1096 B x   1.00/session =    1096 B
+      1024 B x   1.00/session =    1024 B
+       896 B x   1.00/session =     896 B
+       256 B x   2.00/session =     512 B
+       416 B x   1.00/session =     416 B
+       320 B x   1.00/session =     320 B
+       288 B x   1.00/session =     288 B
+       280 B x   1.00/session =     280 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+       144 B x   1.00/session =     144 B
+after nine RPCs per session: 7911 B/session live client heap
+      1792 B x   1.00/session =    1792 B
+      1096 B x   1.00/session =    1096 B
+      1024 B x   1.00/session =    1024 B
+       896 B x   1.00/session =     896 B
+       256 B x   2.00/session =     512 B
+       416 B x   1.00/session =     416 B
+       320 B x   1.00/session =     320 B
+       288 B x   1.00/session =     288 B
+       280 B x   1.00/session =     280 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+       144 B x   1.00/session =     144 B
+after 1100 RPCs per session (replay cache saturated): 7911 B/session live client heap
+      1792 B x   1.00/session =    1792 B
+      1096 B x   1.00/session =    1096 B
+      1024 B x   1.00/session =    1024 B
+       896 B x   1.00/session =     896 B
+       256 B x   2.00/session =     512 B
+       416 B x   1.00/session =     416 B
+       320 B x   1.00/session =     320 B
+       288 B x   1.00/session =     288 B
+       280 B x   1.00/session =     280 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+       144 B x   1.00/session =     144 B
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 34.78s
+
+	Command being timed: "<binary> --exact loopback_session_footprint --ignored --nocapture --test-threads=1"
+	User time (seconds): 17.10
+	System time (seconds): 18.87
+	Percent of CPU this job got: 103%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:34.77
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 11312
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1078513
+	Voluntary context switches: 890790
+	Involuntary context switches: 8727
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

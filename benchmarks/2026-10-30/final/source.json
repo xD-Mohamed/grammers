@@ -1,0 +1,24 @@
+{
+  "baseline": "7774ed666317d981e1dfea0d12311cbd38acb43e",
+  "correction_checkpoint": "5f0cb0511416e666b5476c078c0aaa86d9bce69e",
+  "branch": "<candidate-branch>",
+  "diff_command": "scripts/check-optimization-evidence.py: source_diff(repo, --cached, correction_checkpoint), using isolated Git configuration and full-index binary diffs",
+  "diff_sha256": "6dcb079964f0612033e5962e1ecacd0d9230728e65d18e85e3de854ba376df3a",
+  "source_inputs_sha256": "3dd2d67b630ec29230b1ad179977d56ac06ed7b9d485f8b4032ef47c2202ca43",
+  "harness_sha256": "b840c64ac397e50117e58faae89dadeba61e85e3c61bdc7eb09cc125878f7071",
+  "integration": "QR login proof, first-recovery account-kind and evidence-exit corrections after independent Opus report 25390. Exact-tree acceptance and publication receipts are external under PUBLICATION.md.",
+  "final_loopback_binary_sha256": "a4621eb14b00ec19c9058897d3c3fbd17beaff6d8a2d340b4d446487aa995633",
+  "baseline_loopback_binary_sha256": "a69fa15ecf14db57bd3b149189458b86405c1a9f331925d561d49f6c5bc95ae1",
+  "build_receipt": "performance/post-qr-correction/build.json",
+  "validation_receipt": "validation/qr-correction-commands.json",
+  "benchmark_configurations": {
+    "paired": "performance/post-qr-correction/paired/configuration.json",
+    "overload": "performance/post-qr-correction/overload/configuration.json",
+    "heap": "performance/post-qr-correction/heap/configuration.json",
+    "allocations": "performance/post-qr-correction/allocations/configuration.json"
+  },
+  "deadline_receipt": "performance/post-qr-correction/deadlines/receipt.json",
+  "scenario_receipt": "performance/post-qr-correction/scenarios/receipt.json",
+  "retry_pass_receipt": "performance/post-qr-correction/retry-pass/receipt.json",
+  "receiver_receipt": "performance/post-qr-correction/receiver/receipt.json"
+}

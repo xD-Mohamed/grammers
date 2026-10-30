@@ -1,0 +1,13 @@
+{
+  "baseline": "7774ed666317d981e1dfea0d12311cbd38acb43e",
+  "correction_checkpoint": "5f0cb0511416e666b5476c078c0aaa86d9bce69e",
+  "branch": "<candidate-branch>",
+  "diff_command": "git diff --binary 5f0cb0511416e666b5476c078c0aaa86d9bce69e -- Cargo.lock ':(glob)**/Cargo.toml' ':(glob)**/*.rs'",
+  "diff_sha256": "a6eb0957c3b7caa9a5e41cb44bb41636bf1c519deb363adf502a06d69dd58458",
+  "source_inputs_sha256": "6d9ac6eb7f2f94987cea0db51ec7e468905834013d83a1e30303c694778e6471",
+  "harness_sha256": "b840c64ac397e50117e58faae89dadeba61e85e3c61bdc7eb09cc125878f7071",
+  "integration": "Post-Opus correction; new reviewer acceptance is pending. Historical measurements remain bound to performance/measured-source.",
+  "final_loopback_binary_sha256": "873c4bebc777e45ed75ce6bc93423e4d21dbe390c547f6544fd603207ba4d253",
+  "baseline_loopback_binary_sha256": "a69fa15ecf14db57bd3b149189458b86405c1a9f331925d561d49f6c5bc95ae1",
+  "build_receipt": "performance/post-opus/build.json"
+}

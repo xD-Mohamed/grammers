@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use grammers_mtsender::InvocationError;
-use grammers_session::types::{PeerAuth, PeerId, PeerKind, PeerRef};
+use grammers_session::types::{PeerAuth, PeerId, PeerInfo, PeerKind, PeerRef};
 use grammers_tl_types::{self as tl, enums::InputPeer};
 use jiff::Timestamp;
 use tracing::{Level, enabled, warn};
@@ -84,8 +84,78 @@ async fn map_random_ids_to_messages(
                 })
                 .collect())
         }
-        _ => panic!("API returned something other than Updates so messages can't be mapped"),
+        // The send may have succeeded without a usable message mapping. Preserve
+        // one result per input for the existing fallback, without resending.
+        _ => Ok(random_ids.iter().map(|_| None).collect()),
     }
+}
+
+async fn send_message_peer(client: &Client, peer: PeerRef) -> Result<PeerRef, InvocationError> {
+    if peer.id.bare_id().is_some() {
+        return Ok(peer);
+    }
+    let unavailable = || {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "cached self-user information has an invalid identity",
+        )
+    };
+    let (id, auth) = match client.0.session.peer(peer.id).await? {
+        Some(PeerInfo::User { id, auth, .. }) => (PeerId::user(id).ok_or_else(unavailable)?, auth),
+        _ => {
+            let user = client.get_me().await?;
+            (user.id(), user.auth())
+        }
+    };
+    Ok(PeerRef {
+        id,
+        auth: auth.unwrap_or(peer.auth),
+    })
+}
+
+async fn message_from_send_response(
+    client: &Client,
+    peer: PeerRef,
+    message: InputMessage,
+    random_id: i64,
+    updates: tl::enums::Updates,
+) -> Result<Message, InvocationError> {
+    Ok(match updates {
+        tl::enums::Updates::UpdateShortSentMessage(updates) => {
+            Message::from_raw_short_updates(client, updates, message, peer)
+        }
+        updates => {
+            let updates_debug = if enabled!(Level::WARN) {
+                Some(updates.clone())
+            } else {
+                None
+            };
+            match map_random_ids_to_messages(client, peer, &[random_id], updates)
+                .await?
+                .pop()
+                .flatten()
+            {
+                Some(message) => message,
+                None => {
+                    if let Some(updates) = updates_debug {
+                        warn!(
+                            "failed to find just-sent message in response updates; please report this:"
+                        );
+                        warn!("{:#?}", updates);
+                    }
+                    Message::from_raw(
+                        client,
+                        tl::enums::Message::Empty(tl::types::MessageEmpty {
+                            id: 0,
+                            peer_id: Some(peer.id.into()),
+                        }),
+                        Some(peer),
+                        client.empty_peer_map(),
+                    )
+                }
+            }
+        }
+    })
 }
 
 pub(crate) async fn parse_mention_entities(
@@ -595,6 +665,9 @@ impl Client {
         message: M,
     ) -> Result<Message, InvocationError> {
         let peer = peer.into();
+        // Resolve before any mutating RPC; retain InputPeerSelf on the wire.
+        // Reply reconstruction must not fail on a post-delivery self lookup.
+        let fetched_in = send_message_peer(self, peer).await?;
         let message = message.into();
         let random_id = generate_random_id();
         let entities = parse_mention_entities(self, message.entities.clone()).await;
@@ -651,50 +724,7 @@ impl Client {
             .await
         }?;
 
-        Ok(match updates {
-            tl::enums::Updates::UpdateShortSentMessage(updates) => {
-                let peer = if peer.id.bare_id().is_none() {
-                    // from_raw_short_updates needs the peer ID
-                    self.0.session.peer_ref(peer.id).await?.unwrap()
-                } else {
-                    peer
-                };
-
-                Message::from_raw_short_updates(self, updates, message, peer)
-            }
-            updates => {
-                let updates_debug = if enabled!(Level::WARN) {
-                    Some(updates.clone())
-                } else {
-                    None
-                };
-
-                match map_random_ids_to_messages(self, peer, &[random_id], updates)
-                    .await?
-                    .pop()
-                    .flatten()
-                {
-                    Some(message) => message,
-                    None => {
-                        if let Some(updates) = updates_debug {
-                            warn!(
-                                "failed to find just-sent message in response updates; please report this:"
-                            );
-                            warn!("{:#?}", updates);
-                        }
-                        Message::from_raw(
-                            self,
-                            tl::enums::Message::Empty(tl::types::MessageEmpty {
-                                id: 0,
-                                peer_id: Some(peer.id.into()),
-                            }),
-                            Some(peer),
-                            self.empty_peer_map(),
-                        )
-                    }
-                }
-            }
-        })
+        message_from_send_response(self, fetched_in, message, random_id, updates).await
     }
 
     /// Send text or media using a struct of common optional flags.
@@ -1385,5 +1415,221 @@ impl Client {
         .await?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod response_mapping_tests {
+    use super::*;
+    use grammers_mtsender::SenderPool;
+    use grammers_session::Session;
+    use grammers_session::storages::MemorySession;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn unmappable_send_responses_preserve_input_cardinality() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 1);
+        let client = Client::new(pool.handle);
+        let peer = PeerId::user(7).unwrap().to_ambient_ref();
+        let replies = [
+            tl::enums::Updates::TooLong,
+            tl::types::UpdateShort {
+                update: tl::enums::Update::Config,
+                date: 1,
+            }
+            .into(),
+            tl::types::UpdatesCombined {
+                updates: Vec::new(),
+                users: Vec::new(),
+                chats: Vec::new(),
+                date: 1,
+                seq_start: 1,
+                seq: 1,
+            }
+            .into(),
+        ];
+        for reply in replies {
+            for ids in [&[][..], &[42][..], &[42, 43, 44][..]] {
+                let mapped = map_random_ids_to_messages(&client, peer, ids, reply.clone())
+                    .await
+                    .unwrap();
+                assert_eq!(mapped.len(), ids.len());
+                assert!(mapped.iter().all(Option::is_none));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn self_send_resolves_identity_before_text_or_media_delivery() {
+        use crate::client::ClientConfiguration;
+        use tl::{Deserializable, Identifiable, Serializable};
+        for cached in [false, true] {
+            for hash in [None, Some(123)] {
+                for media in [false, true] {
+                    for short in [false, true] {
+                        let session = Arc::new(MemorySession::default());
+                        if cached {
+                            session
+                                .cache_peer(PeerInfo::User {
+                                    id: 7,
+                                    auth: hash.map(PeerAuth::from_hash),
+                                    bot: Some(false),
+                                    is_self: Some(true),
+                                })
+                                .await
+                                .unwrap();
+                        }
+                        let pool = SenderPool::new(Arc::clone(&session), 1);
+                        let mut client = Client::with_configuration(
+                            pool.handle,
+                            ClientConfiguration {
+                                auto_cache_peers: false,
+                            },
+                        );
+                        drop(pool.runner);
+                        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+                        let recorded = Arc::clone(&calls);
+                        let response: tl::enums::Updates = if short {
+                            tl::types::UpdateShortSentMessage {
+                                out: true,
+                                id: 42,
+                                pts: 1,
+                                pts_count: 1,
+                                date: 1,
+                                media: None,
+                                entities: None,
+                                ttl_period: None,
+                            }
+                            .into()
+                        } else {
+                            tl::enums::Updates::TooLong
+                        };
+                        Arc::get_mut(&mut client.0).unwrap().rpc_responder =
+                            Some(Arc::new(move |_, body| {
+                                let constructor = u32::from_le_bytes(body[..4].try_into().unwrap());
+                                recorded.lock().unwrap().push(constructor);
+                                if constructor == tl::functions::users::GetUsers::CONSTRUCTOR_ID {
+                                    assert!(!cached, "cached identity must avoid another fetch");
+                                    let request =
+                                        tl::functions::users::GetUsers::from_bytes(&body[4..])
+                                            .unwrap();
+                                    assert_eq!(request.id, vec![tl::enums::InputUser::UserSelf]);
+                                    return Ok(vec![super::super::net::test_self_user(
+                                        7, hash, false,
+                                    )]
+                                    .to_bytes());
+                                }
+                                if media {
+                                    assert_eq!(
+                                        constructor,
+                                        tl::functions::messages::SendMedia::CONSTRUCTOR_ID
+                                    );
+                                    let request =
+                                        tl::functions::messages::SendMedia::from_bytes(&body[4..])
+                                            .unwrap();
+                                    assert!(matches!(request.peer, tl::enums::InputPeer::PeerSelf));
+                                    assert_eq!(request.message, "fixture");
+                                } else {
+                                    assert_eq!(
+                                        constructor,
+                                        tl::functions::messages::SendMessage::CONSTRUCTOR_ID
+                                    );
+                                    let request = tl::functions::messages::SendMessage::from_bytes(
+                                        &body[4..],
+                                    )
+                                    .unwrap();
+                                    assert!(matches!(request.peer, tl::enums::InputPeer::PeerSelf));
+                                    assert_eq!(request.message, "fixture");
+                                }
+                                Ok(response.to_bytes())
+                            }));
+                        let mut input = InputMessage::new().text("fixture");
+                        if media {
+                            input = input.media(tl::enums::InputMedia::Empty);
+                        }
+                        let message = client
+                            .send_message(PeerId::self_user().to_ambient_ref(), input)
+                            .await
+                            .unwrap();
+                        assert_eq!(message.id(), if short { 42 } else { 0 });
+                        assert_eq!(message.peer_id(), PeerId::user(7).unwrap());
+                        let peer = message.peer_ref().await.unwrap().unwrap();
+                        assert_eq!(peer.id, PeerId::user(7).unwrap());
+                        assert_eq!(peer.auth.hash(), hash.unwrap_or(0));
+                        let mut expected = Vec::new();
+                        if !cached {
+                            expected.push(tl::functions::users::GetUsers::CONSTRUCTOR_ID);
+                        }
+                        expected.push(if media {
+                            tl::functions::messages::SendMedia::CONSTRUCTOR_ID
+                        } else {
+                            tl::functions::messages::SendMessage::CONSTRUCTOR_ID
+                        });
+                        assert_eq!(*calls.lock().unwrap(), expected);
+                        assert!(session.peer(PeerId::self_user()).await.unwrap().is_some());
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn self_lookup_failure_prevents_text_and_media_send_requests() {
+        use crate::client::ClientConfiguration;
+        use tl::{Identifiable, Serializable};
+        for media in [false, true] {
+            for missing_response in [false, true] {
+                let session = Arc::new(MemorySession::default());
+                let pool = SenderPool::new(Arc::clone(&session), 1);
+                let mut client = Client::with_configuration(
+                    pool.handle,
+                    ClientConfiguration {
+                        auto_cache_peers: false,
+                    },
+                );
+                drop(pool.runner);
+                let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let recorded = Arc::clone(&calls);
+                let original = Arc::new(InvocationError::Io(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "self lookup failed before sending",
+                )));
+                let returned = Arc::clone(&original);
+                Arc::get_mut(&mut client.0).unwrap().rpc_responder =
+                    Some(Arc::new(move |_, body| {
+                        recorded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        assert_eq!(
+                            u32::from_le_bytes(body[..4].try_into().unwrap()),
+                            tl::functions::users::GetUsers::CONSTRUCTOR_ID,
+                            "no mutating request after failed self lookup"
+                        );
+                        if missing_response {
+                            Ok(Vec::<tl::enums::User>::new().to_bytes())
+                        } else {
+                            Err(InvocationError::Shared(Arc::clone(&returned)))
+                        }
+                    }));
+                let mut input = InputMessage::new().text("fixture");
+                if media {
+                    input = input.media(tl::enums::InputMedia::Empty);
+                }
+                let error = client
+                    .send_message(PeerId::self_user().to_ambient_ref(), input)
+                    .await
+                    .unwrap_err();
+                if missing_response {
+                    assert!(
+                        matches!(error, InvocationError::Io(error) if error.kind() == std::io::ErrorKind::InvalidData)
+                    );
+                } else {
+                    let InvocationError::Shared(actual) = error else {
+                        panic!("original lookup failure must survive");
+                    };
+                    assert!(Arc::ptr_eq(&actual, &original));
+                }
+                assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+                assert!(session.peer(PeerId::self_user()).await.unwrap().is_none());
+            }
+        }
     }
 }

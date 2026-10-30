@@ -1,0 +1,10 @@
+{
+  "source_inputs_sha256": "3dd2d67b630ec29230b1ad179977d56ac06ed7b9d485f8b4032ef47c2202ca43",
+  "binaries": {
+    "baseline": "a69fa15ecf14db57bd3b149189458b86405c1a9f331925d561d49f6c5bc95ae1",
+    "candidate": "a4621eb14b00ec19c9058897d3c3fbd17beaff6d8a2d340b4d446487aa995633"
+  },
+  "configuration_sha256": "7c0e5d99798d2d317d6ed2c55a83762c666955df2bbff790acb1db6bc49aa3a8",
+  "executions": 42,
+  "scope": "Three runtime/control pairs per configuration; one pair per warm/cold/overload/1MiB scenario and heap. No scenario confidence inference."
+}

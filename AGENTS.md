@@ -1,5 +1,77 @@
 # grammers fork
 
+## Acceptance review corrections (2026-10-30)
+
+The current source/tests/evidence disposition is in
+[the acceptance ledger](benchmarks/2026-10-30/final/acceptance-review.md).
+Acceptance/publication receipts are external under [PUBLICATION.md](PUBLICATION.md).
+Preserve lifetime missing-hash exhaustion across entry removal, ready-only recovery
+queues, confirmed login proof, and existing local channel PTS. Account updates
+provide provisional proof; pre-login service pushes do not. Initial GetState 401
+rejects provisional proof until paced self-metadata discovery confirms login.
+Cached-self or successful GetState proof survives reconnects. Never query self
+metadata on ordinary live delivery. Resolve unknown account kind once on first
+channel recovery, retaining the result only after the lookup completes.
+Retain update batches and interrupted peer-cache work across next_raw cancellation.
+Resolve self-target send response identities without sentinel conversion or unwrap.
+Handshake RNG and EncryptedBuilder setup use fallible entropy; obfuscation and
+packet-padding RNG still panic on entropy failure. Started SRP work retains its
+bounded admission.
+The gate must print and optionally constrain the staged tree, require real fresh
+analysis logs, and hash every final artifact except the manifest itself.
+
+## Historical acceptance evidence continuation (2026-10-30)
+
+That historical Rust/Cargo manifest was the second-Opus correction. Validation
+again passed 651 workspace tests/doctests (42 ignored), the existing optional
+feature counts and fmt/check/Clippy/Rustdoc. The evidence checker at that
+checkpoint had 22 passing Python regressions: benchmark logs require exactly one successful named
+test and complete execution membership, including current heap/allocation and
+deadline-component runs. See final/acceptance-review.md under benchmarks/2026-10-30.
+Acceptance is recorded outside this tree; see PUBLICATION.md.
+
+## Corrections after second Opus review (2026-10-30)
+
+Missing channel hashes may defer recovery at most 30 times (one-second receiver
+retry delays). After grace exhaustion, warn and discard that channel's backlog
+position so live updates resume, including with peer caching disabled. Exhaustion
+must survive entry removal for that receiver lifetime; only usable access or a
+successful difference clears it. First-grace updates can be lost permanently. The lost
+backlog cannot be reconstructed without access. Track pending membership and
+ready counts directly; deadline checks must not repeatedly scan the pending queue.
+
+Replay floor means the highest actually evicted ID. Keep replay decisions stable
+throughout a container. Deliver delayed RPC results/errors below the floor so
+pending callers complete, suppress their own updates, and ACK/drop other stale
+leaves except correlated Pong/FutureSalts and bad-message rejections. Correlated
+service responses retire or retry callers without stale salt/clock/sequence
+mutation. Empty future-salt replies retain the current salt and consume a bounded
+prefetch attempt. Continuous ACK demand must not starve near-limit requests.
+
+Opt-in liveness expiry gives the reactor one retained timer wake before its final
+bounded read; cancellation cannot restart this grace. Return nonempty decoded
+update batches. Rearm after both config and key storage. Negative RPC codes are
+conservatively uncertain delivery, without changing default retry safety.
+
+Generated TL recursion remains an explicitly accepted deferral, separate from
+MTProto/gzip depth budgets; authenticated deeply nested values can overflow the
+stack. See the scope ledger and REVIEW-OPUS-ROUND2.md before publication.
+
+Historical second-Opus correction validation: 651 release workspace tests/doctests
+passed, 42 ignored; fmt/check/strict Clippy/warning-free Rustdoc passed. Optional
+session configurations passed 50/72/57/92; minimal client 39, debug mentions 2,
+evidence Python 19. All execution is parent-run; acceptance is recorded outside this tree under PUBLICATION.md.
+
+## Update-state validation continuation (2026-10-30)
+
+Validate GetState counters before persistence and keep recovery armed on rejection.
+Checked peer constructors must validate ranges before arithmetic. Validate channel
+IDs before filtering zero-PTS updates, and reject negative adapted date/sequence
+fields before changing message-box state. Preserve valid peerless messages.
+REVIEW-OPUS-ROUND2.md records that historical correction and evidence. Current
+disposition is in the acceptance ledger; acceptance receipts are external. A
+completed local validation run does not establish publication approval.
+
 ## Protocol hardening and review corrections (2026-10-30)
 
 `OPTIMIZATION-2026-10.md` and `REVIEW-ROUND1.md` contain the scope, measured
@@ -30,11 +102,13 @@ budget, bounded GCD batches, and a process-enforced regression deadline.
 
 Keepalives replace a sent record even without a pong, preserving partially
 written packets. Liveness below 60 seconds requires an earlier ping; huge
-user timeouts must not overflow Instant. A corrected clock resets the message-ID
-floor. Exhaustive error enums gained variants: see CHANGELOG.md for migration.
+user timeouts must not overflow Instant. Preserve the message-ID floor across
+clock jitter; reset only when more than three seconds ahead of corrected time. Exhaustive error enums gained variants: see CHANGELOG.md for migration.
 GetState remains armed through caller cancellation and storage failure. Detect
 missing account state independently of saved channels and check the self-user
-cache before rearming recovery. Relearning account state preserves channels.
+cache for unproven restored state before rearming recovery. Account updates
+provide provisional proof; pre-login service pushes do not. First channel recovery
+also resolves unknown account kind once. Relearning account state preserves channels.
 After four failed optional salt-prefetch attempts, keep the connection and use
 bad_server_salt recovery. Container child sequence numbers above the parent
 warn pending representative server evidence; other envelope checks remain strict.
@@ -50,11 +124,12 @@ Round-one checkpoint validation: 590 release all-feature workspace tests/doctest
 and rustfmt passed. Minimal client: 39; session memory/import/string/file-import
 configurations: 39/61/46/81 passed. Logs are under benchmarks/2026-10-30/round1.
 These local checks do not constitute independent review acceptance or a hosted run.
-Second-review correction: 599 release workspace tests/doctests passed, 41 ignored;
+Historical pre-Opus checkpoint: 599 release workspace tests/doctests passed, 41 ignored;
 strict Clippy, all-target/all-feature check, warning-free Rustdoc and fmt passed.
 Minimal client 39; session memory/import/string/file-import 40/62/47/82 passed.
 Two explicit read-only public test-DC probes passed once each, without login.
-See REVIEW-ROUND2.md for measured scope and the still-required independent review.
+See REVIEW-ROUND2.md for that historical scope. Current validation is recorded
+in REVIEW-OPUS-ROUND2.md; historical test counts are not current receipts.
 
 ## Per-session footprint and AES-IGE (2026-10-23)
 

@@ -6,8 +6,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::task::Poll;
 use std::time::{Duration, SystemTime};
 use std::{io, thread};
 
@@ -163,7 +165,7 @@ pub struct Sender<T: Transport, M: Mtp> {
     requests: Vec<Request>,
     ping_timer: Pin<Box<Sleep>>,
     next_ping: Instant,
-    liveness: Option<(Duration, Instant)>,
+    liveness: Option<(Duration, Instant, bool)>,
 
     // Transport-level buffers and positions
     read_buffer: Vec<u8>,
@@ -255,13 +257,13 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     /// Set an optional deadline for receiving another valid packet.
     /// This does not change individual invocation deadlines or replay policy.
     pub fn set_liveness_timeout(&mut self, timeout: Option<Duration>) {
-        self.liveness = timeout.map(|limit| (limit, Instant::now()));
+        self.liveness = timeout.map(|limit| (limit, Instant::now(), false));
         self.next_ping = self.next_ping.min(Instant::now() + self.ping_interval());
     }
 
     fn ping_interval(&self) -> Duration {
         self.liveness
-            .map_or(PING_DELAY, |(limit, _)| PING_DELAY.min(limit / 2))
+            .map_or(PING_DELAY, |(limit, _, _)| PING_DELAY.min(limit / 2))
     }
 
     /// Serializes the given request, enqueues it to the internal buffer,
@@ -356,14 +358,8 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     /// If an error is returned, the connection should be treated
     /// as dead and the sender instance recreated.
     pub async fn step(&mut self) -> Result<Vec<UpdatesLike>, ReadError> {
-        if self
-            .liveness
-            .is_some_and(|(limit, since)| since.elapsed() >= limit)
-        {
-            return Err(self.on_error(ReadError::Io(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "no valid packet received before liveness deadline",
-            ))));
+        if self.liveness_expired() {
+            return self.read_expired_liveness().await;
         }
         if let Err(error) = self.prepare_read_buffer() {
             return Err(self.on_error(error));
@@ -383,7 +379,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         let deadline = [
             protocol_deadline,
             self.liveness
-                .and_then(|(limit, since)| since.checked_add(limit)),
+                .and_then(|(limit, since, _)| since.checked_add(limit)),
             self.mtp.supports_keepalive().then_some(self.next_ping),
         ]
         .into_iter()
@@ -406,6 +402,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 })
             }
             _ = self.ping_timer.as_mut(), if deadline.is_some() => {
+                if self.liveness_expired() {
+                    return self.read_expired_liveness().await;
+                }
                 if protocol_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
                     self.mtp.on_service_timeout();
                 }
@@ -420,6 +419,58 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             Ok(ok) => Ok(ok),
             Err(err) => Err(self.on_error(err)),
         }
+    }
+
+    fn liveness_expired(&self) -> bool {
+        self.liveness
+            .is_some_and(|(limit, since, _)| since.elapsed() >= limit)
+    }
+
+    // A delayed task may have a complete reply waiting in the socket. Inspect
+    // ready bytes before expiring. A one-shot timer gives the reactor a turn to
+    // refresh cached readiness; yield_now alone does not guarantee that. Retain
+    // the timer across cancellation, and bound the final read by the receive cap.
+    async fn read_expired_liveness(&mut self) -> Result<Vec<UpdatesLike>, ReadError> {
+        if let Some((_, _, probing)) = &mut self.liveness
+            && !*probing
+        {
+            *probing = true;
+            self.ping_timer
+                .as_mut()
+                .reset(Instant::now() + Duration::from_millis(1));
+        }
+        self.ping_timer.as_mut().await;
+        let mut budget = MAXIMUM_DATA;
+        while budget != 0 {
+            if let Err(error) = self.prepare_read_buffer() {
+                return Err(self.on_error(error));
+            }
+            let end = self.read_buffer.len().min(self.read_tail + budget);
+            let ready = {
+                let (mut reader, _) = self.stream.split();
+                let mut read = std::pin::pin!(tokio::task::unconstrained(
+                    reader.read(&mut self.read_buffer[self.read_tail..end])
+                ));
+                poll_fn(|cx| Poll::Ready(read.as_mut().poll(cx))).await
+            };
+            match ready {
+                Poll::Ready(Ok(n)) => match self.on_net_read(n) {
+                    Ok(updates) => {
+                        if !updates.is_empty() || !self.liveness_expired() {
+                            return Ok(updates);
+                        }
+                        budget -= n;
+                    }
+                    Err(error) => return Err(self.on_error(error)),
+                },
+                Poll::Ready(Err(error)) => return Err(self.on_error(error.into())),
+                Poll::Pending => break,
+            }
+        }
+        Err(self.on_error(ReadError::Io(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "no valid packet received before liveness deadline",
+        ))))
     }
 
     fn prepare_read_buffer(&mut self) -> Result<(), ReadError> {
@@ -522,8 +573,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                         .deserialize(&mut self.read_buffer[next_offset..][offset.data_range])?;
 
                     self.process_mtp_buffer(result, &mut updates)?;
-                    if let Some((_, since)) = &mut self.liveness {
+                    if let Some((_, since, probing)) = &mut self.liveness {
                         *since = Instant::now();
+                        *probing = false;
                     }
                     next_offset += offset.next_offset;
                 }
@@ -863,10 +915,16 @@ pub async fn connect<T: Transport>(
 // CPU-bound PQ factorization, primality validation and DH exponentiation must not block I/O.
 // Started jobs cannot be preempted; hold their capacity until they finish even
 // if the handshake caller cancels. Waiting for capacity is cancel-safe.
+static DH_JOBS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
+#[cfg(test)]
+static DH_JOB_ARRIVALS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 async fn run_dh_job<T: Send + 'static>(
     job: impl FnOnce() -> Result<T, authentication::Error> + Send + 'static,
 ) -> Result<T, InvocationError> {
-    static DH_JOBS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+    #[cfg(test)]
+    DH_JOB_ARRIVALS.fetch_add(1, Ordering::Release);
     let permit = DH_JOBS
         .acquire()
         .await
@@ -915,7 +973,8 @@ pub async fn generate_auth_key<T: Transport>(
         mtp: mtp::Encrypted::build()
             .time_offset(time_offset)
             .first_salt(first_salt)
-            .finish(auth_key),
+            .try_finish(auth_key)
+            .map_err(|_| authentication::Error::RandomnessUnavailable)?,
         requests: sender.requests,
         ping_timer: sender.ping_timer,
         read_buffer: sender.read_buffer,
@@ -932,12 +991,17 @@ pub async fn connect_with_auth<T: Transport>(
     addr: ServerAddr,
     auth_key: [u8; 256],
 ) -> Result<Sender<T, mtp::Encrypted>, io::Error> {
-    Sender::connect(transport, mtp::Encrypted::build().finish(auth_key), addr).await
+    let mtp = mtp::Encrypted::build()
+        .try_finish(auth_key)
+        .map_err(|_| io::Error::other("secure session randomness is unavailable"))?;
+    Sender::connect(transport, mtp, addr).await
 }
 
 #[cfg(test)]
 mod optimization_tests {
     use super::*;
+
+    static DH_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn send_message_fixture(message: &str) -> Vec<u8> {
         // Minimal SendMessage wire fixture: silent, self peer, text, random id.
@@ -977,6 +1041,66 @@ mod optimization_tests {
             ttl_period: Some(60),
         })
         .to_bytes()
+    }
+
+    fn zero_key_aes(msg_key: &[u8; 16]) -> ([u8; 32], [u8; 32]) {
+        use sha2::{Digest, Sha256};
+        // All-zero test key: x=0 and x=8 select identical slices.
+        let mut a = Sha256::new();
+        a.update(msg_key);
+        a.update([0; 36]);
+        let a = a.finalize();
+        let mut b = Sha256::new();
+        b.update([0; 36]);
+        b.update(msg_key);
+        let b = b.finalize();
+        let mut key = [0; 32];
+        key[..8].copy_from_slice(&a[..8]);
+        key[8..24].copy_from_slice(&b[8..24]);
+        key[24..].copy_from_slice(&a[24..]);
+        let mut iv = [0; 32];
+        iv[..8].copy_from_slice(&b[..8]);
+        iv[8..24].copy_from_slice(&a[8..24]);
+        iv[24..].copy_from_slice(&b[24..]);
+        (key, iv)
+    }
+
+    fn zero_key_server_packet(session: i64, id: i64, seq: i32, body: &[u8]) -> Vec<u8> {
+        use sha2::{Digest, Sha256};
+        let mut plain = 0i64.to_le_bytes().to_vec();
+        plain.extend(session.to_le_bytes());
+        plain.extend(id.to_le_bytes());
+        plain.extend(seq.to_le_bytes());
+        plain.extend((body.len() as i32).to_le_bytes());
+        plain.extend(body);
+        let padding = 12 + (16 - (plain.len() + 12) % 16) % 16;
+        plain.extend(std::iter::repeat_n(0x5a, padding));
+        let mut digest = Sha256::new();
+        digest.update([0; 32]);
+        digest.update(&plain);
+        let msg_key: [u8; 16] = digest.finalize()[8..24].try_into().unwrap();
+        let (key, iv) = zero_key_aes(&msg_key);
+        grammers_crypto::aes::ige_encrypt(&mut plain, &key, &iv);
+        let mut packet = sha1::Sha1::digest([0; 256])[12..20].to_vec();
+        packet.extend(msg_key);
+        packet.extend(plain);
+        packet
+    }
+
+    fn client_frame_plaintext(frame: &[u8]) -> Vec<u8> {
+        let packet = &frame[8..frame.len() - 4];
+        let msg_key = packet[8..24].try_into().unwrap();
+        let (key, iv) = zero_key_aes(&msg_key);
+        let mut plain = packet[24..].to_vec();
+        grammers_crypto::aes::ige_decrypt(&mut plain, &key, &iv);
+        plain
+    }
+
+    fn fixture_rpc_body(request_id: i64, body: &[u8]) -> Vec<u8> {
+        let mut result = 0xf35c6d01u32.to_le_bytes().to_vec();
+        result.extend(request_id.to_le_bytes());
+        result.extend(body);
+        result
     }
 
     fn fixture_msg_id() -> MsgId {
@@ -1117,6 +1241,380 @@ mod optimization_tests {
                     (samples[0][3] + samples[0][4]) / 2.0,
                     (samples[1][3] + samples[1][4]) / 2.0
                 );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn encrypted_gzip_replays_preserve_a_third_pending_request() {
+        use std::io::Write;
+        use std::sync::Arc;
+        for compressed in [false, true] {
+            let (mut sender, _peer) = encrypted_pair().await;
+            let capacity = Arc::new(tokio::sync::Semaphore::new(3));
+            let trackers = [
+                crate::InvocationTracker::default(),
+                crate::InvocationTracker::default(),
+                crate::InvocationTracker::default(),
+            ];
+            let mut receivers = Vec::new();
+            for (name, tracker) in ["success", "rejection", "pending"]
+                .into_iter()
+                .zip(&trackers)
+            {
+                let (tx, rx) = oneshot::channel();
+                let permit = crate::InvocationPermit::with_capacity(
+                    tracker.try_acquire(),
+                    capacity.clone().try_acquire_owned().unwrap(),
+                );
+                sender.enqueue_tracked_body(send_message_fixture(name).into(), tx, Some(permit));
+                receivers.push(rx);
+            }
+            let mut session = None;
+            let mut sequence_before_rejection = None;
+            let mut ids = Vec::new();
+            for _ in 0..3 {
+                sender.try_fill_write();
+                let plain = client_frame_plaintext(&sender.write_buffer[..]);
+                session = Some(i64::from_le_bytes(plain[8..16].try_into().unwrap()));
+                let sequence = i32::from_le_bytes(plain[24..28].try_into().unwrap());
+                // Content frames use an odd sequence; containers use current state.
+                sequence_before_rejection = Some(sequence + (sequence & 1));
+                let body_len = i32::from_le_bytes(plain[28..32].try_into().unwrap()) as usize;
+                let body = &plain[32..32 + body_len];
+                let mut collect = |id: i64, body: &[u8]| {
+                    if u32::from_le_bytes(body[..4].try_into().unwrap())
+                        == tl::functions::messages::SendMessage::CONSTRUCTOR_ID
+                    {
+                        ids.push(id);
+                    }
+                };
+                if u32::from_le_bytes(body[..4].try_into().unwrap()) == 0x73f1f8dc {
+                    let count = i32::from_le_bytes(body[4..8].try_into().unwrap());
+                    let mut at = 8;
+                    for _ in 0..count {
+                        let id = i64::from_le_bytes(body[at..at + 8].try_into().unwrap());
+                        let len =
+                            i32::from_le_bytes(body[at + 12..at + 16].try_into().unwrap()) as usize;
+                        collect(id, &body[at + 16..at + 16 + len]);
+                        at += 16 + len;
+                    }
+                } else {
+                    collect(i64::from_le_bytes(plain[16..24].try_into().unwrap()), body);
+                }
+                sender.on_net_write(sender.write_buffer.len()).unwrap();
+                if ids.len() == 3 {
+                    break;
+                }
+            }
+            assert_eq!(ids.len(), 3);
+            let pending_id = match &sender.requests[2].state {
+                RequestState::Sent(pair) => pair.msg_id,
+                _ => panic!("third request must be sent"),
+            };
+            assert_eq!(capacity.available_permits(), 0);
+            let reply = full_updates_fixture();
+            let rejection =
+                tl::enums::BadMsgNotification::Notification(tl::types::BadMsgNotification {
+                    bad_msg_id: ids[1],
+                    bad_msg_seqno: 1,
+                    error_code: 32,
+                })
+                .to_bytes();
+            let mut container = 0x73f1f8dcu32.to_le_bytes().to_vec();
+            container.extend(2i32.to_le_bytes());
+            for (id, body) in [(3i64, fixture_rpc_body(ids[0], &reply)), (7i64, rejection)] {
+                container.extend(id.to_le_bytes());
+                container.extend(1i32.to_le_bytes());
+                container.extend((body.len() as i32).to_le_bytes());
+                container.extend(body);
+            }
+            let body = if compressed {
+                let mut encoder =
+                    flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+                encoder.write_all(&container).unwrap();
+                let mut body = 0x3072cfa1u32.to_le_bytes().to_vec();
+                encoder.finish().unwrap().serialize(&mut body);
+                body
+            } else {
+                container
+            };
+            let mut wire = transport::Full::new();
+            for (index, outer_id) in [9, 9, 13].into_iter().enumerate() {
+                let encrypted = zero_key_server_packet(session.unwrap(), outer_id, 2, &body);
+                let mut frame = DequeBuffer::with_capacity(encrypted.len(), LEADING_BUFFER_SPACE);
+                frame.extend(encrypted);
+                wire.pack(&mut frame);
+                sender
+                    .read_buffer
+                    .resize(sender.read_buffer.len().max(frame.len()), 0);
+                sender.read_buffer[..frame.len()].copy_from_slice(&frame[..]);
+                let updates = sender.on_net_read(frame.len()).unwrap();
+                assert_eq!(
+                    updates.len(),
+                    usize::from(index == 0),
+                    "replay {index}, gzip {compressed}"
+                );
+                assert_eq!(sender.requests.len(), 1);
+                assert!(
+                    matches!(&sender.requests[0].state, RequestState::Sent(pair) if pair.msg_id == pending_id)
+                );
+                assert_eq!(capacity.available_permits(), 2);
+                assert_eq!(trackers[0].stage(), crate::InvocationStage::Idle);
+                assert_eq!(trackers[1].stage(), crate::InvocationStage::Idle);
+                assert_eq!(trackers[2].stage(), crate::InvocationStage::Sent);
+                assert!(matches!(receivers[2].try_recv(), Err(TryRecvError::Empty)));
+            }
+            // Code 32 advances sequence state by 64. ACK-only packets expose
+            // that state without incrementing it for another content request.
+            // Neither the same envelope nor rewrapped children may apply it again.
+            sender.mtp.on_service_timeout();
+            sender.try_fill_write();
+            let acknowledgement = client_frame_plaintext(&sender.write_buffer[..]);
+            assert_eq!(
+                u32::from_le_bytes(acknowledgement[32..36].try_into().unwrap()),
+                tl::types::MsgsAck::CONSTRUCTOR_ID
+            );
+            assert_eq!(
+                i32::from_le_bytes(acknowledgement[24..28].try_into().unwrap()),
+                sequence_before_rejection.unwrap() + 64,
+                "rejection must change sequence exactly once, gzip {compressed}"
+            );
+            sender.on_net_write(sender.write_buffer.len()).unwrap();
+            assert_eq!(sender.requests.len(), 1);
+            assert!(
+                matches!(&sender.requests[0].state, RequestState::Sent(pair) if pair.msg_id == pending_id)
+            );
+            assert_eq!(trackers[2].stage(), crate::InvocationStage::Sent);
+            assert!(matches!(receivers[2].try_recv(), Err(TryRecvError::Empty)));
+            let encrypted =
+                zero_key_server_packet(session.unwrap(), 17, 1, &fixture_rpc_body(ids[2], &reply));
+            let mut frame = DequeBuffer::with_capacity(encrypted.len(), LEADING_BUFFER_SPACE);
+            frame.extend(encrypted);
+            wire.pack(&mut frame);
+            sender
+                .read_buffer
+                .resize(sender.read_buffer.len().max(frame.len()), 0);
+            sender.read_buffer[..frame.len()].copy_from_slice(&frame[..]);
+            assert_eq!(sender.on_net_read(frame.len()).unwrap().len(), 1);
+            assert!(sender.requests.is_empty());
+            assert_eq!(capacity.available_permits(), 3);
+            assert_eq!(trackers[2].stage(), crate::InvocationStage::Idle);
+            let mut receivers = receivers.into_iter();
+            assert_eq!(receivers.next().unwrap().await.unwrap().unwrap(), reply);
+            assert!(matches!(
+                receivers.next().unwrap().await.unwrap(),
+                Err(InvocationError::BadMessage {
+                    code: 32,
+                    retries: 0
+                })
+            ));
+            assert_eq!(receivers.next().unwrap().await.unwrap().unwrap(), reply);
+        }
+    }
+
+    #[tokio::test]
+    async fn delayed_direct_pong_and_rejection_retire_sent_waiters() {
+        for rejected in [false, true] {
+            let (mut sender, _peer) = encrypted_pair().await;
+            let tracker = crate::InvocationTracker::default();
+            let (tx, rx) = oneshot::channel();
+            sender.enqueue_tracked_body(
+                tl::functions::Ping { ping_id: 42 }.to_bytes().into(),
+                tx,
+                tracker.try_acquire(),
+            );
+            let mut sent = None;
+            for _ in 0..3 {
+                sender.try_fill_write();
+                let plain = client_frame_plaintext(&sender.write_buffer[..]);
+                sender.on_net_write(sender.write_buffer.len()).unwrap();
+                if matches!(sender.requests[0].state, RequestState::Sent(_)) {
+                    assert_eq!(
+                        u32::from_le_bytes(plain[32..36].try_into().unwrap()),
+                        tl::functions::Ping::CONSTRUCTOR_ID
+                    );
+                    sent = Some((
+                        i64::from_le_bytes(plain[8..16].try_into().unwrap()),
+                        i64::from_le_bytes(plain[16..24].try_into().unwrap()),
+                    ));
+                    break;
+                }
+            }
+            let (session, request_id) = sent.unwrap();
+            let ack = tl::enums::MsgsAck::Ack(tl::types::MsgsAck { msg_ids: vec![] }).to_bytes();
+            for index in 0..1025 {
+                let results = sender
+                    .mtp
+                    .deserialize(&mut zero_key_server_packet(
+                        session,
+                        13 + index * 4,
+                        0,
+                        &ack,
+                    ))
+                    .unwrap();
+                sender.process_mtp_buffer(results, &mut Vec::new()).unwrap();
+            }
+            let body = if rejected {
+                tl::enums::BadMsgNotification::Notification(tl::types::BadMsgNotification {
+                    bad_msg_id: request_id,
+                    bad_msg_seqno: 1,
+                    error_code: 64,
+                })
+                .to_bytes()
+            } else {
+                tl::enums::Pong::Pong(tl::types::Pong {
+                    msg_id: request_id,
+                    ping_id: 42,
+                })
+                .to_bytes()
+            };
+            let results = sender
+                .mtp
+                .deserialize(&mut zero_key_server_packet(session, 9, 0, &body))
+                .unwrap();
+            let mut updates = Vec::new();
+            sender.process_mtp_buffer(results, &mut updates).unwrap();
+            assert!(updates.is_empty());
+            assert!(sender.requests.is_empty());
+            let result = rx.await.unwrap();
+            if rejected {
+                assert!(matches!(
+                    result,
+                    Err(InvocationError::BadMessage {
+                        code: 64,
+                        retries: 0
+                    })
+                ));
+            } else {
+                assert_eq!(result.unwrap(), body);
+            }
+            assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+        }
+    }
+
+    #[tokio::test]
+    async fn encrypted_mixed_age_sibling_replies_complete_waiters_in_both_orders() {
+        for reverse in [false, true] {
+            for stale_error in [false, true] {
+                let (mut sender, _peer) = encrypted_pair().await;
+                let trackers = [
+                    crate::InvocationTracker::default(),
+                    crate::InvocationTracker::default(),
+                ];
+                let mut receivers = Vec::new();
+                for (name, tracker) in ["fresh", "stale"].into_iter().zip(&trackers) {
+                    let (tx, rx) = oneshot::channel();
+                    sender.enqueue_tracked_body(
+                        send_message_fixture(name).into(),
+                        tx,
+                        tracker.try_acquire(),
+                    );
+                    receivers.push(rx);
+                }
+                let mut request_ids = Vec::new();
+                let mut session = None;
+                for _ in 0..3 {
+                    sender.try_fill_write();
+                    let plain = client_frame_plaintext(&sender.write_buffer[..]);
+                    session = Some(i64::from_le_bytes(plain[8..16].try_into().unwrap()));
+                    let body_len = i32::from_le_bytes(plain[28..32].try_into().unwrap()) as usize;
+                    let body = &plain[32..32 + body_len];
+                    let mut collect = |id: i64, body: &[u8]| {
+                        if u32::from_le_bytes(body[..4].try_into().unwrap())
+                            == tl::functions::messages::SendMessage::CONSTRUCTOR_ID
+                        {
+                            request_ids.push(id);
+                        }
+                    };
+                    if u32::from_le_bytes(body[..4].try_into().unwrap()) == 0x73f1f8dc {
+                        let count = i32::from_le_bytes(body[4..8].try_into().unwrap());
+                        let mut at = 8;
+                        for _ in 0..count {
+                            let id = i64::from_le_bytes(body[at..at + 8].try_into().unwrap());
+                            let len = i32::from_le_bytes(body[at + 12..at + 16].try_into().unwrap())
+                                as usize;
+                            collect(id, &body[at + 16..at + 16 + len]);
+                            at += 16 + len;
+                        }
+                    } else {
+                        collect(i64::from_le_bytes(plain[16..24].try_into().unwrap()), body);
+                    }
+                    sender.on_net_write(sender.write_buffer.len()).unwrap();
+                    if request_ids.len() == 2 {
+                        break;
+                    }
+                }
+                assert_eq!(request_ids.len(), 2);
+                let session = session.unwrap();
+                let ack =
+                    tl::enums::MsgsAck::Ack(tl::types::MsgsAck { msg_ids: vec![] }).to_bytes();
+                for index in 0..1025 {
+                    let results = sender
+                        .mtp
+                        .deserialize(&mut zero_key_server_packet(
+                            session,
+                            13 + index * 4,
+                            0,
+                            &ack,
+                        ))
+                        .unwrap();
+                    let mut updates = Vec::new();
+                    sender.process_mtp_buffer(results, &mut updates).unwrap();
+                    assert!(updates.is_empty());
+                }
+                let reply = full_updates_fixture();
+                let late_body = if stale_error {
+                    let mut body = tl::types::RpcError::CONSTRUCTOR_ID.to_le_bytes().to_vec();
+                    tl::types::RpcError {
+                        error_code: -503,
+                        error_message: "UNKNOWN_SERVER_FAILURE".into(),
+                    }
+                    .serialize(&mut body);
+                    body
+                } else {
+                    reply.clone()
+                };
+                let fresh = fixture_rpc_body(request_ids[0], &reply);
+                let late = fixture_rpc_body(request_ids[1], &late_body);
+                let mut siblings = [(5003i64, fresh), (9i64, late)];
+                if reverse {
+                    siblings.reverse();
+                }
+                let mut container = 0x73f1f8dcu32.to_le_bytes().to_vec();
+                container.extend(2i32.to_le_bytes());
+                for (id, body) in siblings {
+                    container.extend(id.to_le_bytes());
+                    container.extend(1i32.to_le_bytes());
+                    container.extend((body.len() as i32).to_le_bytes());
+                    container.extend(body);
+                }
+                let results = sender
+                    .mtp
+                    .deserialize(&mut zero_key_server_packet(session, 5005, 2, &container))
+                    .unwrap();
+                let mut updates = Vec::new();
+                sender.process_mtp_buffer(results, &mut updates).unwrap();
+                assert_eq!(
+                    updates.len(),
+                    1,
+                    "only the fresh sibling may emit own updates"
+                );
+                assert!(sender.requests.is_empty());
+                let mut replies = receivers.into_iter();
+                assert_eq!(replies.next().unwrap().await.unwrap().unwrap(), reply);
+                let late = replies.next().unwrap().await.unwrap();
+                if stale_error {
+                    assert_eq!(
+                        late.unwrap_err().category(),
+                        crate::InvocationErrorCategory::UncertainDelivery
+                    );
+                } else {
+                    assert_eq!(late.unwrap(), reply);
+                }
+                for tracker in trackers {
+                    assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+                }
             }
         }
     }
@@ -1693,6 +2191,7 @@ mod optimization_tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn dh_job_does_not_block_single_thread_io_progress() {
+        let _guard = DH_TEST_LOCK.lock().await;
         let (tx, rx) = std::sync::mpsc::channel();
         let job = run_dh_job(move || Ok(rx.recv_timeout(Duration::from_secs(2)).is_ok()));
         let peer = async {
@@ -1705,6 +2204,7 @@ mod optimization_tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn factorization_step_runs_with_current_thread_progress() {
+        let _guard = DH_TEST_LOCK.lock().await;
         let (request, data) = authentication::step1().unwrap();
         let response = tl::types::ResPq {
             nonce: request.nonce,
@@ -1731,6 +2231,144 @@ mod optimization_tests {
             result.unwrap(),
             "factorization job monopolized the runtime worker"
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn four_started_dh_jobs_retain_capacity_after_caller_cancellation() {
+        let _guard = DH_TEST_LOCK.lock().await;
+        let mut jobs = Vec::new();
+        let mut release = Vec::new();
+        for _ in 0..4 {
+            let (started, entered) = oneshot::channel();
+            let (finish, blocking) = std::sync::mpsc::channel();
+            jobs.push(tokio::spawn(run_dh_job(move || {
+                let _ = started.send(());
+                blocking.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(())
+            })));
+            release.push(finish);
+            tokio::time::timeout(Duration::from_secs(2), entered)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert_eq!(DH_JOBS.available_permits(), 0);
+        for job in jobs {
+            job.abort();
+            assert!(job.await.unwrap_err().is_cancelled());
+        }
+        assert_eq!(
+            DH_JOBS.available_permits(),
+            0,
+            "cancelled callers must not retire live CPU jobs"
+        );
+        let mut fifth = tokio::spawn(run_dh_job(|| Ok(())));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), &mut fifth)
+                .await
+                .is_err()
+        );
+        for finish in release {
+            finish.send(()).unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(2), fifth)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let _all_finished = tokio::time::timeout(Duration::from_secs(2), DH_JOBS.acquire_many(4))
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    async fn read_plain_request<R: Identifiable + Deserializable>(
+        peer: &mut tokio::net::TcpStream,
+    ) -> R {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let length = peer.read_u32_le().await.unwrap() as usize;
+            assert!(length >= 36);
+            let mut packet = vec![0; length - 4];
+            peer.read_exact(&mut packet).await.unwrap();
+            deserialize_request(&packet[24..packet.len() - 4]).unwrap()
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn auth_generation_uses_bounded_jobs_for_both_cpu_steps() {
+        let _guard = DH_TEST_LOCK.lock().await;
+        for stage in [2, 3] {
+            let (sender, mut peer) = pair().await;
+            let handshake = tokio::spawn(generate_auth_key(sender));
+            let mut wire = transport::Full::new();
+            let request: tl::functions::ReqPqMulti = read_plain_request(&mut peer).await;
+            let mut expected_arrivals = DH_JOB_ARRIVALS.load(Ordering::Acquire) + 1;
+            let mut gate = if stage == 2 {
+                Some(DH_JOBS.acquire_many(4).await.unwrap())
+            } else {
+                None
+            };
+            let response = tl::enums::ResPq::Pq(tl::types::ResPq {
+                nonce: request.nonce,
+                server_nonce: [1; 16],
+                pq: (17u64 * 19).to_be_bytes().to_vec(),
+                server_public_key_fingerprints: if stage == 2 {
+                    vec![]
+                } else {
+                    vec![-3414540481677951611]
+                },
+            });
+            peer.write_all(&plain_response_with_transport(
+                &response.to_bytes(),
+                &mut wire,
+            ))
+            .await
+            .unwrap();
+            if stage == 3 {
+                let request: tl::functions::ReqDhParams = read_plain_request(&mut peer).await;
+                gate = Some(DH_JOBS.acquire_many(4).await.unwrap());
+                expected_arrivals = DH_JOB_ARRIVALS.load(Ordering::Acquire) + 1;
+                let response = tl::enums::ServerDhParams::Ok(tl::types::ServerDhParamsOk {
+                    nonce: request.nonce,
+                    server_nonce: request.server_nonce,
+                    encrypted_answer: vec![],
+                });
+                peer.write_all(&plain_response_with_transport(
+                    &response.to_bytes(),
+                    &mut wire,
+                ))
+                .await
+                .unwrap();
+            }
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while DH_JOB_ARRIVALS.load(Ordering::Acquire) < expected_arrivals {
+                    assert!(
+                        !handshake.is_finished(),
+                        "authentication step {stage} bypassed run_dh_job"
+                    );
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("authentication did not reach its CPU-job gate");
+            assert_eq!(DH_JOBS.available_permits(), 0);
+            assert!(!handshake.is_finished());
+            drop(gate);
+            let outcome = tokio::time::timeout(Duration::from_secs(2), handshake)
+                .await
+                .unwrap()
+                .unwrap();
+            let Err(InvocationError::Authentication(error)) = outcome else {
+                panic!("expected authentication step {stage} fixture rejection");
+            };
+            assert!(matches!(
+                (stage, error),
+                (2, authentication::Error::UnknownFingerprints { .. })
+                    | (3, authentication::Error::InvalidDhParameters)
+            ));
+        }
     }
 
     #[tokio::test]
@@ -1837,6 +2475,153 @@ mod optimization_tests {
         assert_eq!(error.io_error().unwrap().kind(), io::ErrorKind::TimedOut);
     }
 
+    fn plain_response_packet(body: &[u8]) -> Vec<u8> {
+        plain_response_with_transport(body, &mut transport::Full::new())
+    }
+
+    fn plain_response_with_transport(body: &[u8], transport: &mut transport::Full) -> Vec<u8> {
+        let mut packet = DequeBuffer::with_capacity(body.len() + 20, LEADING_BUFFER_SPACE);
+        packet.extend(0i64.to_le_bytes());
+        packet.extend(1i64.to_le_bytes());
+        packet.extend((body.len() as i32).to_le_bytes());
+        packet.extend(body.iter().copied());
+        transport.pack(&mut packet);
+        packet[..].to_vec()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn buffered_reply_after_liveness_deadline_is_processed_before_expiry() {
+        let (mut sender, mut peer) = pair().await;
+        let (tx, rx) = oneshot::channel();
+        sender.enqueue_body(Bytes::from_static(&[1; 4]), tx);
+        sender.try_fill_write();
+        sender.on_net_write(sender.write_buffer.len()).unwrap();
+        sender.set_liveness_timeout(Some(Duration::from_secs(5)));
+        let reply = vec![7; INITIAL_READ_BUFFER_SIZE * 4];
+        peer.write_all(&plain_response_packet(&reply))
+            .await
+            .unwrap();
+        // Do not prime reactor readiness before observing the expired clock.
+        sender.liveness.as_mut().unwrap().1 -= Duration::from_secs(10);
+        sender.step().await.unwrap();
+        assert_eq!(rx.await.unwrap().unwrap(), reply);
+        assert!(!sender.liveness_expired());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn partial_ready_packet_does_not_extend_liveness_deadline() {
+        let (mut sender, mut peer) = pair().await;
+        sender.set_liveness_timeout(Some(Duration::from_secs(5)));
+        peer.write_all(&plain_response_packet(&[7; 4])[..8])
+            .await
+            .unwrap();
+        sender.liveness.as_mut().unwrap().1 -= Duration::from_secs(5);
+        let expired = Instant::now();
+        let error = sender.step().await.unwrap_err();
+        assert_eq!(error.io_error().unwrap().kind(), io::ErrorKind::TimedOut);
+        assert!(
+            expired.elapsed() <= Duration::from_millis(10),
+            "partial traffic must not extend the bounded readiness probe"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn cancelled_expiry_checks_retain_one_bounded_reactor_probe() {
+        let (mut sender, _peer) = pair().await;
+        sender.set_liveness_timeout(Some(Duration::from_secs(5)));
+        sender.liveness.as_mut().unwrap().1 -= Duration::from_secs(10);
+        tokio::select! {
+            biased;
+            _ = sender.step() => panic!("readiness probe must first yield to the reactor"),
+            _ = std::future::ready(()) => {},
+        }
+        let deadline = sender.ping_timer.deadline();
+        for _ in 0..3 {
+            tokio::time::advance(Duration::from_micros(100)).await;
+            tokio::select! {
+                biased;
+                _ = sender.step() => panic!("probe is not due yet"),
+                _ = std::future::ready(()) => {},
+            }
+            assert_eq!(sender.ping_timer.deadline(), deadline);
+        }
+        tokio::time::advance(Duration::from_millis(1)).await;
+        assert_eq!(
+            sender.step().await.unwrap_err().io_error().unwrap().kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert!(Instant::now() <= deadline + Duration::from_millis(1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn expired_liveness_returns_decoded_nonempty_update_batch() {
+        struct UpdatePacket;
+        impl Mtp for UpdatePacket {
+            fn push(&mut self, _: &mut DequeBuffer<u8>, _: &[u8]) -> Option<MsgId> {
+                None
+            }
+            fn finalize(&mut self, _: &mut DequeBuffer<u8>) -> Option<MsgId> {
+                None
+            }
+            fn supports_keepalive(&self) -> bool {
+                false
+            }
+            fn deserialize(
+                &mut self,
+                _: &mut [u8],
+            ) -> Result<Vec<Deserialization>, mtp::DeserializeError> {
+                Ok(vec![Deserialization::Update(full_updates_fixture())])
+            }
+        }
+        let (mut sender, mut peer) = pair_with(UpdatePacket).await;
+        sender.set_liveness_timeout(Some(Duration::ZERO));
+        peer.write_all(&plain_response_packet(&[7; 4]))
+            .await
+            .unwrap();
+        let updates = sender.step().await.unwrap();
+        assert_eq!(updates.len(), 1);
+        assert!(sender.liveness_expired());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn waiting_step_reports_liveness_expiry_without_another_step() {
+        let (mut sender, _peer) = pair().await;
+        sender.set_liveness_timeout(Some(Duration::from_secs(5)));
+        let started = Instant::now();
+        let error = sender.step().await.unwrap_err();
+        assert_eq!(error.io_error().unwrap().kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() >= Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn partially_written_keepalive_survives_repeated_ping_deadlines() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        sender.on_ping_timeout();
+        sender.try_fill_write();
+        let frame = sender.write_buffer[..].to_vec();
+        let RequestState::Serialized(original) = &sender.requests[0].state else {
+            panic!("keepalive must be framed");
+        };
+        let original = original.msg_id;
+        sender.on_net_write(1).unwrap();
+        for _ in 0..3 {
+            sender.on_ping_timeout();
+            sender.try_fill_write();
+            assert_eq!(sender.requests.len(), 1);
+            assert!(matches!(&sender.requests[0].state,
+                RequestState::Serialized(pair) if pair.msg_id == original));
+            assert_eq!(&sender.write_buffer[..], frame.as_slice());
+            assert_eq!(sender.write_head, 1);
+        }
+        sender.on_net_write(frame.len() - 1).unwrap();
+        sender.on_ping_timeout();
+        assert_eq!(sender.requests.len(), 1);
+        assert!(matches!(
+            sender.requests[0].state,
+            RequestState::NotSerialized
+        ));
+    }
+
     #[tokio::test]
     async fn connection_failures_preserve_delivery_certainty_and_error_source() {
         use crate::{AutoSleep, RetryContext, RetryPolicy};
@@ -1854,7 +2639,10 @@ mod optimization_tests {
                         .unwrap();
                 }
             }
-            let failure = sender.on_error(ReadError::Io(io::Error::from_raw_os_error(104)));
+            let failure = sender.on_error(ReadError::Io(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "fixture connection reset",
+            )));
             let error = rx.await.unwrap().unwrap_err();
             assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
             let InvocationError::Read {
@@ -1865,7 +2653,10 @@ mod optimization_tests {
                 panic!("{error:?}");
             };
             assert_eq!(*may_have_been_sent, written.is_some_and(|n| n > 0));
-            assert_eq!(original.io_error().unwrap().raw_os_error(), Some(104));
+            assert_eq!(
+                original.io_error().unwrap().kind(),
+                io::ErrorKind::ConnectionReset
+            );
             let ReadError::Shared(shared) = failure else {
                 panic!("missing shared source");
             };

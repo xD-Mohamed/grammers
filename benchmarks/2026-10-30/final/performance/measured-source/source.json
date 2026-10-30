@@ -1,0 +1,13 @@
+{
+  "baseline": "7774ed666317d981e1dfea0d12311cbd38acb43e",
+  "correction_checkpoint": "5f0cb0511416e666b5476c078c0aaa86d9bce69e",
+  "branch": "<candidate-branch>",
+  "diff_command": "git diff --binary 5f0cb0511416e666b5476c078c0aaa86d9bce69e -- Cargo.lock ':(glob)**/Cargo.toml' ':(glob)**/*.rs'",
+  "diff_sha256": "d01408c11de42d3febdd40280e3ced8402d200e5da96376fbb2982492f0dc119",
+  "source_inputs_sha256": "f97006a847b2d918c27aca1b45f03ee5f3db9c2551208d95a0aeaea9361210db",
+  "harness_sha256": "b840c64ac397e50117e58faae89dadeba61e85e3c61bdc7eb09cc125878f7071",
+  "integration": "Uncommitted correction diff for independent review; no publication or final SHA acceptance asserted.",
+  "final_loopback_binary_sha256": "c5938aa7d3841355bbedb208cf851ccd5f4c46ac9ae5e9c2646545719d015608",
+  "baseline_loopback_binary_sha256": "a69fa15ecf14db57bd3b149189458b86405c1a9f331925d561d49f6c5bc95ae1",
+  "build_receipt": "performance/final-build.json"
+}

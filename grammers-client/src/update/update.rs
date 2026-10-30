@@ -109,11 +109,21 @@ impl Update {
                     state,
                 })
             }
-            tl::enums::Update::EditChannelMessage(raw) => Self::MessageEdited(Message {
-                msg: crate::message::Message::from_raw(client, raw.message.clone(), None, peers),
-                raw: update,
-                state,
-            }),
+            tl::enums::Update::EditChannelMessage(raw) => {
+                if utils::peer_from_message(&raw.message).is_none() {
+                    return Self::Raw(Raw { raw: update, state });
+                }
+                Self::MessageEdited(Message {
+                    msg: crate::message::Message::from_raw(
+                        client,
+                        raw.message.clone(),
+                        None,
+                        peers,
+                    ),
+                    raw: update,
+                    state,
+                })
+            }
 
             // MessageDeleted
             tl::enums::Update::DeleteMessages(_) => {
@@ -156,23 +166,36 @@ impl Update {
             }),
 
             // GuestChatQuery
-            tl::enums::Update::BotGuestChatQuery(raw) => Self::GuestChatQuery(GuestChatQuery {
-                message: crate::message::Message::from_raw(
-                    client,
-                    raw.message.clone(),
-                    None,
-                    peers.clone(),
-                ),
-                reference_messages: raw
-                    .reference_messages
-                    .clone()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|msg| crate::message::Message::from_raw(client, msg, None, peers.clone()))
-                    .collect(),
-                raw: update,
-                state,
-            }),
+            tl::enums::Update::BotGuestChatQuery(raw) => {
+                if utils::peer_from_message(&raw.message).is_none()
+                    || raw.reference_messages.as_ref().is_some_and(|messages| {
+                        messages
+                            .iter()
+                            .any(|message| utils::peer_from_message(message).is_none())
+                    })
+                {
+                    return Self::Raw(Raw { raw: update, state });
+                }
+                Self::GuestChatQuery(GuestChatQuery {
+                    message: crate::message::Message::from_raw(
+                        client,
+                        raw.message.clone(),
+                        None,
+                        peers.clone(),
+                    ),
+                    reference_messages: raw
+                        .reference_messages
+                        .clone()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|msg| {
+                            crate::message::Message::from_raw(client, msg, None, peers.clone())
+                        })
+                        .collect(),
+                    raw: update,
+                    state,
+                })
+            }
 
             // Raw
             _ => Self::Raw(Raw { raw: update, state }),
@@ -207,6 +230,78 @@ impl Update {
             Update::InlineSend(update) => &update.raw,
             Update::GuestChatQuery(update) => &update.raw,
             Update::Raw(update) => &update.raw,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grammers_mtsender::SenderPool;
+    use grammers_session::storages::MemorySession;
+    use grammers_session::updates::MessageBox;
+    use std::sync::Arc;
+    #[tokio::test]
+    async fn peerless_channel_edit_is_retained_as_raw() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 1);
+        let client = Client::new(pool.handle);
+        let raw = tl::enums::Update::EditChannelMessage(tl::types::UpdateEditChannelMessage {
+            message: tl::types::MessageEmpty {
+                id: 7,
+                peer_id: None,
+            }
+            .into(),
+            pts: 11,
+            pts_count: 1,
+        });
+        let state = State {
+            message_box: Some(MessageBox::Channel {
+                channel_id: 73,
+                pts: 11,
+            }),
+            seq: 1,
+            date: 1,
+        };
+        let update = Update::from_raw(&client, raw.clone(), state.clone(), client.empty_peer_map());
+        assert!(matches!(&update, Update::Raw(_)));
+        assert_eq!(update.raw(), &raw);
+        assert_eq!(update.state(), &state);
+    }
+
+    #[tokio::test]
+    async fn peerless_guest_chat_messages_preserve_the_entire_raw_update() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 1);
+        let client = Client::new(pool.handle);
+        for main_has_peer in [false, true] {
+            for reference_has_peer in [false, true] {
+                let message = |id, has_peer: bool| {
+                    tl::enums::Message::Empty(tl::types::MessageEmpty {
+                        id,
+                        peer_id: has_peer.then(|| tl::types::PeerUser { user_id: 7 }.into()),
+                    })
+                };
+                let raw =
+                    tl::enums::Update::BotGuestChatQuery(tl::types::UpdateBotGuestChatQuery {
+                        query_id: 42,
+                        message: message(7, main_has_peer),
+                        reference_messages: Some(vec![message(8, reference_has_peer)]),
+                        qts: 11,
+                    });
+                let state = State {
+                    message_box: Some(MessageBox::Secondary { qts: 11 }),
+                    seq: 1,
+                    date: 1,
+                };
+                let update =
+                    Update::from_raw(&client, raw.clone(), state.clone(), client.empty_peer_map());
+                if main_has_peer && reference_has_peer {
+                    assert!(matches!(&update, Update::GuestChatQuery(_)));
+                } else {
+                    assert!(matches!(&update, Update::Raw(_)));
+                }
+                assert_eq!(update.raw(), &raw);
+                assert_eq!(update.state(), &state);
+            }
         }
     }
 }

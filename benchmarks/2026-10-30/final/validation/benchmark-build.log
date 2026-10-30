@@ -1,0 +1,5 @@
+   Compiling grammers-tl-types v0.10.0 (<worktree>/grammers-tl-types)
+   Compiling grammers-mtproto v0.10.0 (<worktree>/grammers-mtproto)
+   Compiling grammers-session v0.10.0 (<worktree>/grammers-session)
+   Compiling grammers-mtsender v0.10.0 (<worktree>/grammers-mtsender)
+    Finished `release` profile [optimized] target(s) in 1m 15s

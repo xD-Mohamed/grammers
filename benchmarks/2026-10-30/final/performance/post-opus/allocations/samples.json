@@ -1,0 +1,58 @@
+[
+  {
+    "binary": "baseline",
+    "payload": "Plain",
+    "round": 1,
+    "allocations_per_rpc": 2.0,
+    "bytes_per_rpc": 1801
+  },
+  {
+    "binary": "baseline",
+    "payload": "Plain",
+    "round": 3,
+    "allocations_per_rpc": 2.0,
+    "bytes_per_rpc": 1799
+  },
+  {
+    "binary": "baseline",
+    "payload": "Gzip",
+    "round": 1,
+    "allocations_per_rpc": 2.0,
+    "bytes_per_rpc": 1804
+  },
+  {
+    "binary": "baseline",
+    "payload": "Gzip",
+    "round": 3,
+    "allocations_per_rpc": 2.0,
+    "bytes_per_rpc": 1810
+  },
+  {
+    "binary": "candidate",
+    "payload": "Plain",
+    "round": 1,
+    "allocations_per_rpc": 2.0,
+    "bytes_per_rpc": 1847
+  },
+  {
+    "binary": "candidate",
+    "payload": "Plain",
+    "round": 3,
+    "allocations_per_rpc": 2.0,
+    "bytes_per_rpc": 1857
+  },
+  {
+    "binary": "candidate",
+    "payload": "Gzip",
+    "round": 1,
+    "allocations_per_rpc": 2.0,
+    "bytes_per_rpc": 1808
+  },
+  {
+    "binary": "candidate",
+    "payload": "Gzip",
+    "round": 3,
+    "allocations_per_rpc": 2.0,
+    "bytes_per_rpc": 1809
+  }
+]

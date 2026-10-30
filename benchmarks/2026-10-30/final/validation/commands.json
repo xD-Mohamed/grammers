@@ -1,0 +1,227 @@
+{
+  "environment": {
+    "CARGO_BUILD_JOBS": "1",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_INCREMENTAL": "0",
+    "RUSTDOCFLAGS": "-D warnings for rustdoc only"
+  },
+  "results": {
+    "workspace": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "--workspace",
+        "--all-features"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 593.651,
+      "raw_result_line_totals": {
+        "passed": 604,
+        "failed": 0,
+        "ignored": 41
+      },
+      "counting": {
+        "top_level_passed_test_lines": 604,
+        "top_level_deadline_test_lines": 1,
+        "captured_factorization_child_reexecutions": 1,
+        "child_calls_existing_test_functions": 6,
+        "child_output_result_lines_in_workspace_log": 0,
+        "note": "The subprocess stdout is piped and checked internally. It does not inflate 604 top-level passed cases and is not added as a distinct test."
+      }
+    },
+    "debug-peer-ids": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "checked_peer_ids_reject_extremes_before_arithmetic",
+        "--",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 28.34,
+      "raw_result_line_totals": {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      }
+    },
+    "check": {
+      "command": [
+        "cargo",
+        "check",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 11.02,
+      "raw_result_line_totals": null
+    },
+    "clippy": {
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 13.006,
+      "raw_result_line_totals": null
+    },
+    "rustdoc": {
+      "command": [
+        "cargo",
+        "doc",
+        "--offline",
+        "--locked",
+        "--workspace",
+        "--all-features",
+        "--no-deps"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 10.166,
+      "raw_result_line_totals": null
+    },
+    "fmt": {
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.394,
+      "raw_result_line_totals": null
+    },
+    "client-minimal": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-client",
+        "--no-default-features",
+        "--lib"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 35.2,
+      "raw_result_line_totals": {
+        "passed": 39,
+        "failed": 0,
+        "ignored": 0
+      }
+    },
+    "session-memory": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 69.051,
+      "raw_result_line_totals": {
+        "passed": 42,
+        "failed": 0,
+        "ignored": 1
+      }
+    },
+    "session-import": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--features",
+        "session-import",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 32.286,
+      "raw_result_line_totals": {
+        "passed": 64,
+        "failed": 0,
+        "ignored": 1
+      }
+    },
+    "session-string": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--features",
+        "session-string",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 32.933,
+      "raw_result_line_totals": {
+        "passed": 49,
+        "failed": 0,
+        "ignored": 1
+      }
+    },
+    "session-files": {
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-session",
+        "--no-default-features",
+        "--features",
+        "session-import-files",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 38.641,
+      "raw_result_line_totals": {
+        "passed": 84,
+        "failed": 0,
+        "ignored": 1
+      }
+    }
+  },
+  "source_inputs_sha256": "f97006a847b2d918c27aca1b45f03ee5f3db9c2551208d95a0aeaea9361210db",
+  "source_inputs_file": "performance/measured-source/source-inputs.json",
+  "receipt_scope": "Historical pre-Opus source; not a validation receipt for the later correction."
+}

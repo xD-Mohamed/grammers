@@ -1,0 +1,20 @@
+{
+  "execution": "Parent; isolated index export sharing existing Git objects, no commit created. Tested original candidate contents; auxiliary checkout used only to verify evidence checker portability.",
+  "results": [
+    {
+      "state": "main",
+      "exit_code": 0,
+      "output": "candidate checkpoint: 5f0cb0511416e666b5476c078c0aaa86d9bce69e\n160 local Markdown links resolve in a fresh index export\nround1: 171 historical source hashes match 5b16ac4\nround2: 171 historical source hashes match 5f0cb05\ncandidate: live files match index; 3 additional build inputs match checkpoint\nfinal: 171 source and 221 artifact hashes match index\nvalidation: receipts match result-line totals; negative control failed as expected\npaired comparisons: every configured execution has its successful raw log\nupstream: 17 canonical Git diff hashes match\npublic artifacts: no checked host-path, bot-token or private-key patterns\nPASS: staged evidence is complete; review acceptance and publication require separate receipts\n"
+    },
+    {
+      "state": "detached",
+      "exit_code": 0,
+      "output": "candidate checkpoint: 5f0cb0511416e666b5476c078c0aaa86d9bce69e\n160 local Markdown links resolve in a fresh index export\nround1: 171 historical source hashes match 5b16ac4\nround2: 171 historical source hashes match 5f0cb05\ncandidate: live files match index; 3 additional build inputs match checkpoint\nfinal: 171 source and 221 artifact hashes match index\nvalidation: receipts match result-line totals; negative control failed as expected\npaired comparisons: every configured execution has its successful raw log\nupstream: 17 canonical Git diff hashes match\npublic artifacts: no checked host-path, bot-token or private-key patterns\nPASS: staged evidence is complete; review acceptance and publication require separate receipts\n"
+    },
+    {
+      "state": "detached with explicit wrong branch",
+      "exit_code": 1,
+      "error": "wrong candidate branch"
+    }
+  ]
+}

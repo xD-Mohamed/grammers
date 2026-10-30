@@ -1171,17 +1171,38 @@ impl ConnectionSetup {
         } else {
             connecting.await?
         };
+        self.finalize_connection(sender, remote_config, dc_option)
+            .await
+    }
+
+    async fn finalize_connection(
+        &self,
+        mut sender: Sender<Transport, mtp::Encrypted>,
+        remote_config: tl::types::Config,
+        dc_option: DcOption,
+    ) -> Result<Sender<Transport, mtp::Encrypted>, InvocationError> {
         // The initialization deadline covers network work. Storage and another
         // DC's config merge may take longer and have their own cancellation rules.
         self.update_config(remote_config).await?;
+        self.persist_connection_key(&mut sender, dc_option).await?;
+        Ok(sender)
+    }
+
+    async fn persist_connection_key(
+        &self,
+        sender: &mut Sender<Transport, mtp::Encrypted>,
+        dc_option: DcOption,
+    ) -> Result<(), InvocationError> {
         // Concurrent DC setup may refresh endpoints while this handshake runs.
         // Merge under the same lock as config writes so a stale config cannot
         // erase a freshly generated key or overwrite refreshed routes.
         let _guard = self.state.config_lock.lock().await;
-        let mut dc_option = self.session.dc_option(dc_id)?.unwrap_or(dc_option);
+        let mut dc_option = self.session.dc_option(dc_option.id)?.unwrap_or(dc_option);
         dc_option.auth_key = Some(sender.auth_key());
         self.session.set_dc_option(&dc_option).await?;
-        Ok(sender)
+        // Storage/config-lock latency is not evidence that the peer went silent.
+        sender.set_liveness_timeout(self.connection_params.liveness_timeout);
+        Ok(())
     }
 
     async fn connect_sender(
@@ -1539,6 +1560,60 @@ mod optimization_tests {
     use tl::Serializable;
 
     #[tokio::test]
+    async fn ready_connection_queue_yields_before_draining_its_backlog() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (sender, peer) = tokio::join!(
+            connect_with_auth(
+                Transport::new(),
+                ServerAddr::Tcp {
+                    address: listener.local_addr().unwrap()
+                },
+                [0; 256]
+            ),
+            listener.accept()
+        );
+        let _peer = peer.unwrap().0;
+        let (tx, rx) = queue::unbounded_channel();
+        let mut responses = Vec::new();
+        for _ in 0..512 {
+            let (tx_result, rx_result) = oneshot::channel();
+            // Invalid bodies fail synchronously without socket progress, so
+            // the ready queue itself must not monopolize the runtime.
+            tx.send(Rpc {
+                body: Bytes::from_static(&[0; 3]),
+                permit: None,
+                tx: tx_result,
+            })
+            .unwrap();
+            responses.push(rx_result);
+        }
+        let session = erase(Arc::new(
+            grammers_session::storages::MemorySession::default(),
+        ));
+        let runner = run_sender(sender.unwrap(), rx, None, 2, session, Arc::default());
+        tokio::pin!(runner);
+        tokio::select! { biased;
+            _ = &mut runner => panic!("open connection should remain active"),
+            _ = std::future::ready(()) => {}
+        }
+        let mut completed = 0;
+        for result in &mut responses {
+            match result.try_recv() {
+                Ok(Err(InvocationError::Io(error))) => {
+                    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+                    completed += 1;
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {}
+                other => panic!("unexpected request outcome: {other:?}"),
+            }
+        }
+        assert!(
+            (1..responses.len()).contains(&completed),
+            "completed {completed}"
+        );
+    }
+
+    #[tokio::test]
     async fn socket_failure_drains_unframed_queue_with_original_error_and_permits() {
         use crate::configuration::{AutoSleep, RetryPolicy};
         use tokio::io::AsyncWriteExt;
@@ -1616,7 +1691,18 @@ mod optimization_tests {
             "fixture must leave a real queue behind the socket failure"
         );
         assert_eq!(capacity.available_permits(), 512);
-        assert!(tx.is_closed());
+        let body = Bytes::from_static(&[1; 4]);
+        let (response, _result) = oneshot::channel();
+        let rejected = tx
+            .send(Rpc {
+                body: body.clone(),
+                permit: None,
+                tx: response,
+            })
+            .err()
+            .unwrap()
+            .0;
+        assert_eq!(rejected.body.as_ptr(), body.as_ptr());
     }
 
     async fn cache_self_user<S: Session>(session: &S)
@@ -1701,9 +1787,13 @@ mod optimization_tests {
         });
     }
 
+    #[derive(Default)]
     struct RecoverySession {
         memory: grammers_session::storages::MemorySession,
         fail_state: AtomicBool,
+        dc_write_delay: Duration,
+        self_reads: std::sync::atomic::AtomicUsize,
+        fail_self_reads: AtomicBool,
     }
 
     impl Session for RecoverySession {
@@ -1731,6 +1821,7 @@ mod optimization_tests {
         ) -> grammers_session::BoxFuture<'_, Result<(), Self::Error>> {
             let option = option.clone();
             Box::pin(async move {
+                tokio::time::sleep(self.dc_write_delay).await;
                 self.memory
                     .set_dc_option(&option)
                     .await
@@ -1744,7 +1835,15 @@ mod optimization_tests {
             '_,
             Result<Option<grammers_session::types::PeerInfo>, Self::Error>,
         > {
-            Box::pin(async move { self.memory.peer(id).await.map_err(std::io::Error::other) })
+            Box::pin(async move {
+                if id == grammers_session::types::PeerId::self_user() {
+                    self.self_reads.fetch_add(1, Ordering::Relaxed);
+                    if self.fail_self_reads.load(Ordering::Relaxed) {
+                        return Err(std::io::Error::other("self lookup fixture failure"));
+                    }
+                }
+                self.memory.peer(id).await.map_err(std::io::Error::other)
+            })
         }
         fn cache_peer(
             &self,
@@ -1786,6 +1885,242 @@ mod optimization_tests {
         }
     }
 
+    fn setup_config(dc_options: Vec<tl::enums::DcOption>) -> tl::types::Config {
+        tl::types::Config {
+            default_p2p_contacts: false,
+            preload_featured_stickers: false,
+            revoke_pm_inbox: false,
+            blocked_mode: false,
+            force_try_ipv6: false,
+            date: 1_700_000_000,
+            expires: 1_700_003_600,
+            test_mode: false,
+            this_dc: 2,
+            dc_options,
+            dc_txt_domain_name: String::new(),
+            chat_size_max: 200,
+            megagroup_size_max: 200_000,
+            forwarded_count_max: 100,
+            online_update_period_ms: 210_000,
+            offline_blur_timeout_ms: 5_000,
+            offline_idle_timeout_ms: 30_000,
+            online_cloud_timeout_ms: 300_000,
+            notify_cloud_delay_ms: 30_000,
+            notify_default_delay_ms: 1_500,
+            push_chat_period_ms: 60_000,
+            push_chat_limit: 2,
+            edit_time_limit: 172_800,
+            revoke_time_limit: i32::MAX,
+            revoke_pm_time_limit: i32::MAX,
+            rating_e_decay: 2_419_200,
+            stickers_recent_limit: 200,
+            channels_read_media_period: 604_800,
+            tmp_sessions: None,
+            call_receive_timeout_ms: 20_000,
+            call_ring_timeout_ms: 90_000,
+            call_connect_timeout_ms: 30_000,
+            call_packet_timeout_ms: 10_000,
+            me_url_prefix: String::new(),
+            autoupdate_url_prefix: None,
+            gif_search_username: None,
+            venue_search_username: None,
+            img_search_username: None,
+            static_maps_provider: None,
+            caption_length_max: 1_024,
+            message_length_max: 4_096,
+            webfile_dc_id: 4,
+            suggested_lang_code: None,
+            lang_pack_version: None,
+            base_lang_pack_version: None,
+            reactions_default: None,
+            autologin_token: None,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_setup_storage_rearms_connection_liveness_after_key_persistence() {
+        let session = Arc::new(RecoverySession {
+            memory: Default::default(),
+            fail_state: AtomicBool::new(false),
+            dc_write_delay: Duration::from_secs(10),
+            ..Default::default()
+        });
+        let pool = SenderPool::with_configuration(
+            Arc::clone(&session),
+            1,
+            ConnectionParams {
+                liveness_timeout: Some(Duration::from_secs(4)),
+                ..Default::default()
+            },
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (sender, _peer) = tokio::join!(
+            connect_with_auth(
+                Transport::new(),
+                ServerAddr::Tcp {
+                    address: listener.local_addr().unwrap()
+                },
+                [7; 256]
+            ),
+            listener.accept(),
+        );
+        let mut sender = sender.unwrap();
+        sender.set_liveness_timeout(Some(Duration::from_secs(4)));
+        let dc_option = session.dc_option(2).unwrap().unwrap();
+        let started = tokio::time::Instant::now();
+        let remote_config = setup_config(vec![
+            tl::types::DcOption {
+                ipv6: false,
+                media_only: false,
+                tcpo_only: false,
+                cdn: false,
+                r#static: true,
+                this_port_only: false,
+                id: 2,
+                ip_address: "127.0.0.2".into(),
+                port: 444,
+                secret: None,
+            }
+            .into(),
+        ]);
+        let mut sender = pool
+            .runner
+            .setup_context()
+            .finalize_connection(sender, remote_config, dc_option)
+            .await
+            .unwrap();
+        assert!(started.elapsed() >= Duration::from_secs(20));
+        assert_eq!(
+            session.dc_option(2).unwrap().unwrap().ipv4,
+            "127.0.0.2:444".parse().unwrap()
+        );
+        assert_eq!(
+            session.dc_option(2).unwrap().unwrap().auth_key,
+            Some([7; 256])
+        );
+        sender.step().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn setup_task_panic_retires_live_waiters_and_their_permits() {
+        let (mut pool, _listener) = silent_pool(ConnectionParams {
+            max_pending_requests: std::num::NonZeroUsize::new(2),
+            ..Default::default()
+        })
+        .await;
+        let trackers = [
+            crate::InvocationTracker::default(),
+            crate::InvocationTracker::default(),
+        ];
+        let mut waiters = Vec::new();
+        for tracker in &trackers {
+            waiters.push(
+                pool.handle
+                    .start_invoke_shared(4, Bytes::from_static(&[1; 4]), tracker.try_acquire())
+                    .unwrap(),
+            );
+            let request = pool.runner.request_rx.recv().await.unwrap();
+            assert!(pool.runner.process_request(request).await.is_continue());
+        }
+        assert_eq!(pool.runner.pending.len(), 1);
+        assert_eq!(pool.runner.pending[0].requests.len(), 2);
+        let capacity = Arc::clone(pool.runner.state.capacity.as_ref().unwrap());
+        assert_eq!(capacity.available_permits(), 0);
+        pool.runner.pending[0].abort_handle.abort();
+        pool.runner.pending[0].abort_handle = pool.runner.setup_pool.spawn(async {
+            panic!("setup panic fixture");
+        });
+        let result = tokio::time::timeout(Duration::from_secs(1), pool.runner.run_checked())
+            .await
+            .unwrap();
+        assert_eq!(result, Err(PoolRunError::TaskPanicked));
+        for (waiter, tracker) in waiters.into_iter().zip(trackers) {
+            assert!(waiter.await.is_err());
+            assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+        }
+        assert_eq!(capacity.available_permits(), 2);
+        assert!(pool.handle.status().stopped);
+        assert!(pool.handle.thin.1.read().unwrap().entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn receiver_startup_repairs_bad_saved_channels_and_keeps_valid_rows() {
+        use grammers_session::types::{ChannelState, UpdateState, UpdatesState};
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        let saved = UpdatesState {
+            pts: 100,
+            qts: 0,
+            date: 1,
+            seq: 0,
+            channels: vec![
+                ChannelState { id: 7, pts: 10 },
+                ChannelState { id: -1, pts: 10 },
+                ChannelState { id: 8, pts: -1 },
+                ChannelState { id: 20, pts: 11 },
+            ],
+        };
+        assert!(grammers_session::updates::MessageBoxes::try_load(saved.clone()).is_err());
+        session
+            .set_update_state(UpdateState::All(saved))
+            .await
+            .unwrap();
+        let pool = SenderPool::new(Arc::clone(&session), 1);
+        let receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        receiver.sync_update_state().await.unwrap();
+        let mut repaired = session.updates_state().await.unwrap();
+        repaired.channels.sort_by_key(|channel| channel.id);
+        assert_eq!(
+            repaired.channels,
+            vec![
+                ChannelState { id: 7, pts: 10 },
+                ChannelState { id: 20, pts: 11 }
+            ]
+        );
+        assert_eq!((repaired.pts, repaired.date, repaired.seq), (100, 1, 0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn receiver_created_before_login_rechecks_self_while_next_is_waiting() {
+        for catch_up in [false, true] {
+            let session = Arc::new(grammers_session::storages::MemorySession::default());
+            let mut pool = SenderPool::new(Arc::clone(&session), 1);
+            let mut receiver = crate::UpdatesReceiver::create(
+                pool.handle.thin.clone(),
+                erase(Arc::clone(&session)),
+                pool.updates,
+                crate::UpdatesConfiguration { catch_up },
+            )
+            .await
+            .unwrap();
+            let update_tx = pool.runner.updates_tx.clone().unwrap();
+            let responder = async {
+                tokio::task::yield_now().await;
+                assert!(pool.runner.request_rx.try_recv().is_err());
+                cache_self_user(session.as_ref()).await;
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Ok(state_reply()))
+                    .unwrap();
+                update_tx.send(config_update()).await.unwrap();
+            };
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+                tokio::join!(receiver.next(), responder)
+            })
+            .await
+            .unwrap();
+            assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+            assert_eq!(session.updates_state().await.unwrap().pts, 100);
+            assert_eq!(pool.handle.home_failure_generation(), 0);
+        }
+    }
+
     async fn expect_get_state(
         runner: &mut SenderPoolRunner,
     ) -> oneshot::Sender<Result<Vec<u8>, InvocationError>> {
@@ -1821,12 +2156,813 @@ mod optimization_tests {
         )
     }
 
+    fn inline_query_update() -> UpdatesLike {
+        UpdatesLike::Updates(
+            tl::types::UpdateShort {
+                update: tl::types::UpdateBotInlineQuery {
+                    query_id: 1,
+                    user_id: 7,
+                    query: String::new(),
+                    geo: None,
+                    peer_type: None,
+                    offset: String::new(),
+                }
+                .into(),
+                date: 1,
+            }
+            .into(),
+        )
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn prelogin_service_updates_deliver_without_arming_get_state() {
+        let services = vec![
+            tl::enums::Update::LoginToken,
+            tl::enums::Update::Config,
+            tl::types::UpdateDcOptions { dc_options: vec![] }.into(),
+            tl::types::UpdateLangPackTooLong {
+                lang_code: "en".into(),
+            }
+            .into(),
+            tl::types::UpdateLangPack {
+                difference: tl::types::LangPackDifference {
+                    lang_code: "en".into(),
+                    from_version: 0,
+                    version: 1,
+                    strings: vec![],
+                }
+                .into(),
+            }
+            .into(),
+            tl::types::UpdateSentPhoneCode {
+                sent_code: tl::types::auth::SentCode {
+                    r#type: tl::types::auth::SentCodeTypeApp { length: 5 }.into(),
+                    phone_code_hash: String::new(),
+                    next_type: None,
+                    timeout: None,
+                }
+                .into(),
+            }
+            .into(),
+            tl::types::UpdateServiceNotification {
+                popup: false,
+                invert_media: false,
+                inbox_date: None,
+                r#type: String::new(),
+                message: String::new(),
+                media: tl::enums::MessageMedia::Empty,
+                entities: vec![],
+            }
+            .into(),
+        ];
+        for service in services {
+            for envelope in 0..3 {
+                let session = Arc::new(RecoverySession::default());
+                let mut pool = SenderPool::new(Arc::clone(&session), 1);
+                let mut receiver = crate::UpdatesReceiver::create(
+                    pool.handle.thin.clone(),
+                    erase(Arc::clone(&session)),
+                    pool.updates,
+                    crate::UpdatesConfiguration { catch_up: true },
+                )
+                .await
+                .unwrap();
+                let updates = vec![service.clone()];
+                let users = vec![tl::types::UserEmpty { id: 7 }.into()];
+                let batch = match envelope {
+                    0 => tl::types::UpdateShort {
+                        update: service.clone(),
+                        date: 1,
+                    }
+                    .into(),
+                    1 => tl::types::Updates {
+                        updates,
+                        users,
+                        chats: vec![],
+                        date: 1,
+                        seq: 0,
+                    }
+                    .into(),
+                    _ => tl::types::UpdatesCombined {
+                        updates,
+                        users,
+                        chats: vec![],
+                        date: 1,
+                        seq_start: 0,
+                        seq: 0,
+                    }
+                    .into(),
+                };
+                let update_tx = pool.runner.updates_tx.clone().unwrap();
+                update_tx.send(UpdatesLike::Updates(batch)).await.unwrap();
+                assert_eq!(receiver.next().await.unwrap().0[0].0, service);
+                assert_eq!(session.self_reads.load(Ordering::Relaxed), 0);
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(900), receiver.next())
+                        .await
+                        .is_err()
+                );
+                assert!(pool.runner.request_rx.try_recv().is_err());
+                assert_eq!(session.self_reads.load(Ordering::Relaxed), 1);
+                cache_self_user(session.as_ref()).await;
+                let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+                    tokio::join!(receiver.next(), async {
+                        expect_get_state(&mut pool.runner)
+                            .await
+                            .send(Ok(state_reply()))
+                            .unwrap();
+                        update_tx.send(config_update()).await.unwrap();
+                    })
+                })
+                .await
+                .unwrap();
+                assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+                assert!(pool.runner.request_rx.try_recv().is_err());
+                assert_eq!(session.self_reads.load(Ordering::Relaxed), 2);
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn service_backlog_does_not_starve_cached_login_discovery() {
+        let session = Arc::new(RecoverySession::default());
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        for _ in 0..16 {
+            update_tx.send(config_update()).await.unwrap();
+        }
+        receiver.next().await.unwrap();
+        receiver.next().await.unwrap();
+        assert_eq!(session.self_reads.load(Ordering::Relaxed), 1);
+        cache_self_user(session.as_ref()).await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Ok(state_reply()))
+                    .unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        assert_eq!(session.self_reads.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn inferred_login_rejection_waits_for_self_without_rpc_storm() {
+        for error_name in ["AUTH_KEY_UNREGISTERED", "SESSION_PASSWORD_NEEDED"] {
+            let session = Arc::new(RecoverySession::default());
+            let mut pool = SenderPool::new(Arc::clone(&session), 1);
+            let mut receiver = crate::UpdatesReceiver::create(
+                pool.handle.thin.clone(),
+                erase(Arc::clone(&session)),
+                pool.updates,
+                crate::UpdatesConfiguration { catch_up: true },
+            )
+            .await
+            .unwrap();
+            let update_tx = pool.runner.updates_tx.clone().unwrap();
+            update_tx.send(inline_query_update()).await.unwrap();
+            assert!(matches!(
+                receiver.next().await.unwrap().0[0].0,
+                tl::enums::Update::BotInlineQuery(_)
+            ));
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+                tokio::join!(receiver.next(), async {
+                    expect_get_state(&mut pool.runner)
+                        .await
+                        .send(Err(InvocationError::Rpc(
+                            tl::types::RpcError {
+                                error_code: 401,
+                                error_message: error_name.into(),
+                            }
+                            .into(),
+                        )))
+                        .unwrap();
+                    let Request::CheckRetry { error, tx, .. } =
+                        pool.runner.request_rx.recv().await.unwrap()
+                    else {
+                        panic!("expected retry inspection")
+                    };
+                    tx.send(ControlFlow::Break(*error)).unwrap();
+                    for _ in 0..8 {
+                        update_tx.send(inline_query_update()).await.unwrap();
+                    }
+                })
+            })
+            .await
+            .unwrap();
+            assert!(matches!(
+                result.unwrap().0[0].0,
+                tl::enums::Update::BotInlineQuery(_)
+            ));
+            for _ in 0..7 {
+                receiver.next().await.unwrap();
+            }
+            assert!(
+                tokio::time::timeout(Duration::from_millis(900), receiver.next())
+                    .await
+                    .is_err()
+            );
+            assert!(pool.runner.request_rx.try_recv().is_err());
+            assert_eq!(session.self_reads.load(Ordering::Relaxed), 0);
+            // Reconnect does not revive a rejected inference either.
+            pool.runner
+                .state
+                .home_failures
+                .fetch_add(1, Ordering::Release);
+            cache_self_user(session.as_ref()).await;
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+                tokio::join!(receiver.next(), async {
+                    expect_get_state(&mut pool.runner)
+                        .await
+                        .send(Ok(state_reply()))
+                        .unwrap();
+                    update_tx.send(config_update()).await.unwrap();
+                })
+            })
+            .await
+            .unwrap();
+            assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+            assert_eq!(session.self_reads.load(Ordering::Relaxed), 1);
+            assert!(pool.runner.request_rx.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn imported_too_long_without_self_still_initializes_state() {
+        let session = Arc::new(RecoverySession::default());
+        session.fail_self_reads.store(true, Ordering::Relaxed);
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        update_tx
+            .send(UpdatesLike::Updates(tl::enums::Updates::TooLong))
+            .await
+            .unwrap();
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Ok(state_reply()))
+                    .unwrap();
+                update_tx.send(config_update()).await.unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        assert_eq!(session.self_reads.load(Ordering::Relaxed), 0);
+        assert_eq!(session.updates_state().await.unwrap().pts, 100);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unproven_receiver_self_lookup_is_paced_across_cancelled_next() {
+        let session = Arc::new(RecoverySession::default());
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        assert_eq!(session.self_reads.load(Ordering::Relaxed), 0);
+        for count in 1..=3 {
+            assert!(
+                tokio::time::timeout(Duration::from_millis(900), receiver.next())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(session.self_reads.load(Ordering::Relaxed), count);
+            assert!(pool.runner.request_rx.try_recv().is_err());
+            tokio::time::advance(Duration::from_millis(100)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn live_peer_only_batch_is_preserved_without_self_lookup() {
+        let session = Arc::new(RecoverySession::default());
+        session.fail_self_reads.store(true, Ordering::Relaxed);
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let user: tl::enums::User = tl::types::UserEmpty { id: 7 }.into();
+        pool.runner
+            .updates_tx
+            .as_ref()
+            .unwrap()
+            .send(UpdatesLike::Updates(
+                tl::types::Updates {
+                    updates: vec![],
+                    users: vec![user.clone()],
+                    chats: vec![],
+                    date: 1,
+                    seq: 0,
+                }
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let (updates, users, chats) = tokio::time::timeout(Duration::from_secs(1), receiver.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(updates.is_empty());
+        assert_eq!(users, vec![user]);
+        assert!(chats.is_empty());
+        assert_eq!(session.self_reads.load(Ordering::Relaxed), 0);
+        assert!(pool.runner.request_rx.try_recv().is_err());
+    }
+
+    fn common_delete_update(pts: i32) -> UpdatesLike {
+        UpdatesLike::Updates(
+            tl::types::UpdateShort {
+                date: 1,
+                update: tl::types::UpdateDeleteMessages {
+                    messages: vec![pts],
+                    pts,
+                    pts_count: 1,
+                }
+                .into(),
+            }
+            .into(),
+        )
+    }
+
+    #[tokio::test]
+    async fn live_common_and_cached_authorization_survive_reconnect_without_self_reads() {
+        use grammers_session::types::PeerId;
+        use tl::{Deserializable, Identifiable};
+        for cached_self in [false, true] {
+            let session = Arc::new(RecoverySession::default());
+            let mut dc = session
+                .dc_option(session.home_dc_id().unwrap())
+                .unwrap()
+                .unwrap();
+            dc.auth_key = Some([7; 256]);
+            session.memory.set_dc_option(&dc).await.unwrap();
+            if cached_self {
+                cache_self_user(session.as_ref()).await;
+            }
+            let mut pool = SenderPool::new(Arc::clone(&session), 1);
+            let mut receiver = crate::UpdatesReceiver::create(
+                pool.handle.thin.clone(),
+                erase(Arc::clone(&session)),
+                pool.updates,
+                crate::UpdatesConfiguration { catch_up: true },
+            )
+            .await
+            .unwrap();
+            assert_eq!(session.self_reads.load(Ordering::Relaxed), 0);
+            let update_tx = pool.runner.updates_tx.clone().unwrap();
+            if cached_self {
+                let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+                    tokio::join!(receiver.next(), async {
+                        expect_get_state(&mut pool.runner)
+                            .await
+                            .send(Ok(state_reply()))
+                            .unwrap();
+                        update_tx.send(config_update()).await.unwrap();
+                    })
+                })
+                .await
+                .unwrap();
+                assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+            } else {
+                // Importers preserve the key, but need not cache the self user.
+                session.fail_self_reads.store(true, Ordering::Relaxed);
+                update_tx.send(common_delete_update(100)).await.unwrap();
+                let result = tokio::time::timeout(Duration::from_secs(1), receiver.next())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(
+                    matches!(&result.0[0].0, tl::enums::Update::DeleteMessages(u) if u.pts == 100)
+                );
+            }
+            let expected_reads = usize::from(cached_self);
+            assert_eq!(session.self_reads.load(Ordering::Relaxed), expected_reads);
+            session.fail_self_reads.store(true, Ordering::Relaxed);
+            for pts in 101..=104 {
+                let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+                    tokio::join!(receiver.next(), async {
+                        tokio::task::yield_now().await;
+                        update_tx.send(common_delete_update(pts)).await.unwrap();
+                    })
+                })
+                .await
+                .unwrap();
+                assert!(
+                    matches!(&result.unwrap().0[0].0, tl::enums::Update::DeleteMessages(u) if u.pts == pts)
+                );
+            }
+            pool.runner
+                .state
+                .home_failures
+                .fetch_add(1, Ordering::Release);
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+                tokio::join!(receiver.next(), async {
+                    let Request::Invoke { body, tx, .. } =
+                        pool.runner.request_rx.recv().await.unwrap()
+                    else {
+                        panic!("expected account recovery after reconnect");
+                    };
+                    assert_eq!(
+                        u32::from_le_bytes(body[..4].try_into().unwrap()),
+                        tl::functions::updates::GetDifference::CONSTRUCTOR_ID
+                    );
+                    assert_eq!(
+                        tl::functions::updates::GetDifference::from_bytes(&body[4..])
+                            .unwrap()
+                            .pts,
+                        104
+                    );
+                    tx.send(Ok(tl::enums::updates::Difference::Empty(
+                        tl::types::updates::DifferenceEmpty { date: 2, seq: 1 },
+                    )
+                    .to_bytes()))
+                        .unwrap();
+                    update_tx.send(config_update()).await.unwrap();
+                })
+            })
+            .await
+            .unwrap();
+            assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+            assert_eq!(session.self_reads.load(Ordering::Relaxed), expected_reads);
+            assert_eq!(
+                session
+                    .memory
+                    .peer(PeerId::self_user())
+                    .await
+                    .unwrap()
+                    .is_some(),
+                cached_self
+            );
+            receiver.sync_update_state().await.unwrap();
+            assert_eq!(session.updates_state().await.unwrap().pts, 104);
+        }
+    }
+
+    #[tokio::test]
+    async fn imported_live_channel_recovers_initial_state_and_deadline_without_self_cache() {
+        live_channel_recovery_resolves_kind(false).await;
+    }
+
+    #[tokio::test]
+    async fn live_first_bot_resolves_kind_once_on_channel_recovery() {
+        live_channel_recovery_resolves_kind(true).await;
+    }
+
+    async fn live_channel_recovery_resolves_kind(cached_bot: bool) {
+        use grammers_session::types::{ChannelState, PeerAuth, PeerId, PeerInfo};
+        use tl::{Deserializable, Identifiable};
+        let session = Arc::new(RecoverySession::default());
+        let mut dc = session
+            .dc_option(session.home_dc_id().unwrap())
+            .unwrap()
+            .unwrap();
+        dc.auth_key = Some([7; 256]);
+        session.memory.set_dc_option(&dc).await.unwrap();
+        session.fail_self_reads.store(true, Ordering::Relaxed);
+        if cached_bot {
+            session
+                .cache_peer(PeerInfo::User {
+                    id: 1,
+                    auth: None,
+                    bot: Some(true),
+                    is_self: Some(true),
+                })
+                .await
+                .unwrap();
+        }
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        update_tx
+            .send(UpdatesLike::Updates(
+                tl::types::UpdateShort {
+                    date: 1,
+                    update: tl::types::UpdateDeleteChannelMessages {
+                        channel_id: 7,
+                        messages: vec![1],
+                        pts: 10,
+                        pts_count: 1,
+                    }
+                    .into(),
+                }
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let live = tokio::time::timeout(Duration::from_secs(1), receiver.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(&live.0[0].0, tl::enums::Update::DeleteChannelMessages(u) if u.channel_id == 7 && u.pts == 10)
+        );
+        // Channel-only traffic needs Common state, using the live login proof.
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Ok(state_reply()))
+                    .unwrap();
+                update_tx.send(config_update()).await.unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        assert_eq!(
+            session.self_reads.load(Ordering::Relaxed),
+            0,
+            "ordinary live delivery does not read self metadata"
+        );
+        session.fail_self_reads.store(false, Ordering::Relaxed);
+        session
+            .cache_peer(PeerInfo::Channel {
+                id: 7,
+                auth: Some(PeerAuth::from_hash(123)),
+                kind: None,
+            })
+            .await
+            .unwrap();
+        update_tx
+            .send(UpdatesLike::Updates(
+                tl::types::UpdateShort {
+                    date: 1,
+                    update: tl::types::UpdateChannelTooLong {
+                        channel_id: 7,
+                        pts: Some(999),
+                    }
+                    .into(),
+                }
+                .into(),
+            ))
+            .await
+            .unwrap();
+        // Cancel after kind discovery and request issuance. The retry must keep
+        // both the pending position and the successfully read account kind.
+        {
+            let next = receiver.next();
+            tokio::pin!(next);
+            tokio::select! {
+                result = &mut next => panic!("unexpected completion: {result:?}"),
+                request = pool.runner.request_rx.recv() => {
+                    let Request::Invoke { body, .. } = request.unwrap() else { panic!("expected channel recovery") };
+                    assert_eq!(u32::from_le_bytes(body[..4].try_into().unwrap()), tl::functions::updates::GetChannelDifference::CONSTRUCTOR_ID);
+                    let request = tl::functions::updates::GetChannelDifference::from_bytes(&body[4..]).unwrap();
+                    assert_eq!(request.limit, if cached_bot { 100000 } else { 100 });
+                }
+            }
+        }
+        assert_eq!(session.self_reads.load(Ordering::Relaxed), 1);
+        session.fail_self_reads.store(true, Ordering::Relaxed);
+        for pts in [10, 11] {
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+                tokio::join!(receiver.next(), async {
+                    let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap() else { panic!("expected channel recovery"); };
+                    assert_eq!(u32::from_le_bytes(body[..4].try_into().unwrap()), tl::functions::updates::GetChannelDifference::CONSTRUCTOR_ID);
+                    let request = tl::functions::updates::GetChannelDifference::from_bytes(&body[4..]).unwrap();
+                    assert_eq!(request.pts, pts, "preserve the learned local position");
+                    assert_eq!(request.limit, if cached_bot { 100000 } else { 100 });
+                    assert!(matches!(request.channel, tl::enums::InputChannel::Channel(c) if c.channel_id == 7 && c.access_hash == 123));
+                    tx.send(Ok(tl::enums::updates::ChannelDifference::Difference(tl::types::updates::ChannelDifference {
+                        r#final: true, pts: pts + 1, timeout: (pts == 10).then_some(0),
+                        new_messages: vec![], other_updates: vec![tl::enums::Update::Config], chats: vec![], users: vec![],
+                    }).to_bytes())).unwrap();
+                })
+            }).await.unwrap();
+            assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        }
+        assert_eq!(session.self_reads.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            session
+                .memory
+                .peer(PeerId::self_user())
+                .await
+                .unwrap()
+                .is_some(),
+            cached_bot
+        );
+        receiver.sync_update_state().await.unwrap();
+        let saved = session.updates_state().await.unwrap();
+        assert_eq!(saved.pts, 100);
+        assert_eq!(saved.channels, vec![ChannelState { id: 7, pts: 12 }]);
+    }
+
+    #[tokio::test]
+    async fn deliverable_live_backlog_cannot_starve_recovery_across_cancellation() {
+        use grammers_session::types::{UpdateState, UpdatesState};
+        use tl::{Deserializable, Identifiable};
+        for peer_only in [false, true] {
+            let session = Arc::new(RecoverySession::default());
+            session
+                .set_update_state(UpdateState::All(UpdatesState {
+                    pts: 100,
+                    date: 1,
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
+            session.fail_self_reads.store(true, Ordering::Relaxed);
+            let mut pool = SenderPool::new(Arc::clone(&session), 1);
+            let mut receiver = crate::UpdatesReceiver::create(
+                pool.handle.thin.clone(),
+                erase(Arc::clone(&session)),
+                pool.updates,
+                crate::UpdatesConfiguration { catch_up: true },
+            )
+            .await
+            .unwrap();
+            let update_tx = pool.runner.updates_tx.clone().unwrap();
+            let capacity = update_tx.capacity();
+            let mut updates = vec![
+                tl::types::UpdateDeleteMessages {
+                    messages: vec![1],
+                    pts: 101,
+                    pts_count: 1,
+                }
+                .into(),
+            ];
+            let users = if peer_only {
+                vec![tl::types::UserEmpty { id: 7 }.into()]
+            } else {
+                updates.push(tl::enums::Update::Config);
+                vec![]
+            };
+            update_tx
+                .send(UpdatesLike::Updates(
+                    tl::types::Updates {
+                        updates,
+                        users,
+                        chats: vec![],
+                        date: 1,
+                        seq: 0,
+                    }
+                    .into(),
+                ))
+                .await
+                .unwrap();
+            for _ in 0..31 {
+                update_tx.send(config_update()).await.unwrap();
+            }
+            let first = receiver.next().await.unwrap();
+            if peer_only {
+                assert!(first.0.is_empty());
+                assert_eq!(first.1.len(), 1);
+            } else {
+                assert_eq!(first.0[0].0, tl::enums::Update::Config);
+            }
+            for _ in 0..2 {
+                let response = tokio::time::timeout(Duration::from_secs(1), async {
+                    let next = receiver.next(); tokio::pin!(next);
+                    tokio::select! {
+                        biased;
+                        result = &mut next => panic!("live delivery bypassed ready recovery: {result:?}"),
+                        request = pool.runner.request_rx.recv() => {
+                            let Request::Invoke { body, tx, .. } = request.unwrap() else { panic!("expected account recovery"); };
+                            assert_eq!(u32::from_le_bytes(body[..4].try_into().unwrap()), tl::functions::updates::GetDifference::CONSTRUCTOR_ID);
+                            assert_eq!(tl::functions::updates::GetDifference::from_bytes(&body[4..]).unwrap().pts, 100);
+                            tx
+                        }
+                    }
+                }).await.unwrap();
+                assert!(response.is_closed());
+                assert_eq!(
+                    update_tx.capacity(),
+                    capacity - 31,
+                    "cancelled recovery retains its turn"
+                );
+            }
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+                tokio::join!(receiver.next(), async {
+                    let Request::Invoke { body, tx, .. } =
+                        pool.runner.request_rx.recv().await.unwrap()
+                    else {
+                        panic!("expected account recovery");
+                    };
+                    assert_eq!(
+                        u32::from_le_bytes(body[..4].try_into().unwrap()),
+                        tl::functions::updates::GetDifference::CONSTRUCTOR_ID
+                    );
+                    tx.send(Ok(tl::enums::updates::Difference::Empty(
+                        tl::types::updates::DifferenceEmpty { date: 2, seq: 0 },
+                    )
+                    .to_bytes()))
+                        .unwrap();
+                })
+            })
+            .await
+            .unwrap();
+            assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+            assert_eq!(
+                update_tx.capacity(),
+                capacity - 30,
+                "live delivery resumes after recovery"
+            );
+            assert_eq!(session.self_reads.load(Ordering::Relaxed), 0);
+            receiver.sync_update_state().await.unwrap();
+            assert_eq!(session.updates_state().await.unwrap().pts, 100);
+        }
+    }
+
+    #[tokio::test]
+    async fn live_authorization_with_pending_backlog_starts_recovery_without_draining_socket() {
+        use grammers_session::types::{UpdateState, UpdatesState};
+        use tl::{Deserializable, Identifiable};
+        let session = Arc::new(RecoverySession::default());
+        session
+            .set_update_state(UpdateState::All(UpdatesState {
+                pts: 100,
+                date: 1,
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        session.fail_self_reads.store(true, Ordering::Relaxed);
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let capacity = update_tx.capacity();
+        assert!(capacity >= 32);
+        for pts in 101..=132 {
+            update_tx.send(common_delete_update(pts)).await.unwrap();
+        }
+        let response = tokio::time::timeout(Duration::from_secs(1), async {
+            let next = receiver.next(); tokio::pin!(next);
+            tokio::select! {
+                biased;
+                _ = &mut next => panic!("pending PTS batches cannot be delivered before recovery"),
+                request = pool.runner.request_rx.recv() => {
+                    let Request::Invoke { body, tx, .. } = request.unwrap() else { panic!("expected account difference"); };
+                    assert_eq!(u32::from_le_bytes(body[..4].try_into().unwrap()), tl::functions::updates::GetDifference::CONSTRUCTOR_ID);
+                    assert_eq!(tl::functions::updates::GetDifference::from_bytes(&body[4..]).unwrap().pts, 100);
+                    tx
+                }
+            }
+        }).await.unwrap();
+        assert!(
+            response.is_closed(),
+            "cancelling next must cancel its RPC waiter"
+        );
+        assert!(
+            update_tx.capacity() <= capacity - 30,
+            "recovery must not drain ready pending updates"
+        );
+        assert_eq!(session.self_reads.load(Ordering::Relaxed), 0);
+        receiver.sync_update_state().await.unwrap();
+        assert_eq!(session.updates_state().await.unwrap().pts, 100);
+    }
+
     #[tokio::test]
     async fn get_state_survives_cancelled_next_and_failed_storage_with_saved_channels() {
         use grammers_session::types::{ChannelState, UpdateState, UpdatesState};
         let session = Arc::new(RecoverySession {
             memory: Default::default(),
             fail_state: AtomicBool::new(false),
+            dc_write_delay: Duration::ZERO,
+            ..Default::default()
         });
         cache_self_user(session.as_ref()).await;
         let channels = vec![ChannelState { id: 7, pts: 10 }];
@@ -1878,6 +3014,114 @@ mod optimization_tests {
         assert_eq!(saved.pts, 100);
         assert_eq!(saved.qts, 0);
         assert_eq!(saved.channels, channels);
+    }
+
+    #[tokio::test]
+    async fn invalid_socket_channel_does_not_start_recovery_or_block_updates() {
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        update_tx
+            .send(UpdatesLike::Updates(
+                tl::types::UpdateShort {
+                    date: 1,
+                    update: tl::types::UpdateChannelTooLong {
+                        channel_id: i64::MAX,
+                        pts: Some(1),
+                    }
+                    .into(),
+                }
+                .into(),
+            ))
+            .await
+            .unwrap();
+        update_tx.send(config_update()).await.unwrap();
+        let (update, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Ok(state_reply()))
+                    .unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        let update = update.unwrap();
+        assert_eq!(update.0[0].0, tl::enums::Update::Config);
+        receiver.sync_update_state().await.unwrap();
+        assert!(session.updates_state().await.unwrap().channels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn invalid_get_state_preserves_storage_and_retries_recovery() {
+        use grammers_session::types::{ChannelState, UpdateState, UpdatesState};
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        cache_self_user(session.as_ref()).await;
+        let saved = UpdatesState {
+            channels: vec![ChannelState { id: 7, pts: 10 }],
+            ..Default::default()
+        };
+        session
+            .set_update_state(UpdateState::All(saved.clone()))
+            .await
+            .unwrap();
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        for field in 0..4 {
+            let mut state = tl::types::updates::State {
+                pts: 100,
+                qts: 0,
+                date: 1,
+                seq: 1,
+                unread_count: 0,
+            };
+            *match field {
+                0 => &mut state.pts,
+                1 => &mut state.qts,
+                2 => &mut state.date,
+                _ => &mut state.seq,
+            } = -1;
+            let (result, ()) = tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Ok(tl::enums::updates::State::State(state).to_bytes()))
+                    .unwrap();
+            });
+            assert!(matches!(
+                result,
+                Err(InvocationError::Deserialize(
+                    grammers_mtproto::mtp::DeserializeError::InvalidEnvelope { .. }
+                ))
+            ));
+            assert_eq!(session.updates_state().await.unwrap(), saved);
+        }
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let (result, ()) = tokio::join!(receiver.next(), async {
+            expect_get_state(&mut pool.runner)
+                .await
+                .send(Ok(state_reply()))
+                .unwrap();
+            update_tx.send(config_update()).await.unwrap();
+        });
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        let recovered = session.updates_state().await.unwrap();
+        assert_eq!(recovered.pts, 100);
+        assert_eq!(recovered.channels, saved.channels);
     }
 
     #[tokio::test]
@@ -2299,7 +3543,7 @@ mod optimization_tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn full_update_queue_does_not_hide_home_failure_notification() {
         let pool = SenderPool::new(
             Arc::new(grammers_session::storages::MemorySession::default()),
@@ -2310,15 +3554,41 @@ mod optimization_tests {
         let tx = pool.runner.updates_tx.as_ref().unwrap();
         while tx.try_send(UpdatesLike::ConnectionClosed).is_ok() {}
         let old = handle.home_failure_generation();
-        state.home_failures.fetch_add(1, Ordering::Release);
-        state.home_failure.notify_waiters();
-        assert!(forward_update(tx, state, UpdatesLike::ConnectionClosed).is_err());
-        tokio::time::timeout(Duration::from_secs(1), handle.wait_home_failure(old))
-            .await
-            .unwrap();
+        let before = handle.status().dropped_updates;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (sender, peer) = tokio::join!(
+            connect_with_auth(
+                Transport::new(),
+                ServerAddr::Tcp {
+                    address: listener.local_addr().unwrap()
+                },
+                [0; 256]
+            ),
+            listener.accept(),
+        );
+        let (_rpc_tx, rpc_rx) = queue::unbounded_channel();
+        drop(peer.unwrap());
+        let (outcome, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(
+                run_sender(
+                    sender.unwrap(),
+                    rpc_rx,
+                    Some(tx.clone()),
+                    pool.runner.session.home_dc_id().unwrap(),
+                    Arc::clone(&pool.runner.session),
+                    Arc::clone(state)
+                ),
+                handle.wait_home_failure(old),
+            )
+        })
+        .await
+        .unwrap();
+        assert!(outcome.1.is_err());
+        assert_eq!(handle.home_failure_generation(), old + 1);
+        assert_eq!(handle.status().dropped_updates, before + 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn same_dc_initialization_is_shared_and_other_dcs_remain_responsive() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -2418,17 +3688,18 @@ mod optimization_tests {
         };
         use tl::Identifiable;
         let session = Arc::new(grammers_session::storages::MemorySession::default());
+        cache_self_user(session.as_ref()).await;
         session
             .set_update_state(UpdateState::All(UpdatesState {
                 pts: 100,
                 qts: 0,
                 date: 1,
                 seq: 0,
-                channels: (1..=3).map(|id| ChannelState { id, pts: 10 }).collect(),
+                channels: (1..=13).map(|id| ChannelState { id, pts: 10 }).collect(),
             }))
             .await
             .unwrap();
-        for id in [2, 3] {
+        for id in 2..=13 {
             session
                 .cache_peer(PeerInfo::Channel {
                     id,
@@ -2441,7 +3712,7 @@ mod optimization_tests {
         let mut pool = SenderPool::new(Arc::clone(&session), 1);
         let mut receiver = crate::UpdatesReceiver::create(
             pool.handle.thin.clone(),
-            erase(session),
+            erase(Arc::clone(&session)),
             pool.updates,
             crate::UpdatesConfiguration { catch_up: true },
         )
@@ -2457,7 +3728,7 @@ mod optimization_tests {
             }
         };
         let responder = async {
-            for expected in [0, 2, 3] {
+            for expected in [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] {
                 let (body, tx) = loop {
                     match pool.runner.request_rx.recv().await.unwrap() {
                         Request::Invoke { body, tx, .. } => break (body, tx),
@@ -2496,6 +3767,34 @@ mod optimization_tests {
                                 }
                                 .into(),
                             ))
+                        } else if expected == 3 {
+                            Err(InvocationError::Shared(Arc::new(InvocationError::Rpc(
+                                tl::types::RpcError {
+                                    error_code: 500,
+                                    error_message: "INTERNAL".into(),
+                                }
+                                .into(),
+                            ))))
+                        } else if expected < 13 {
+                            let (code, name) = match expected {
+                                4 => (400, "PERSISTENT_TIMESTAMP_EMPTY"),
+                                5 => (400, "PERSISTENT_TIMESTAMP_INVALID"),
+                                6 => (400, "FROZEN_PARTICIPANT_MISSING"),
+                                7 => (403, "CHAT_WRITE_FORBIDDEN"),
+                                8 => (406, "CHANNEL_PRIVATE"),
+                                9 => (400, "UNKNOWN_CHANNEL_ERROR"),
+                                10 => (403, "UNKNOWN_CHANNEL_ERROR"),
+                                11 => (406, "UNKNOWN_CHANNEL_ERROR"),
+                                12 => (500, "PERSISTENT_TIMESTAMP_OUTDATED"),
+                                _ => unreachable!(),
+                            };
+                            Err(InvocationError::Shared(Arc::new(InvocationError::Rpc(
+                                tl::types::RpcError {
+                                    error_code: code,
+                                    error_message: name.into(),
+                                }
+                                .into(),
+                            ))))
                         } else {
                             Ok(tl::enums::updates::ChannelDifference::Difference(
                                 tl::types::updates::ChannelDifference {
@@ -2519,6 +3818,586 @@ mod optimization_tests {
         })
         .await
         .unwrap();
+        receiver.sync_update_state().await.unwrap();
+        let saved = session.updates_state().await.unwrap();
+        assert!(
+            saved
+                .channels
+                .iter()
+                .any(|channel| channel.id == 1 && channel.pts == 10)
+        );
+        assert!(
+            saved
+                .channels
+                .iter()
+                .any(|channel| channel.id == 3 && channel.pts == 10)
+        );
+        for id in 9..=12 {
+            assert!(
+                saved
+                    .channels
+                    .iter()
+                    .any(|channel| channel.id == id && channel.pts == 10)
+            );
+        }
+        assert!(
+            saved
+                .channels
+                .iter()
+                .any(|channel| channel.id == 13 && channel.pts == 11)
+        );
+        assert!(
+            saved
+                .channels
+                .iter()
+                .all(|channel| !matches!(channel.id, 2 | 4..=8))
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_hash_and_uncached_channels_eventually_resume_socket_delivery() {
+        use grammers_session::types::{ChannelState, PeerInfo, UpdateState, UpdatesState};
+        use tl::Identifiable;
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        cache_self_user(session.as_ref()).await;
+        session
+            .set_update_state(UpdateState::All(UpdatesState {
+                pts: 100,
+                qts: 0,
+                date: 1,
+                seq: 0,
+                channels: vec![
+                    ChannelState { id: 7, pts: 10 },
+                    ChannelState { id: 8, pts: 20 },
+                ],
+            }))
+            .await
+            .unwrap();
+        session
+            .cache_peer(PeerInfo::Channel {
+                id: 7,
+                auth: None,
+                kind: None,
+            })
+            .await
+            .unwrap();
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let (finished, mut done) = oneshot::channel();
+        let consumer = async {
+            let mut received = [false; 2];
+            while !received.into_iter().all(|seen| seen) {
+                for (update, _) in receiver.next().await.unwrap().0 {
+                    if let tl::enums::Update::DeleteChannelMessages(update) = update {
+                        match update.channel_id {
+                            7 => received[0] = true,
+                            8 => received[1] = true,
+                            _ => panic!("unexpected channel"),
+                        }
+                    }
+                }
+            }
+            finished.send(()).unwrap();
+        };
+        let producer = async {
+            let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+            else {
+                panic!("expected account difference");
+            };
+            assert_eq!(
+                u32::from_le_bytes(body[..4].try_into().unwrap()),
+                tl::functions::updates::GetDifference::CONSTRUCTOR_ID
+            );
+            tx.send(Ok(tl::enums::updates::Difference::Empty(
+                tl::types::updates::DifferenceEmpty { date: 2, seq: 0 },
+            )
+            .to_bytes()))
+                .unwrap();
+            for tick in 1..=40 {
+                tokio::select! {
+                    _ = &mut done => return,
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {},
+                }
+                assert!(
+                    pool.runner.request_rx.try_recv().is_err(),
+                    "missing hashes cannot issue channel differences"
+                );
+                update_tx
+                    .send(UpdatesLike::Updates(tl::enums::Updates::Updates(
+                        tl::types::Updates {
+                            updates: [(7, 10), (8, 20)]
+                                .into_iter()
+                                .map(|(channel_id, pts)| {
+                                    tl::types::UpdateDeleteChannelMessages {
+                                        channel_id,
+                                        messages: vec![tick],
+                                        pts: pts + tick,
+                                        pts_count: 1,
+                                    }
+                                    .into()
+                                })
+                                .collect(),
+                            users: vec![],
+                            chats: vec![],
+                            date: 2,
+                            seq: 0,
+                        },
+                    )))
+                    .await
+                    .unwrap();
+            }
+            panic!("bounded missing-hash recovery never resumed socket updates");
+        };
+        tokio::time::timeout(Duration::from_secs(45), async {
+            tokio::join!(consumer, producer);
+        })
+        .await
+        .unwrap();
+        receiver.sync_update_state().await.unwrap();
+        let saved = session.updates_state().await.unwrap();
+        assert!(
+            saved
+                .channels
+                .iter()
+                .any(|channel| channel.id == 7 && channel.pts > 10)
+        );
+        assert!(
+            saved
+                .channels
+                .iter()
+                .any(|channel| channel.id == 8 && channel.pts > 20)
+        );
+        update_tx
+            .send(UpdatesLike::Updates(
+                tl::types::Updates {
+                    updates: [7, 8]
+                        .into_iter()
+                        .map(|channel_id| {
+                            tl::types::UpdateChannelTooLong {
+                                channel_id,
+                                pts: Some(1000),
+                            }
+                            .into()
+                        })
+                        .chain(std::iter::once(tl::enums::Update::Config))
+                        .collect(),
+                    users: vec![],
+                    chats: vec![],
+                    date: 2,
+                    seq: 0,
+                }
+                .into(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            receiver.next().await.unwrap().0[0].0,
+            tl::enums::Update::Config
+        );
+        let producer = async {
+            tokio::task::yield_now().await;
+            update_tx
+                .send(UpdatesLike::Updates(
+                    tl::types::Updates {
+                        updates: saved
+                            .channels
+                            .iter()
+                            .map(|channel| {
+                                tl::types::UpdateDeleteChannelMessages {
+                                    channel_id: channel.id,
+                                    messages: vec![100],
+                                    pts: channel.pts + 1,
+                                    pts_count: 1,
+                                }
+                                .into()
+                            })
+                            .collect(),
+                        users: vec![],
+                        chats: vec![],
+                        date: 2,
+                        seq: 0,
+                    }
+                    .into(),
+                ))
+                .await
+                .unwrap();
+        };
+        let (resumed, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(receiver.next(), producer)
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            resumed.unwrap().0.len(),
+            2,
+            "second episode must not start another grace"
+        );
+        assert!(pool.runner.request_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn channel_hash_arriving_mid_grace_recovers_from_saved_pts() {
+        use grammers_session::types::{
+            ChannelState, PeerAuth, PeerInfo, UpdateState, UpdatesState,
+        };
+        use tl::{Deserializable, Identifiable};
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        cache_self_user(session.as_ref()).await;
+        session
+            .set_update_state(UpdateState::All(UpdatesState {
+                pts: 100,
+                date: 1,
+                channels: vec![ChannelState { id: 7, pts: 10 }],
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let started = std::time::Instant::now();
+        let consumer = async {
+            loop {
+                let result = receiver.next().await.unwrap();
+                if !result.0.is_empty() {
+                    assert_eq!(result.0[0].0, tl::enums::Update::Config);
+                    break;
+                }
+            }
+        };
+        let responder = async {
+            let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+            else {
+                panic!("expected account difference");
+            };
+            assert_eq!(
+                u32::from_le_bytes(body[..4].try_into().unwrap()),
+                tl::functions::updates::GetDifference::CONSTRUCTOR_ID
+            );
+            tx.send(Ok(tl::enums::updates::Difference::Empty(
+                tl::types::updates::DifferenceEmpty { date: 2, seq: 0 },
+            )
+            .to_bytes()))
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert!(pool.runner.request_rx.try_recv().is_err());
+            update_tx
+                .send(UpdatesLike::Updates(
+                    tl::types::UpdateShort {
+                        date: 2,
+                        update: tl::types::UpdateDeleteChannelMessages {
+                            channel_id: 7,
+                            messages: vec![1],
+                            pts: 11,
+                            pts_count: 1,
+                        }
+                        .into(),
+                    }
+                    .into(),
+                ))
+                .await
+                .unwrap();
+            session
+                .cache_peer(PeerInfo::Channel {
+                    id: 7,
+                    auth: Some(PeerAuth::from_hash(123)),
+                    kind: None,
+                })
+                .await
+                .unwrap();
+            let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+            else {
+                panic!("expected channel difference");
+            };
+            assert!(
+                started.elapsed() >= Duration::from_millis(900),
+                "honor one-second hash retry"
+            );
+            assert_eq!(
+                u32::from_le_bytes(body[..4].try_into().unwrap()),
+                tl::functions::updates::GetChannelDifference::CONSTRUCTOR_ID
+            );
+            let request =
+                tl::functions::updates::GetChannelDifference::from_bytes(&body[4..]).unwrap();
+            assert_eq!(request.pts, 10);
+            assert!(
+                matches!(request.channel, tl::enums::InputChannel::Channel(channel) if channel.channel_id == 7 && channel.access_hash == 123)
+            );
+            tx.send(Ok(tl::enums::updates::ChannelDifference::Difference(
+                tl::types::updates::ChannelDifference {
+                    r#final: true,
+                    pts: 15,
+                    timeout: None,
+                    new_messages: vec![],
+                    other_updates: vec![tl::enums::Update::Config],
+                    chats: vec![],
+                    users: vec![],
+                },
+            )
+            .to_bytes()))
+                .unwrap();
+        };
+        tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::join!(consumer, responder);
+        })
+        .await
+        .unwrap();
+        receiver.sync_update_state().await.unwrap();
+        assert_eq!(
+            session.updates_state().await.unwrap().channels,
+            vec![ChannelState { id: 7, pts: 15 }]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn saved_channels_wait_for_cached_self_before_any_recovery_rpc() {
+        use grammers_session::types::{
+            ChannelState, PeerAuth, PeerInfo, UpdateState, UpdatesState,
+        };
+        use tl::{Deserializable, Identifiable};
+        for pts in [0, 100] {
+            let session = Arc::new(grammers_session::storages::MemorySession::default());
+            session
+                .set_update_state(UpdateState::All(UpdatesState {
+                    pts,
+                    date: 1,
+                    channels: vec![ChannelState { id: 7, pts: 10 }],
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
+            session
+                .cache_peer(PeerInfo::Channel {
+                    id: 7,
+                    auth: Some(PeerAuth::from_hash(123)),
+                    kind: None,
+                })
+                .await
+                .unwrap();
+            let mut pool = SenderPool::new(Arc::clone(&session), 1);
+            let mut receiver = crate::UpdatesReceiver::create(
+                pool.handle.thin.clone(),
+                erase(Arc::clone(&session)),
+                pool.updates,
+                crate::UpdatesConfiguration { catch_up: true },
+            )
+            .await
+            .unwrap();
+            let consumer = async {
+                loop {
+                    let result = receiver.next().await.unwrap();
+                    if !result.0.is_empty() {
+                        assert_eq!(result.0[0].0, tl::enums::Update::Config);
+                        break;
+                    }
+                }
+            };
+            let responder = async {
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                assert!(
+                    pool.runner.request_rx.try_recv().is_err(),
+                    "saved state cannot authorize recovery"
+                );
+                cache_self_user(session.as_ref()).await;
+                let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected account recovery");
+                };
+                let constructor = u32::from_le_bytes(body[..4].try_into().unwrap());
+                if pts == 0 {
+                    assert_eq!(
+                        constructor,
+                        tl::functions::updates::GetState::CONSTRUCTOR_ID
+                    );
+                    tx.send(Ok(state_reply())).unwrap();
+                } else {
+                    assert_eq!(
+                        constructor,
+                        tl::functions::updates::GetDifference::CONSTRUCTOR_ID
+                    );
+                    tx.send(Ok(tl::enums::updates::Difference::Empty(
+                        tl::types::updates::DifferenceEmpty { date: 2, seq: 0 },
+                    )
+                    .to_bytes()))
+                        .unwrap();
+                }
+                let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected channel recovery");
+                };
+                assert_eq!(
+                    u32::from_le_bytes(body[..4].try_into().unwrap()),
+                    tl::functions::updates::GetChannelDifference::CONSTRUCTOR_ID
+                );
+                let request =
+                    tl::functions::updates::GetChannelDifference::from_bytes(&body[4..]).unwrap();
+                assert_eq!(request.pts, 10);
+                assert!(
+                    matches!(request.channel, tl::enums::InputChannel::Channel(channel) if channel.channel_id == 7 && channel.access_hash == 123)
+                );
+                tx.send(Ok(tl::enums::updates::ChannelDifference::Difference(
+                    tl::types::updates::ChannelDifference {
+                        r#final: true,
+                        pts: 11,
+                        timeout: None,
+                        new_messages: vec![],
+                        other_updates: vec![tl::enums::Update::Config],
+                        chats: vec![],
+                        users: vec![],
+                    },
+                )
+                .to_bytes()))
+                    .unwrap();
+            };
+            tokio::time::timeout(Duration::from_secs(6), async {
+                tokio::join!(consumer, responder);
+            })
+            .await
+            .unwrap();
+            receiver.sync_update_state().await.unwrap();
+            assert_eq!(
+                session.updates_state().await.unwrap().channels,
+                vec![ChannelState { id: 7, pts: 11 }]
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn channel_recovery_propagates_auth_flood_and_io_without_losing_state() {
+        use grammers_session::types::{
+            ChannelState, PeerAuth, PeerInfo, UpdateState, UpdatesState,
+        };
+        use tl::Identifiable;
+        let errors = [
+            (401, "AUTH_KEY_UNREGISTERED"),
+            (406, "AUTH_KEY_DUPLICATED"),
+            (400, "AUTH_KEY_INVALID"),
+            (403, "SESSION_REVOKED"),
+            (400, "CONNECTION_NOT_INITED"),
+            (400, "API_ID_INVALID"),
+            (401, "CHANNEL_PRIVATE"),
+            (420, "FLOOD_WAIT_10"),
+            (400, "FLOOD_WAIT_10"),
+            (403, "SLOWMODE_WAIT_2"),
+        ]
+        .into_iter()
+        .map(|(error_code, error_message)| {
+            InvocationError::Rpc(
+                tl::types::RpcError {
+                    error_code,
+                    error_message: error_message.into(),
+                }
+                .into(),
+            )
+        })
+        .chain(std::iter::once(InvocationError::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "channel recovery transport fixture",
+        ))));
+        for error in errors {
+            let original = Arc::new(error);
+            let session = Arc::new(grammers_session::storages::MemorySession::default());
+            cache_self_user(session.as_ref()).await;
+            let channels = vec![
+                ChannelState { id: 7, pts: 10 },
+                ChannelState { id: 8, pts: 20 },
+            ];
+            session
+                .set_update_state(UpdateState::All(UpdatesState {
+                    pts: 100,
+                    date: 1,
+                    channels: channels.clone(),
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
+            for id in [7, 8] {
+                session
+                    .cache_peer(PeerInfo::Channel {
+                        id,
+                        auth: Some(PeerAuth::from_hash(123)),
+                        kind: None,
+                    })
+                    .await
+                    .unwrap();
+            }
+            let mut pool = SenderPool::new(Arc::clone(&session), 1);
+            let mut receiver = crate::UpdatesReceiver::create(
+                pool.handle.thin.clone(),
+                erase(Arc::clone(&session)),
+                pool.updates,
+                crate::UpdatesConfiguration { catch_up: true },
+            )
+            .await
+            .unwrap();
+            let consumer = async {
+                loop {
+                    match receiver.next().await {
+                        Ok(result) => assert!(result.0.is_empty()),
+                        Err(error) => break error,
+                    }
+                }
+            };
+            let responder = async {
+                let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected account difference");
+                };
+                assert_eq!(
+                    u32::from_le_bytes(body[..4].try_into().unwrap()),
+                    tl::functions::updates::GetDifference::CONSTRUCTOR_ID
+                );
+                tx.send(Ok(tl::enums::updates::Difference::Empty(
+                    tl::types::updates::DifferenceEmpty { date: 2, seq: 0 },
+                )
+                .to_bytes()))
+                    .unwrap();
+                let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected first channel difference");
+                };
+                assert_eq!(
+                    u32::from_le_bytes(body[..4].try_into().unwrap()),
+                    tl::functions::updates::GetChannelDifference::CONSTRUCTOR_ID
+                );
+                assert_eq!(i64::from_le_bytes(body[12..20].try_into().unwrap()), 7);
+                tx.send(Err(InvocationError::Shared(Arc::clone(&original))))
+                    .unwrap();
+                let Request::CheckRetry { error, tx, .. } =
+                    pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected retry-policy query");
+                };
+                tx.send(ControlFlow::Break(*error)).unwrap();
+            };
+            let (error, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+                tokio::join!(consumer, responder)
+            })
+            .await
+            .unwrap();
+            let InvocationError::Shared(actual) = error else {
+                panic!("original error must survive")
+            };
+            assert!(Arc::ptr_eq(&actual, &original));
+            receiver.sync_update_state().await.unwrap();
+            assert_eq!(session.updates_state().await.unwrap().channels, channels);
+            assert!(pool.runner.request_rx.try_recv().is_err());
+        }
     }
 
     #[tokio::test]
@@ -2624,7 +4503,7 @@ mod optimization_tests {
         (SenderPool::with_configuration(session, 1, params), listener)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn two_hundred_cold_cancellations_close_peer_without_quit() {
         use tokio::io::AsyncReadExt;
         let (pool, listener) = silent_pool(ConnectionParams::default()).await;

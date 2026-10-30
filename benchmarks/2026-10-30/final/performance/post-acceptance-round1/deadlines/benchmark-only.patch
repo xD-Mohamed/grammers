@@ -1,0 +1,38 @@
+--- a/grammers-session/src/message_box/tests.rs
++++ b/grammers-session/src/message_box/tests.rs
+@@ -1441,3 +1441,35 @@
+         Some(get_channel_difference(7, 10))
+     );
+ }
++
++#[test]
++#[ignore = "local release component benchmark; run explicitly with --ignored --nocapture"]
++fn benchmark_pending_channel_deadlines() {
++    use std::hint::black_box;
++    const ITERATIONS: u32 = 32;
++    for count in [1_000, 10_000] {
++        reset_time();
++        let mut boxes = MessageBoxes::load(UpdatesState {
++            channels: (1..=count).map(|id| ChannelState { id, pts: 1 }).collect(),
++            ..Default::default()
++        });
++        black_box(boxes.check_deadlines());
++        let started = std::time::Instant::now();
++        for _ in 0..ITERATIONS {
++            black_box(black_box(&mut boxes).check_deadlines());
++        }
++        let hot = started.elapsed();
++        assert!(boxes.get_channel_difference().is_some());
++        advance_time_by(NO_UPDATES_TIMEOUT);
++        let started = std::time::Instant::now();
++        black_box(black_box(&mut boxes).check_deadlines());
++        let expired = started.elapsed();
++        eprintln!(
++            "pending_deadlines channels={count} iterations={ITERATIONS} hot_total_ns={} hot_ns_per_call={} expired_sweep_ns={}",
++            hot.as_nanos(),
++            hot.as_nanos() / u128::from(ITERATIONS),
++            expired.as_nanos()
++        );
++    }
++}
++

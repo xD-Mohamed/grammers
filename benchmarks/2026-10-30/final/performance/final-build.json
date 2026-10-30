@@ -1,0 +1,24 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--release",
+    "-p",
+    "grammers-mtsender",
+    "--test",
+    "loopback",
+    "--no-run",
+    "--message-format=json"
+  ],
+  "environment": {
+    "CARGO_BUILD_JOBS": "1"
+  },
+  "binaries": {
+    "baseline": "a69fa15ecf14db57bd3b149189458b86405c1a9f331925d561d49f6c5bc95ae1",
+    "final": "c5938aa7d3841355bbedb208cf851ccd5f4c46ac9ae5e9c2646545719d015608"
+  },
+  "source_inputs_sha256": "f97006a847b2d918c27aca1b45f03ee5f3db9c2551208d95a0aeaea9361210db",
+  "toolchain_capture": "rustc/cargo versions were not captured in this historical build receipt. See post-opus/build.json for fresh exact version capture; do not infer historical versions from that run."
+}

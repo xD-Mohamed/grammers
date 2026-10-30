@@ -1,0 +1,49 @@
+   Compiling grammers-mtproto v0.10.0 (<checkout>/grammers-mtproto)
+   Compiling grammers-session v0.10.0 (<checkout>/grammers-session)
+   Compiling grammers-mtsender v0.10.0 (<checkout>/grammers-mtsender)
+   Compiling grammers-client v0.10.0 (<checkout>/grammers-client)
+    Finished `release` profile [optimized] target(s) in 34.78s
+     Running unittests src/lib.rs (target/release/deps/grammers_client-15b1fe7787fc6de5)
+
+running 39 tests
+test client::auth::safety_tests::missing_zero_and_overflow_migration_dc_are_rejected ... ok
+test client::auth::safety_tests::malformed_password_fields_are_rejected_before_crypto ... ok
+test client::auth::safety_tests::unexpected_sent_code_success_does_not_create_login_token ... ok
+test client::auth::safety_tests::payment_required_is_actionable_and_redacted ... ok
+test client::auth::safety_tests::password_token_debug_does_not_expose_password_state ... ok
+test client::auth::safety_tests::unknown_password_algorithm_returns_unsupported_without_panicking ... ok
+test client::auth::safety_tests::missing_password_algorithm_returns_error_without_panicking ... ok
+test client::device::tests::defaults_match_connection_platform_and_locale_defaults ... ok
+test client::chats::peer_cache_tests::memory_client_can_disable_peer_cache_without_losing_reply_peers ... ok
+test client::runtime::tests::concurrent_run_and_timeout_stop_share_the_terminal_reason ... ok
+test client::runtime::tests::concurrent_run_waiters_share_one_startup_request ... ok
+test client::runtime::tests::concurrent_stop_deadlines_share_the_first_terminal_reason ... ok
+test client::runtime::tests::explicit_connect_does_not_report_cached_startup_success ... ok
+test client::runtime::tests::explicit_connect_retries_after_session_route_changes ... ok
+test client::runtime::tests::last_client_drop_terminates_owned_runner ... ok
+test client::runtime::tests::managed_idle_start_stop_is_idempotent_and_terminal ... ok
+test client::runtime::tests::builder_rejects_invalid_values_without_spawning ... ok
+test client::runtime::tests::memory_build_is_offline_and_start_reports_missing_runtime ... ok
+test client::runtime::tests::grouped_device_settings_preserve_omitted_defaults_and_flat_overrides ... ok
+test client::runtime::tests::managed_defaults_do_not_retry_ambiguous_io ... ok
+test client::runtime::tests::ready_shutdown_stops_without_opening_a_connection ... ok
+test client::runtime::tests::run_connectivity_failure_stops_without_login_prompt ... ok
+test client::runtime::tests::run_reports_runner_panic_instead_of_secondary_closed_reply ... ok
+test client::runtime::tests::shutdown_timeout_aborts_and_joins_owned_task ... ok
+test client::runtime::tests::request_level_closed_startup_error_cannot_become_success ... ok
+test client::runtime::tests::startup_overload_does_not_stop_existing_traffic ... ok
+test client::runtime::tests::startup_failure_is_shared_with_other_run_and_stop_waiters ... ok
+test client::runtime::tests::stop_before_start_closes_parked_runner ... ok
+test client::updates::tests::ensure_next_update_future_impls_send ... ok
+test media::input_media::tests::audio_builder_preserves_attributes_and_thumbnail ... ok
+test media::input_media::tests::typed_media_ttl_maps_all_variants ... ok
+test media::input_media::tests::typed_media_ttl_rejects_overflow - should panic ... ok
+test media::input_media::tests::video_builder_preserves_flags_attributes_and_ttl ... ok
+test message::input_message::send_options_tests::send_options_default_explicitly_resets_only_listed_options ... ok
+test message::input_message::send_options_tests::send_options_default_matches_existing_message_defaults ... ok
+test message::input_message::send_options_tests::send_options_preserve_existing_rich_payload ... ok
+test client::runtime::tests::stop_wakes_run_during_a_long_startup_retry_sleep ... ok
+test client::runtime::tests::supervised_runner_redacts_own_panic_and_stops_clones ... ok
+test client::runtime::tests::timeout_does_not_overwrite_an_authoritative_runner_failure ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s

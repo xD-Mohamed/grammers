@@ -1,0 +1,10 @@
+--- a/grammers-mtsender/src/sender_pool.rs
++++ b/grammers-mtsender/src/sender_pool.rs
+@@ -1424,7 +1424,6 @@
+         let mut updates_closed = false;
+ 
+         let result = loop {
+-            tokio::task::consume_budget().await;
+             tokio::select! {
+                 step = sender.step() => match step {
+                     Ok(all_new_updates) => {

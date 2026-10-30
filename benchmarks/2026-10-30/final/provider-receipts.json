@@ -1,0 +1,113 @@
+{
+  "provenance": "Native saved Duo turn receipt metadata read with duo_reports and duo_report; source reports retained by runner.",
+  "implementer_previous_completed_turn": {
+    "report_id": "18020",
+    "provider": "codex",
+    "role": "implementer",
+    "requested_model": "gpt-6-astra",
+    "native_model": "gpt-6-astra",
+    "requested_effort": "xhigh",
+    "native_reported_effort": null,
+    "identity_status": "accepted"
+  },
+  "reviewer_round1": {
+    "report_id": "19241",
+    "provider": "claude",
+    "role": "reviewer",
+    "requested_model": "opus",
+    "canonical_model": "claude-opus-5-5",
+    "native_model": "claude-opus-5-5",
+    "requested_effort": "xhigh",
+    "native_reported_effort": null,
+    "identity_status": "accepted",
+    "complete_original_report_sha256": "80c00d1f12506c2c8170a980b50336b87fa08cc67494e91ee01511e41a01bf27",
+    "verdict": "changes",
+    "execution": "Source reading only; shell unavailable."
+  },
+  "current_correction": "Historical native receipts only. Acceptance and publication for an exact tree are recorded externally under PUBLICATION.md; these records do not assert a later verdict.",
+  "implementer_round1_correction": {
+    "report_id": "19726",
+    "provider": "codex",
+    "role": "implementer",
+    "requested_model": "gpt-6-astra",
+    "native_model": "gpt-6-astra",
+    "requested_effort": "xhigh",
+    "native_reported_effort": null,
+    "identity_status": "accepted"
+  },
+  "reviewer_round2": {
+    "report_id": "20516",
+    "provider": "claude",
+    "role": "reviewer",
+    "requested_model": "opus",
+    "canonical_model": "claude-opus-5-5",
+    "native_model": "claude-opus-5-5",
+    "requested_effort": "xhigh",
+    "native_reported_effort": null,
+    "identity_status": "accepted",
+    "complete_original_report_sha256": "0397688f34fe22380950417b56f2171b6f9eec16606b2604f5d3c45f589e4681",
+    "verdict": "changes",
+    "execution": "Source reading only; shell unavailable."
+  },
+  "implementer_round2_correction": {
+    "report_id": "21076",
+    "provider": "codex",
+    "role": "implementer",
+    "requested_model": "gpt-6-astra",
+    "native_model": "gpt-6-astra",
+    "requested_effort": "xhigh",
+    "native_reported_effort": null,
+    "identity_status": "accepted",
+    "complete_original_report_sha256": "ba32c5defeb7cb1fd1e9eb61a3decc08f11f541c012805eb39c347640ddcb671"
+  },
+  "acceptance_preparation": {
+    "report_id": "21447",
+    "provider": "codex",
+    "role": "implementer",
+    "model": "gpt-6-astra",
+    "native_model": "gpt-6-astra",
+    "canonical_model": "gpt-6-astra",
+    "effort": "xhigh",
+    "reported_effort": null,
+    "identity_status": "accepted",
+    "complete_original_report_sha256": "f1d123d011ae517e974330e9a922ed1f05958014bae405b364dc65e713716df5",
+    "execution": "Parent implementation execution"
+  },
+  "acceptance_review_round1": {
+    "report_id": "22503",
+    "provider": "claude",
+    "role": "reviewer",
+    "model": "opus",
+    "native_model": "claude-opus-5-5",
+    "canonical_model": "claude-opus-5-5",
+    "effort": "xhigh",
+    "reported_effort": null,
+    "identity_status": "accepted",
+    "complete_original_report_sha256": "a33705a30be17f322a06cf76c4c39cad2c9d74ebeb2d2397d0c3934627e54422",
+    "execution": "Source reading only; shell unavailable; verdict changes."
+  },
+  "acceptance_round1_correction": {
+    "report_id": "23280",
+    "provider": "codex",
+    "role": "implementer",
+    "native_model": "gpt-6-astra",
+    "requested_effort": "xhigh",
+    "native_reported_effort": null,
+    "complete_original_report_sha256": "36fa560e82adfcab98d935e71473e00c0d0b678f9f2c54098777f615353fc619",
+    "execution": "Parent-run source corrections, checks and measurements; later review returned changes."
+  },
+  "acceptance_review_round2": {
+    "report_id": "23944",
+    "provider": "claude",
+    "role": "reviewer",
+    "requested_model": "opus",
+    "canonical_model": "claude-opus-5-5",
+    "native_model": "claude-opus-5-5",
+    "requested_effort": "xhigh",
+    "native_reported_effort": null,
+    "identity_status": "accepted",
+    "complete_original_report_sha256": "4097d01ab0aff2589dd87b43c8eeab4c37b93ac736dff642e138713d5b5191c7",
+    "verdict": "changes",
+    "execution": "Source reading only; shell unavailable. Hashes, tests and binaries were parent-reported, not independently executed."
+  }
+}

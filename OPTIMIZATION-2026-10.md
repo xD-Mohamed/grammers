@@ -20,7 +20,9 @@ Both requested `xhigh`; neither receipt independently confirms native effort.
 Claude's first implementation review requested changes and did not run builds.
 The orchestrator checkpointed round-one corrections as `5b16ac4`. The second
 review requested further changes, tracked in [REVIEW-ROUND2.md](REVIEW-ROUND2.md).
-Publication remains gated on independent acceptance.
+The orchestrator checkpointed those corrections as `5f0cb05`; the latest
+corrections are in [the acceptance ledger](benchmarks/2026-10-30/final/acceptance-review.md).
+Exact-tree acceptance/publication receipts are external under [PUBLICATION.md](PUBLICATION.md).
 
 ## Scope matrix
 
@@ -31,12 +33,13 @@ Publication remains gated on independent acceptance.
 | P0 outbound accounting | Reserve all encrypted/header/container/padding bytes under `0xff000`; automatic wrapper included; all requests, ACKs and salt requests use capacity checks. | Exact request limit with compression on/off and update wrapper; retained ACK IDs/deadline across full packets; batches max 8192. Conservative uncompressed limit is now 1,044,372 bytes, minus automatic wrapper. |
 | P0 inbound limits | Remove outbound-derived inbound body cap; require constructor-sized aligned bodies within the enclosing slice. | Real TL `rpc_result(upload.file)` with 1 MiB bytes: 1,048,604-byte body. Transport receive cap unchanged. |
 | P0 gzip resources | Configurable 64 MiB/member, 128 MiB cumulative/packet, depth 32, work 4096 defaults. Charge failed decode work too; iterative body unwrapping releases owned parents. | Exact-limit CRC/footer, over-limit expansion, trailing data/recovery, deep wrappers, sibling cumulative budget, hidden nested simple containers. These are resource policies, not protocol size guarantees. |
+| Generated TL recursion | **Deferred, known availability risk.** MTProto/gzip budgets do not bound recursive generated TL values such as `RichText::Bold` inside a cached webpage. | A valid authenticated peer can deliver a deeply nested value within the packet cap, including content influenced by remote users. Recursive decoding can overflow the process stack; checked runners cannot contain that abort. A coordinated generated-decoder depth budget and safe partial-value cleanup/drop strategy require separate implementation and compatibility testing. Neither the packet cap nor wrapper depth is claimed to solve this. Opus finding 3 explicitly permits a recorded deferral; final acceptance must account for this remaining risk. |
 | P0 authenticated envelopes | Check session, padding, positive odd IDs, nonnegative sequence, container count (1024), complete inner envelope layout/order; bounded recent-ID set suppresses replays and re-ACKs duplicates. Gzip bodies reuse their one authenticated envelope. | Cache adds up to 8 KiB of retained IDs/session, allocated on use. Timestamp rejection remains conditional work: a reused key does not prove local clock synchronization; bad-time service messages must remain usable. |
 | P0 input-triggered panics | Wrong session, unsupported service replies, malformed plain lengths, raw `Sender` requests, short RPC replies and responses to serialized-but-unsent requests become errors. | Sender permit-release/cancellation tests; malformed container and length tests; protocol errors scoped to the connection or addressed invocation. |
 | P0 delivery/retry certainty | Share original connection error through `Arc`; distinguish not-sent from sent/partially-written packets. Default retry accepts only not-sent connection failures. Typed transport inspection preserves cached-key 404 fallback through the new wrappers. Keep custom retry policies explicit. | Partial/complete/no-write scenarios, original OS error inspection and shared identity, bounded definitive protocol rejections; local transport-404 fixture must observe a fresh plaintext ReqPqMulti. No automatic replay after ambiguous delivery. |
 | P1 service handling | Plain phase has no automatic keepalive. ACK-only packets get an idle deadline on the retained sender timer; one salt-prefetch does not block later user RPCs. At most one retained keepalive record; a sent ping is replaced at the next interval even if its pong is delayed. At most 65,536 pending ACK IDs, finite salt/protocol rejection retries. Optional valid-packet liveness deadline complements initialization timeout. Config persistence is outside the network initialization deadline. | Paused-time service/keepalive/liveness tests; timer cancellation, ping retirement, ACK backlog/wire compatibility/deferral; silent connections. Salt expiry and the storage/deadline boundary remain review targets. |
 | P1 pool admission/fairness | Per-DC single-flight setup tasks outside control runner; failures shared with waiters; cancellation/shutdown owns tasks; generation identity rejects stale completions. Serialize config/key merges under a cold-path async mutex. Optional request-byte admission travels with SDK permits. Cooperative runner work budgets. | Same-DC shared setup failure while another DC responds; caller-only 200-waiter cancellation, partial cancellation, disconnect and stale-generation regressions; byte limit and release tests. Cross-pool fairness still depends on caller/runtime scheduling. |
-| P1 updates and client input | Out-of-band home failure generation wakes `UpdatesReceiver` even when updates queue is full. Catch-up alternates account/channels and rotates channel pages. Deduplicate saved channels, preserve older position, widen counters. Checked loading/account/channel recovery rejects invalid state without mutation; legacy loading repairs missing common state. Invalid mentions remain ordinary text links; empty/incomplete albums fail locally; download offsets/upload part counts checked. | Queue-overflow notification, saved-state/counter and catch-up tests, malformed HTML/Markdown, media input regressions. Legacy low-level message-box methods retain preconditions; the normal updates receiver uses the checked paths. |
+| P1 updates and client input | Out-of-band home failure generation wakes `UpdatesReceiver` even when updates queue is full. Catch-up alternates account/channels and rotates channel pages. Deduplicate saved channels, preserve older position, widen counters. Strict loading/account/channel recovery rejects invalid state without mutation; normal stream loading repairs invalid saved rows and missing common state with warnings. Invalid mentions remain ordinary text links; empty/incomplete albums fail locally; download offsets/upload part counts checked. | Queue-overflow notification, saved-state/counter and catch-up tests, malformed HTML/Markdown, media input regressions. Legacy low-level message-box methods retain preconditions; the normal updates receiver uses repairing `load` for saved state and checked response-application paths. |
 | P2 micro-optimizations | Published-prime cache, duplicate future removal and selective timer reset adopted. Existing shared-body/gzip/ACK/routing A/B controls rerun. New compression, packing, lookup, serializer and allocator designs are **not evaluated**, not rejected by evidence. | The [correction matrix](REVIEW-ROUND1.md) distinguishes evaluated components and unevaluated proposals; paired RPC, runtime, open-loop and saturated-heap data bound the measured scope. |
 | P3 upstream intake | Inspect canonical Codeberg through `1e31e73cd9797790905bbea82cd75adcbe6f1242`; adapt `ad7b4725` accounting and `1e31e73` sender validation, preserve deferred ACKs and separate inbound cap. | No upstream merge. Schema 232, dependency/version changes, sans-I/O/transport rewrites and media API changes remain isolated intake candidates, not prerequisites for these fixes. |
 
@@ -76,6 +79,10 @@ unused dependency removal, `98b7b88` Debug, `07b51ab` logging typo, `c8d6979`
 MsgId conversion, `4101f5e` configurable transport, `e564eef` slice extension,
 `a984cac` sans-I/O extraction, `dfffb71` layer 232, `15b7afa` version,
 `5b80079` dependencies, `6ce4c54` TTL semantics.
+
+The [canonical Git source audit](benchmarks/2026-10-30/final/upstream/README.md)
+now verifies the official remote tip, parent/tree/diff hashes and the challenged
+patches, and explains each deferred intake item from its actual source.
 
 ## Historical measurements at the reviewed checkpoint
 
@@ -230,14 +237,15 @@ this document. Resolve blocking findings and re-run affected checks.
 The orchestrator checkpointed the initial implementation as `8f109a6` and the
 first correction as `5b16ac4`. These are historical source identities, not a
 claim about the checkout's current HEAD or publication status. Local
-branch/worktree details belong in the private handoff.
+execution-location details are excluded from public artifacts.
 
 Remaining-work ledger for the review/completion continuation:
 
-1. Continue independent Opus review against the round-two correction diff and raw
+1. Continue independent Opus review against the full cumulative candidate plus
+   the second Opus correction recorded in REVIEW-OPUS-ROUND2.md and raw
    measurements. Persist its complete report and both native runner receipts
    with the Duo run; requested `xhigh` must not be described as independently
-   native-confirmed effort. Current implementation acceptance is **pending**.
+   native-confirmed effort. Acceptance is recorded outside this tree under PUBLICATION.md.
 2. Prioritize delivery-aware error/fresh-key compatibility, per-DC setup
    cancellation/generation races and storage timing, ACK/salt semantics,
    envelope/replay validation, gzip budgets, and checked message-box recovery.
@@ -253,3 +261,21 @@ Remaining-work ledger for the review/completion continuation:
 5. Any later publication must follow the owner's applicable authorization and
    review gate, verify the intended fork/branch, use a normal push, and compare
    the remote SHA. No review ledger alone constitutes publication approval.
+
+
+### Post-Opus correction scope
+
+[REVIEW-OPUS-CORRECTION.md](REVIEW-OPUS-CORRECTION.md) supersedes earlier
+acceptance claims for the correction that incorrectly rejected zero QTS.
+The three historical checkpoints `8f109a6`, `5b16ac4`, `5f0cb05` retain their
+original subjects because historical receipts pin those objects. Any eventual
+final commit should use a conventional subject, after the applicable review gate.
+At that correction checkpoint, independent acceptance and publication were
+pending. Later publication follows the owner's applicable instructions and gates.
+
+The receive-arm-only cooperative-budget alternative (finding 13) is deferred:
+the current charge covers ready read/write/service iterations as well as the
+request arm, and removing those charges can change starvation behavior. The
+existing remove-all control establishes a tradeoff, not optimal placement or
+historical throughput causation. No scheduling policy change or new performance
+claim is made from that unmeasured proposal.

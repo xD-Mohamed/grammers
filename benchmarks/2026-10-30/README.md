@@ -5,8 +5,8 @@ compatibility and results. All network traffic in these tests is localhost.
 
 This directory's top-level samples describe the historical implementation
 checkpoint `8f109a6`, before review corrections. Use [round1/README.md](round1/README.md)
-for the current identical-harness comparison, runtime controls, saturated heap,
-source provenance and final validation. Historical figures are retained rather
+for that historical comparison and its runtime controls. Use
+[final/README.md](final/README.md) for current source, measurements and validation. Historical figures are retained rather
 than silently replaced.
 
 ## Reproduction
@@ -31,7 +31,7 @@ shared; alternating samples reduce order bias but do not remove host noise.
    python3 scripts/compare-loopback.py \
      --baseline artifacts/baseline-loopback \
      --candidate artifacts/candidate-final-loopback \
-     --output /tmp/grammers-comparison --runs 3
+     --output artifacts/grammers-comparison --runs 3
    ```
 
    The script hashes both executables, alternates A/B then B/A, preserves every

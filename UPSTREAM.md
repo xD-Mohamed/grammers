@@ -11,6 +11,14 @@ integration ancestor below remain unchanged. See
 [the implementation/review ledger](OPTIMIZATION-2026-10.md) for scope,
 compatibility, measurements and publication gates.
 
+The [2026-10-30 Git source verification](benchmarks/2026-10-30/final/upstream/README.md)
+records the canonical remote tip and all 17 newer commit dispositions, with
+saved accounting, request-validation, buffer-relocation and layer-232 patches.
+Web-page access failed; the verification used a successful fetch from Codeberg's
+official Git endpoint. The remote names below describe the maintenance setup;
+the isolated review clone currently has only `origin`, so this audit fetched the
+canonical URL directly without adding or changing a remote.
+
 Current upstream integration (2026-10-18): merged all three pending commits
 through `633d7fe` from `upstream/master`; the TL schema remains layer 230.
 This adds `InputAudio`, `InputVideo`, typed media lifetime controls, and upstream

@@ -11,13 +11,19 @@ use std::sync::Arc;
 use grammers_mtsender::SenderPoolHandle;
 use grammers_session::storages::ErasedSession;
 
+#[cfg(test)]
+pub(crate) type TestRpcResponder =
+    dyn Fn(i32, &[u8]) -> Result<Vec<u8>, grammers_mtsender::InvocationError> + Send + Sync;
+
 pub(crate) struct ClientInner {
     pub(crate) session: Arc<ErasedSession>,
     pub(crate) api_id: i32,
     pub(crate) handle: SenderPoolHandle,
     pub(crate) configuration: ClientConfiguration,
-    pub(crate) auth_copied_to_dcs: tokio::sync::Mutex<Vec<i32>>,
+    pub(crate) auth_copied_to_dcs: tokio::sync::Mutex<Vec<(i32, Box<[u8; 256]>)>>,
     pub(crate) lifecycle: Option<super::runtime::ManagedLifecycle>,
+    #[cfg(test)]
+    pub(crate) rpc_responder: Option<Arc<TestRpcResponder>>,
 }
 
 /// Wrapper around [`SenderPool`] to facilitate interaction with Telegram's API.
@@ -43,6 +49,18 @@ pub struct ClientConfiguration {
     ///
     /// The cached peers are then usable by other methods such as [`Client::resolve_peer`]
     /// for as long as the same persisted session is used.
+    ///
+    /// Live updates establish login proof even without cached self metadata.
+    /// Explicit login and [`Client::get_me`] still cache that metadata when this
+    /// option is disabled.
+    ///
+    /// Channel catch-up needs a usable cached access hash. Without one, the first
+    /// recovery episode waits up to 30 one-second retries; live PTS updates for
+    /// that channel are suppressed during this grace and its backlog is discarded
+    /// if access stays unavailable. Scheduling can extend the wait. Later episodes
+    /// skip this grace until access is learned or a difference succeeds. This
+    /// exhaustion memory lasts only for the current update receiver. Disabling
+    /// caching therefore cannot guarantee lossless channel updates.
     pub auto_cache_peers: bool,
 }
 

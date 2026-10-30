@@ -1,0 +1,41 @@
+{
+  "parent_executed": true,
+  "results": [
+    {
+      "guard": "worktree",
+      "command": [
+        "python3",
+        "scripts/check-optimization-evidence.py",
+        "--expect-worktree",
+        "<different-worktree>"
+      ],
+      "expected_exit": 1,
+      "actual_exit": 1,
+      "diagnostic": "AssertionError: wrong candidate worktree"
+    },
+    {
+      "guard": "branch",
+      "command": [
+        "python3",
+        "scripts/check-optimization-evidence.py",
+        "--expect-branch",
+        "not-the-candidate"
+      ],
+      "expected_exit": 1,
+      "actual_exit": 1,
+      "diagnostic": "AssertionError: wrong candidate branch"
+    },
+    {
+      "guard": "head",
+      "command": [
+        "python3",
+        "scripts/check-optimization-evidence.py",
+        "--expect-head",
+        "7774ed666317d981e1dfea0d12311cbd38acb43e"
+      ],
+      "expected_exit": 1,
+      "actual_exit": 1,
+      "diagnostic": "AssertionError: wrong candidate HEAD"
+    }
+  ]
+}

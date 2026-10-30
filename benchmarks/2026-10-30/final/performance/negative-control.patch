@@ -1,0 +1,71 @@
+--- a/grammers-mtsender/src/sender_pool.rs
++++ b/grammers-mtsender/src/sender_pool.rs
+@@ -1424,7 +1424,6 @@
+         let mut updates_closed = false;
+ 
+         let result = loop {
+-            tokio::task::consume_budget().await;
+             tokio::select! {
+                 step = sender.step() => match step {
+                     Ok(all_new_updates) => {
+@@ -1537,6 +1536,60 @@
+ mod optimization_tests {
+     use super::*;
+     use tl::Serializable;
++
++    #[tokio::test]
++    async fn ready_connection_queue_yields_before_draining_its_backlog() {
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let (sender, peer) = tokio::join!(
++            connect_with_auth(
++                Transport::new(),
++                ServerAddr::Tcp {
++                    address: listener.local_addr().unwrap()
++                },
++                [0; 256]
++            ),
++            listener.accept()
++        );
++        let _peer = peer.unwrap().0;
++        let (tx, rx) = queue::unbounded_channel();
++        let mut responses = Vec::new();
++        for _ in 0..512 {
++            let (tx_result, rx_result) = oneshot::channel();
++            // Invalid bodies fail synchronously without socket progress, so
++            // the ready queue itself must not monopolize the runtime.
++            tx.send(Rpc {
++                body: Bytes::from_static(&[0; 3]),
++                permit: None,
++                tx: tx_result,
++            })
++            .unwrap();
++            responses.push(rx_result);
++        }
++        let session = erase(Arc::new(
++            grammers_session::storages::MemorySession::default(),
++        ));
++        let runner = run_sender(sender.unwrap(), rx, None, 2, session, Arc::default());
++        tokio::pin!(runner);
++        tokio::select! { biased;
++            _ = &mut runner => panic!("open connection should remain active"),
++            _ = std::future::ready(()) => {}
++        }
++        let mut completed = 0;
++        for result in &mut responses {
++            match result.try_recv() {
++                Ok(Err(InvocationError::Io(error))) => {
++                    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
++                    completed += 1;
++                }
++                Err(oneshot::error::TryRecvError::Empty) => {}
++                other => panic!("unexpected request outcome: {other:?}"),
++            }
++        }
++        assert!(
++            (1..responses.len()).contains(&completed),
++            "completed {completed}"
++        );
++    }
+ 
+     #[tokio::test]
+     async fn socket_failure_drains_unframed_queue_with_original_error_and_permits() {

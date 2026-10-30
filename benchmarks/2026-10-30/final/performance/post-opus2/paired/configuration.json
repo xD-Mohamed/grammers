@@ -1,0 +1,23 @@
+{
+  "binaries": {
+    "baseline": {
+      "name": "baseline-loopback",
+      "sha256": "a69fa15ecf14db57bd3b149189458b86405c1a9f331925d561d49f6c5bc95ae1"
+    },
+    "candidate": {
+      "name": "grammers-opus2-loopback",
+      "sha256": "cb3b75a1008f6485ed81cb17ea564a33486b76b33b614a57754cbd1a3d5630b8"
+    }
+  },
+  "environment": {
+    "LOOPBACK_SHORT": "1",
+    "LOOPBACK_WINDOW_MS": "1500",
+    "LOOPBACK_CLIENT_CPUS": "0",
+    "LOOPBACK_SERVER_CPUS": "2,3",
+    "LOOPBACK_RUNTIME": "current"
+  },
+  "pairs": 12,
+  "command": "<binary> --exact loopback_rpc_cost --ignored --nocapture --test-threads=1",
+  "cpu_affinity": "client thread 0; responder threads 2,3",
+  "source_inputs_sha256": "94c015aac9c37cab1adb435deccca824363a29a043fbe529db05cba32d645b23"
+}

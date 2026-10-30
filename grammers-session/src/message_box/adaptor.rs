@@ -494,11 +494,21 @@ impl PtsInfo {
             _ => true,
         };
         valid_peer
-            && Self::from_update(update)
-                .is_none_or(|info| info.count >= 0 && info.pts >= info.count)
+            && Self::raw_from_update(update).is_none_or(|info| {
+                info.count >= 0
+                    && (info.pts == NO_PTS || info.pts >= info.count)
+                    && match info.key {
+                        Key::Channel(id) => crate::types::PeerId::channel(id).is_some(),
+                        _ => true,
+                    }
+            })
     }
 
     pub(super) fn from_update(update: &tl::enums::Update) -> Option<Self> {
+        Self::raw_from_update(update).filter(|info| info.pts != NO_PTS)
+    }
+
+    fn raw_from_update(update: &tl::enums::Update) -> Option<Self> {
         use tl::enums::Update::*;
         match update {
             NewMessage(u) => Some(Self {
@@ -758,6 +768,5 @@ impl PtsInfo {
             PaidReactionPrivacy(_) => None,
             _ => None,
         }
-        .filter(|info| info.pts != NO_PTS)
     }
 }

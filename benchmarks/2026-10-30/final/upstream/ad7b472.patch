@@ -1,0 +1,227 @@
+commit ad7b4725f7ad62a93ddd251035405b628e1bed1e
+Author:     Lonami Exo <totufals@hotmail.com>
+AuthorDate: Tue Oct 27 22:25:22 2026 +0100
+Commit:     Lonami Exo <totufals@hotmail.com>
+CommitDate: Tue Oct 27 22:25:22 2026 +0100
+
+    Reevaluate sizes of and refactor buffers to prevent connection reset loops
+
+diff --git a/grammers-crypto/src/lib.rs b/grammers-crypto/src/lib.rs
+index ccfba2c..1c64347 100644
+--- a/grammers-crypto/src/lib.rs
++++ b/grammers-crypto/src/lib.rs
+@@ -100,6 +100,9 @@ fn calc_key(auth_key: &AuthKey, msg_key: &[u8; 16], side: Side) -> ([u8; 32], [u
+     (aes_key, aes_iv)
+ }
+ 
++/// Maximum amount of padding that will be returned by `determine_padding_v2_length`.
++pub const MAX_PADDING_LEN: usize = 32;
++
+ /// Determines the padding length needed for a plaintext of a certain length,
+ /// according to the following citation:
+ ///
+@@ -111,7 +114,7 @@ fn determine_padding_v2_length(len: usize) -> usize {
+ 
+ /// Generates random padding data and returns the amount of bytes from said
+ /// data that need to be appended to the buffer to make it correctly-sized.
+-pub fn get_padding_data_v2(buffer_len: usize) -> ([u8; 32], usize) {
++pub fn get_padding_data_v2(buffer_len: usize) -> ([u8; MAX_PADDING_LEN], usize) {
+     let random_padding = {
+         let mut rnd = [0; 32];
+         getrandom::fill(&mut rnd).expect("failed to generate a secure padding");
+diff --git a/grammers-mtproto/src/lib.rs b/grammers-mtproto/src/lib.rs
+index 801402d..bf0f736 100644
+--- a/grammers-mtproto/src/lib.rs
++++ b/grammers-mtproto/src/lib.rs
+@@ -29,6 +29,10 @@ pub use deque_buffer::DequeBuffer;
+ /// The default compression threshold to be used.
+ pub const DEFAULT_COMPRESSION_THRESHOLD: Option<usize> = Some(512);
+ 
++/// Maximum serialized request size. Requests above this size
++/// are dropped, as they would otherwise reset the connection.
++pub const MAX_REQUEST_SIZE: usize = manual_tl::Message::MAX_BODY_SIZE;
++
+ /// A Message Identifier.
+ ///
+ /// When requests are serialized, a new message identifier is attached to them.
+diff --git a/grammers-mtproto/src/manual_tl.rs b/grammers-mtproto/src/manual_tl.rs
+index cb59857..1a87487 100644
+--- a/grammers-mtproto/src/manual_tl.rs
++++ b/grammers-mtproto/src/manual_tl.rs
+@@ -10,8 +10,10 @@
+ 
+ use std::io::Write;
+ 
++use crate::transport::MAX_TRANSPORT_BUFFER_SIZE;
+ use flate2::Compression;
+ use flate2::write::{GzDecoder, GzEncoder};
++use grammers_crypto::MAX_PADDING_LEN;
+ use grammers_tl_types::{self as tl, Cursor, Deserializable, Identifiable, Serializable};
+ 
+ use crate::mtp;
+@@ -33,10 +35,24 @@ pub(crate) struct Message {
+     pub body: Vec<u8>,
+ }
+ 
++// https://core.telegram.org/mtproto/description#encrypted-message
++// Subtracting key_id (i64) and msg_key (i128).
++const MAX_ENCRYPTED_MESSAGE_SIZE: usize = MAX_TRANSPORT_BUFFER_SIZE - 8 - 16;
++
++// https://core.telegram.org/mtproto/description#encrypted-message-encrypted-data
++// Subtracting salt (i64), session_id (i64) and padding's upper bound.
++pub(crate) const MAX_ENCRYPTED_DATA_SIZE: usize =
++    MAX_ENCRYPTED_MESSAGE_SIZE - 8 - 8 - MAX_PADDING_LEN;
++
+ impl Message {
+     // msg_id (8 bytes), seq_no (4 bytes), bytes (4 len)
+     pub const SIZE_OVERHEAD: usize = 16;
+ 
++    /// Maximum size a single request can be before it would be rejected by Telegram.
++    /// Pushing a request above this size will panic.
++    pub const MAX_BODY_SIZE: usize =
++        MAX_ENCRYPTED_DATA_SIZE - MessageContainer::SIZE_OVERHEAD - Message::SIZE_OVERHEAD;
++
+     /// Peek the constructor ID from the body.
+     pub fn constructor_id(&self) -> Result<u32, tl::deserialize::Error> {
+         u32::from_bytes(&self.body)
+@@ -72,7 +88,7 @@ impl Deserializable for Message {
+         let len = i32::deserialize(buf)?;
+         assert!(len >= 0);
+         let len = len as usize;
+-        assert!(len < MessageContainer::MAXIMUM_SIZE);
++        assert!(len < Message::MAX_BODY_SIZE);
+         let mut body = vec![0; len];
+         buf.read_exact(&mut body)?;
+ 
+@@ -131,13 +147,8 @@ pub(crate) struct MessageContainer {
+ }
+ 
+ impl MessageContainer {
+-    // constructor id (4 bytes), inner vec len (4 bytes)
+-    pub const SIZE_OVERHEAD: usize = 8;
+-
+-    /// Maximum size in bytes for the inner payload of the container.
+-    /// Telegram will close the connection if the payload is bigger.
+-    /// The overhead of the container itself is subtracted.
+-    pub const MAXIMUM_SIZE: usize = 1_044_456 - Self::SIZE_OVERHEAD;
++    // message around container, constructor id (4 bytes), inner vec len (4 bytes)
++    pub const SIZE_OVERHEAD: usize = Message::SIZE_OVERHEAD + 8;
+ 
+     /// Maximum amount of messages that can't be sent inside a single
+     /// container, inclusive. Beyond this limit Telegram will respond
+diff --git a/grammers-mtproto/src/mtp/encrypted.rs b/grammers-mtproto/src/mtp/encrypted.rs
+index ad23b50..d201d4f 100644
+--- a/grammers-mtproto/src/mtp/encrypted.rs
++++ b/grammers-mtproto/src/mtp/encrypted.rs
+@@ -206,12 +206,28 @@ impl Encrypted {
+         }
+     }
+ 
+-    fn serialize_msg(
++    fn try_serialize_msg(
+         &mut self,
+         buffer: &mut DequeBuffer<u8>,
+         body: &[u8],
+         content_related: bool,
+-    ) -> MsgId {
++    ) -> Option<MsgId> {
++        // Make sure it's within bounds both in message count and buffer size.
++        if self.msg_count == manual_tl::MessageContainer::MAXIMUM_LENGTH {
++            return None;
++        }
++        let container_overhead = if self.msg_count == 0 {
++            0
++        } else {
++            manual_tl::MessageContainer::SIZE_OVERHEAD
++        };
++        if buffer.len() + body.len() + manual_tl::Message::SIZE_OVERHEAD + container_overhead
++            > manual_tl::MAX_ENCRYPTED_DATA_SIZE
++        {
++            return None;
++        }
++
++        // Within bounds; add it.
+         let msg_id = self.get_new_msg_id();
+ 
+         msg_id.serialize(buffer);
+@@ -220,7 +236,7 @@ impl Encrypted {
+         buffer.extend(body);
+ 
+         self.msg_count += 1;
+-        MsgId(msg_id)
++        Some(MsgId(msg_id))
+     }
+ 
+     fn get_current_salt(&self) -> i64 {
+@@ -244,7 +260,7 @@ impl Encrypted {
+                 num: NUM_FUTURE_SALTS,
+             }
+             .to_bytes();
+-            self.salt_request_msg_id = Some(self.serialize_msg(buffer, &body, true));
++            self.salt_request_msg_id = self.try_serialize_msg(buffer, &body, true);
+         }
+     }
+ 
+@@ -1241,20 +1257,19 @@ impl Mtp for Encrypted {
+                 msg_ids: mem::take(&mut self.pending_ack),
+             })
+             .to_bytes();
+-            self.serialize_msg(buffer, &body, false);
+-        }
+ 
+-        // Serialize `MAXIMUM_LENGTH` requests at most.
+-        if self.msg_count == manual_tl::MessageContainer::MAXIMUM_LENGTH {
+-            return None;
++            if self.try_serialize_msg(buffer, &body, false).is_none() {
++                // This should take priority during the next packet.
++                // Don't allow other requests through until this can be sent.
++                return None;
++            }
+         }
+ 
+         // Requests that are too large would cause Telegram to close the
+         // connection but are so uncommon it's not worth returning `Err`.
+-        assert!(
+-            request.len() + manual_tl::Message::SIZE_OVERHEAD
+-                <= manual_tl::MessageContainer::MAXIMUM_SIZE
+-        );
++        // Without this, failing to serialize would repeatedly return `None`,
++        // leading to an infinite loop as well.
++        assert!(request.len() <= manual_tl::Message::MAX_BODY_SIZE);
+ 
+         // Serialized requests will always be correctly padded.
+         assert!(request.len().is_multiple_of(4));
+@@ -1272,14 +1287,7 @@ impl Mtp for Encrypted {
+             }
+         }
+ 
+-        let new_size = buffer.len() + body.len() + manual_tl::Message::SIZE_OVERHEAD;
+-        if new_size >= manual_tl::MessageContainer::MAXIMUM_SIZE {
+-            // No more messages fit in this container.
+-            return None;
+-        }
+-
+-        // This request still fits in the container, so give it a message ID.
+-        Some(self.serialize_msg(buffer, body, true))
++        self.try_serialize_msg(buffer, body, true)
+     }
+ 
+     fn finalize(&mut self, buffer: &mut DequeBuffer<u8>) -> Option<MsgId> {
+diff --git a/grammers-mtproto/src/transport/mod.rs b/grammers-mtproto/src/transport/mod.rs
+index 44a9186..20dbc7b 100644
+--- a/grammers-mtproto/src/transport/mod.rs
++++ b/grammers-mtproto/src/transport/mod.rs
+@@ -27,6 +27,13 @@ pub use obfuscated::Obfuscated;
+ 
+ use crate::DequeBuffer;
+ 
++// https://github.com/TelegramMessenger/MTProxy/blob/f36d8af769ffaeac36978d38c2c0f6d1104c2137/mtproto/mtproto-proxy.c#L1529
++// Can also be trivially tested manually by attempting to send a text message
++// without compression. Due to 16-byte-padding, the extremes on the size are
++// 0xff008 which causes the connection reset, and 0xfeff8 which doesn't.
++/// Maximum buffer size, inclusive. This ignores the overhead of the transports.
++pub(crate) const MAX_TRANSPORT_BUFFER_SIZE: usize = 0xff000;
++
+ /// The error type reported by the different transports when something is wrong.
+ ///
+ /// Certain transports will only produce certain variants of this error.

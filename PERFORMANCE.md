@@ -1,9 +1,144 @@
 # Library efficiency and fork changes
 
+## Large-reply memory scope
+
+The historical acceptance-round1 1 MiB scenario measured candidate/baseline
+whole-process maximum RSS of 90,504/15,052 KiB at 100 offered calls/s and
+353,152/71,652 KiB at 2,000/s. The baseline failed about half its calls; it did not
+accept the same workload successfully. These absolute figures include the local
+responder and are not an equivalent-work memory ratio or per-bot estimate.
+See [retained scenario evidence](benchmarks/2026-10-30/final/performance/post-acceptance-round1/README.md)
+and the current measurements linked from [final evidence](benchmarks/2026-10-30/final/README.md).
+
+## Current QR and account-kind correction (2026-10-30)
+
+[Current source and raw measurements](benchmarks/2026-10-30/final/performance/post-qr-correction/README.md)
+bind to 689 passing release workspace tests/doctests (44 ignored).
+Twelve paired runs measure plain throughput -3.15% [-7.23%, -1.53%], gzip
+-3.97% [-6.24%, -2.27%], plain CPU/RPC +3.40% [+1.73%, +7.84%], and overload
+completion -0.91% [-6.17%, +3.65%]. Busy p99 changes +124.27% [+98.30%, +143.43%];
+quiet p99 changes -45.47% [-49.33%, -41.42%]. These are local/mock paired intervals,
+not a general optimization or attribution of historical throughput/CPU losses.
+
+Saturated heap remains 7,911 to 16,079 B/session. Dedicated heap-run process RSS
+is 11,288 to 14,624 KiB (+29.55%), including the responder.
+At 100 offered large-reply calls/s, candidate/baseline RSS is
+92,388/15,056 KiB; at 2,000/s,
+372,304/71,924 KiB.
+Baseline failed about half those calls, so these are not equivalent-successful-work
+comparisons. The absolute candidate cost remains important for shared processes.
+
+The repeated SQLite receiver component uses 100,000 cached peers and 256 deliveries:
+median total falls from 867.396 ms to
+0.712 ms across three alternating pairs.
+The separate negative-lookup control remains a table scan. This is in-memory SQLite
+without network/disk, not production capacity. Unknown account kind is resolved
+once on first channel recovery, outside this fixture. Cached bots use limit 100,000; absent metadata uses limit 100 thereafter.
+
+## Historical second acceptance-review correction (2026-10-30)
+
+[Historical source and raw measurements](benchmarks/2026-10-30/final/performance/post-acceptance-round2/README.md)
+bind to 684 passing release workspace tests/doctests (44 ignored).
+Twelve paired runs measure plain throughput -1.17% [-6.08%, +1.73%], gzip
+-0.49% [-3.79%, +2.75%], plain CPU/RPC +1.19% [-1.43%, +6.43%], and overload
+completion -5.88% [-11.06%, -1.54%]. Busy p99 changes +135.31% [+95.11%, +141.29%];
+quiet p99 changes -45.37% [-50.67%, -35.08%]. These are local/mock paired intervals,
+not a general optimization or attribution of historical throughput/CPU losses.
+
+Saturated heap remains 7,911 to 16,079 B/session. Dedicated heap-run process RSS
+is 11,256 to 14,412 KiB (+28.04%), including the responder.
+At 100 offered large-reply calls/s, candidate/baseline RSS is
+90,280/15,032 KiB; at 2,000/s,
+417,916/87,264 KiB.
+Baseline failed about half those calls, so these are not equivalent-successful-work
+comparisons. The absolute candidate cost remains important for shared processes.
+
+The new SQLite receiver component uses 100,000 cached peers and 256 deliveries:
+median total falls from 856.254 ms to
+0.732 ms across three alternating pairs.
+The separate negative-lookup control remains a table scan. This is in-memory SQLite
+without network/disk, not production capacity. Unknown account kind uses a valid
+limit of 100 and can need more catch-up pages than the known-bot limit of 100,000.
+
+## Historical first acceptance-review correction (2026-10-30)
+
+[Historical build, measurements and raw evidence](benchmarks/2026-10-30/final/performance/post-acceptance-round1/README.md)
+bind to the source validated by 673 release workspace tests/doctests (43 ignored).
+Twelve fresh pairs measure plain throughput -1.75% [-5.97%, +2.98%], gzip -1.45%
+[-3.33%, +0.98%], plain CPU/RPC +1.67% [-2.83%, +5.39%], and overload completion
+-5.83% [-11.23%, +2.42%]. These intervals cross zero and do not erase or explain
+the historical significant losses. Busy p99 is +149.63% [+103.90%, +189.59%],
+quiet p99 -38.35% [-49.11%, -27.22%]: the fairness cost remains material.
+No general optimization is claimed.
+
+Saturated client heap remains 7,911 to 16,079 B/session; this dedicated heap run
+measures whole-process RSS 11,336 to 14,432 KiB (+27.31%), including the responder.
+The fixture excludes update-stream caches, exhausted-channel tombstones, SRP jobs
+and per-DC authorization key copies. Fresh warm/cold/1 MiB scheduled-arrival
+scenarios and runtime/socket controls close the previous final-build scenario gap,
+with one pair per scenario and three per runtime configuration. The baseline
+rejects some large replies, so their successful-call latency is not comparable.
+No stack profile or evidence that Tokio should be replaced is claimed.
+
+Separate three-pair components measure cached/expired deadline checks and entire
+missing-hash retry passes. The report retains exact control source and
+benchmark-only patches; terminal sorted-vector removal and overall catch-up
+remain outside those measurements. See the [correction ledger](benchmarks/2026-10-30/final/acceptance-review.md)
+for source fixes and explicit deferrals.
+
+## Historical second Opus correction (2026-10-30)
+
+[Fresh measurements and raw evidence](benchmarks/2026-10-30/final/performance/post-opus2/README.md)
+bind to the source validated by 651 workspace tests/doctests (42 ignored).
+Plain throughput is -5.80% [-9.36%, -2.32%], gzip +0.23% [-8.63%, +2.63%].
+Overload completion is -3.58% [-7.95%, -0.53%], busy p99 +115.73%, quiet p99
+-45.69%. Saturated client heap is 7,911 → 16,079 B/session; heap-run whole-process
+RSS is 11,312 → 14,496 KiB (+28.15%). That candidate uses 128 B/session
+more than the previous correction's saturated heap census. No general optimization
+or causal explanation of the older -8.21% loss is claimed. See
+[historical correction ledger](REVIEW-OPUS-ROUND2.md).
+
+## Historical first Opus correction (2026-10-30)
+
+[Fresh release measurements](benchmarks/2026-10-30/final/performance/post-opus/README.md)
+are tied to the source validated by 631 workspace tests/doctests (41 ignored).
+Twelve pairs show plain throughput -2.91% [-8.04%, -0.40%], gzip -2.05%
+[-8.10%, +5.61%], overload completed -8.36% [-22.63%, +0.37%], busy p99
++118.80% and quiet p99 -28.26%. Saturated client heap is 7,911 → 15,951 B/session.
+No general optimization or explanation of the older significant -8.21% loss is
+claimed. The saturated-heap process run measured maximum RSS 11,308 → 14,356 KiB
+(+27.0%); overload paired RSS remained inconclusive. See [historical correction](REVIEW-OPUS-CORRECTION.md).
+
+## Historical pre-Opus correction measurements (2026-10-30)
+
+[REVIEW-FINAL.md](REVIEW-FINAL.md) identifies the correction that was uncommitted at measurement time on
+`5f0cb05`, its 604 passing workspace tests/doctests (41 ignored) and the remaining
+independent review gate. [Fresh baseline/final measurements](benchmarks/2026-10-30/final/performance/final-summary.md)
+retain exact source/binary hashes, raw logs and reproduction settings.
+
+Twelve release pairs show no established steady-state throughput improvement:
+plain +0.79% [−2.51%, +3.08%], gzip −7.24% [−10.55%, +1.57%]. Split client CPU,
+sampled p99 and process RSS are reported with their limits. Twelve fresh overload
+pairs complete −6.59% [−13.49%, +0.14%] calls; this does **not** erase or explain
+the previous significant −8.21% result. Busy p99 is +113.28%
+[+78.52%, +140.34%], while quiet p99 is −43.38% [−52.72%, −23.11%].
+
+A separate [one-line sender scheduling control](benchmarks/2026-10-30/final/performance/README.md)
+attributes a substantial busy/quiet tail tradeoff to explicit cooperativity,
+without establishing the cause of the throughput loss. The policy is retained
+to prevent ready queues monopolizing a runtime worker. Its regression passes
+in production source and fails when that budget is removed.
+
+Fresh saturated client heap is **7,911 → 15,951 B/session (+101.6%)** over
+400 sessions after 1100 replies each, including the retained 8192-byte replay
+history. The cold/nine-reply snapshots are not substitutes for saturation.
+These local controls establish neither a general optimization nor production
+capacity. No live traffic or consumer deployment ran in this continuation.
+
 ## Protocol reliability and concurrent initialization (2026-10-30)
 
-The [second-review correction ledger](REVIEW-ROUND2.md) records the latest
-measured source and all twelve findings. Twelve repeated overload pairs still
+The [second-review correction ledger](REVIEW-ROUND2.md) records that historical
+checkpoint and all twelve findings. Twelve repeated overload pairs still
 show a regression against `7774ed6`: completed RPCs −8.21% (95% paired bootstrap
 interval [−14.80%, −2.20%]), busy-pool p99 +135.52% [+119.04%, +184.11%], and
 quiet-pool p99 −38.17% [−44.08%, −18.40%]. Removing the redundant response scan
@@ -266,7 +401,6 @@ request clones, invocation tracking and routing. They are preservation checks,
 not a controlled before/after production benchmark; concurrent builds can affect
 absolute timings. No further send-path optimization was justified by this audit.
 
-
 Baseline: Codeberg `82eba650098b54e4c2cb9de83fdab7ea2d21a957`.
 These changes reduce specific allocations and fix failure paths. They do not
 establish a whole-application CPU reduction or eliminate Telegram rate limits.
@@ -527,7 +661,6 @@ and capacity, result-list reuse/retention, direct routing, failed-send fallback,
 lost replies without replay, cancellation, repeated disconnects, late publication,
 pool shutdown and cached-handle release. No live Telegram/account operation ran.
 
-
 ## Timer, reply decoding and optional update delivery
 
 Each sender now retains one pinned keepalive Sleep and resets it only when its
@@ -582,7 +715,6 @@ update suppression, RPC errors and required control responses. The opt-in
 unauthenticated public-test-DC initialization/GetNearestDc test passed; it uses no
 account credentials. Authenticated account/bot update suppression and production
 performance remain deployment checks.
-
 
 ## Send/receive robustness audit (2026-09-20)
 
@@ -706,3 +838,9 @@ Linux x86_64 graphs reports a highest declared dependency `rust-version` of 1.89
 (AES; additionally UUID with all features). This is metadata inspection rather
 than a tested minimum toolchain; these measurements used Rust 1.94.1. No live
 authorization, authenticated RPC, consumer deployment or production profile ran.
+
+The post-Opus production changes affect replay checking and the sender liveness
+path, so these historical numbers are not rebound to the new source manifest.
+Its preserved input list is [measured-source/source-inputs.json](benchmarks/2026-10-30/final/performance/measured-source/source-inputs.json).
+Fresh post-Opus measurements and limitations are recorded in
+[REVIEW-OPUS-CORRECTION.md](REVIEW-OPUS-CORRECTION.md).

@@ -1,0 +1,242 @@
+   Compiling tokio v1.54.0
+   Compiling hickory-net v0.26.3
+   Compiling socks5-proto v0.4.1
+   Compiling hickory-resolver v0.26.3
+   Compiling socks5-server v0.10.1
+   Compiling grammers-session v0.10.0 (<candidate-worktree>/grammers-session)
+   Compiling grammers-mtproto v0.10.0 (<candidate-worktree>/grammers-mtproto)
+   Compiling tokio-socks v0.5.3
+   Compiling grammers-mtsender v0.10.0 (<candidate-worktree>/grammers-mtsender)
+    Finished `release` profile [optimized] target(s) in 1m 56s
+     Running unittests src/lib.rs (target/release/deps/grammers_mtproto-6b5f42781e81a78f)
+
+running 99 tests
+test authentication::tests::authenticated_dh_fixture_reaches_each_validation_gate ... ok
+test authentication::tests::emulate_successful_auth_key_gen_flow ... ok
+test authentication::tests::hashed_invalid_dh_parameters_are_checked_before_arithmetic ... ok
+test authentication::tests::malformed_pq_and_short_dh_answers_return_errors ... ok
+test authentication::tests::validated_dh_retry_keeps_its_distinct_error ... ok
+test manual_tl::optimization_tests::benchmark_borrowed_response_envelope ... ignored, isolated decoder copy benchmark; no encryption, sockets or Telegram
+test manual_tl::optimization_tests::benchmark_gzip_resource_limit ... ignored, isolated release gzip budget/peak RSS measurement; run explicitly
+test manual_tl::optimization_tests::benchmark_reused_gzip_decoder ... ignored, local gzip decoder comparison; no sockets or server traffic
+test manual_tl::optimization_tests::benchmark_rpc_result_reuse ... ignored, isolated allocation/copy benchmark; run release with nocapture
+test manual_tl::optimization_tests::borrowed_containers_match_owned_decoder_and_validate_before_iteration ... ok
+test manual_tl::optimization_tests::borrowed_envelope_preserves_fields_and_points_into_input ... ok
+test manual_tl::optimization_tests::borrowed_gzip_keeps_crc_and_truncation_validation ... ok
+test manual_tl::optimization_tests::container_count_and_trailing_envelopes_are_rejected ... ok
+test manual_tl::optimization_tests::gzip_limits_check_exact_limit_crc_trailing_data_and_recover ... ok
+test manual_tl::optimization_tests::gzip_scratch_is_bounded_and_handles_optional_headers ... ok
+test manual_tl::optimization_tests::inbound_file_reply_is_independent_of_outbound_limit ... ok
+test manual_tl::optimization_tests::malformed_message_lengths_return_errors_without_panicking ... ok
+test manual_tl::optimization_tests::reused_gzip_preserves_validation_and_recovers_after_corruption ... ok
+test manual_tl::optimization_tests::rpc_result_reuses_allocation_and_matches_the_original_decoder ... ok
+test manual_tl::tests::gzip_decompress ... ok
+test mtp::encrypted::tests::acknowledgements_match_typed_encoding_and_reuse_ids ... ok
+test mtp::encrypted::tests::acknowledgements_ride_on_every_message_by_default ... ok
+test mtp::encrypted::tests::authenticated_container_envelopes_validate_before_delivery ... ok
+test mtp::encrypted::tests::authenticated_envelope_checks_and_replay_suppression ... ok
+test mtp::encrypted::tests::authenticated_failed_gzip_crc_charges_sibling_budget ... ok
+test mtp::encrypted::tests::authenticated_future_salts_handles_internal_external_and_empty_replies ... ok
+test mtp::encrypted::tests::authenticated_inner_reply_below_replay_floor_is_a_connection_error ... ok
+test mtp::encrypted::tests::authenticated_invalid_future_salts_preserve_service_state ... ok
+test mtp::encrypted::tests::authenticated_out_of_order_and_inner_replays_deliver_only_once ... ok
+test mtp::encrypted::tests::authenticated_sibling_gzip_wrappers_share_expansion_budget ... ok
+test mtp::encrypted::tests::authenticated_sibling_rpc_gzip_shares_expansion_budget ... ok
+test mtp::encrypted::tests::batched_acknowledgements_wait_for_the_batch_or_the_delay ... ok
+test mtp::encrypted::tests::benchmark_ack_serialization ... ignored, isolated ACK allocation benchmark; run release with nocapture
+test mtp::encrypted::tests::borrowed_and_owned_rpc_results_survive_plain_and_gzip_paths ... ok
+test mtp::encrypted::tests::disabled_updates_are_acknowledged_but_rpc_updates_are_returned ... ok
+test mtp::encrypted::tests::disabled_updates_keep_compressed_containers_errors_and_service_messages ... ok
+test mtp::encrypted::tests::ensure_correct_multi_large_serialization ... ok
+test mtp::encrypted::tests::ensure_correct_multi_serialization ... ok
+test mtp::encrypted::tests::ensure_correct_single_large_serialization ... ok
+test mtp::encrypted::tests::ensure_correct_single_serialization ... ok
+test mtp::encrypted::tests::ensure_large_payload_is_rejected ... ok
+test mtp::encrypted::tests::ensure_no_compression_is_honored ... ok
+test mtp::encrypted::tests::ensure_non_padded_payload_is_rejected ... ok
+test mtp::encrypted::tests::ensure_serialization_has_salt_session_id ... ok
+test mtp::encrypted::tests::ensure_some_compression ... ok
+test mtp::encrypted::tests::explicit_service_deadline_flushes_small_batch_and_backlog_is_bounded ... ok
+test mtp::encrypted::tests::failed_optional_salt_prefetch_keeps_requests_and_salt_recovery_working ... ok
+test mtp::encrypted::tests::fast_clock_bad_message_resets_monotonic_floor ... ok
+test mtp::encrypted::tests::gzip_depth_cumulative_budget_and_hidden_container_nesting ... ok
+test mtp::encrypted::tests::idle_ack_only_packet_and_gzip_ack_once ... ok
+test mtp::encrypted::tests::invalid_push_preserves_services_and_salt_packet_excludes_ack ... ok
+test mtp::encrypted::tests::malformed_container_has_no_partial_inner_effects ... ok
+test mtp::encrypted::tests::maximum_compressible_request_preserves_existing_input_limit ... ok
+test mtp::encrypted::tests::maximum_request_fits_without_compression_or_indefinite_deferral ... ok
+test mtp::encrypted::tests::no_updates_wraps_api_bytes_once_and_excludes_protocol_calls ... ok
+test mtp::encrypted::tests::regression_compressed_errors_and_short_replies_are_not_successes ... ok
+test mtp::encrypted::tests::regression_drop_answer_replies_complete_their_own_request ... ok
+test mtp::encrypted::tests::response_list_recycling_preserves_small_capacity_only ... ok
+test mtp::encrypted::tests::salt_prefetch_does_not_block_user_requests_waiting_for_response ... ok
+test mtp::encrypted::tests::seeded_authenticated_packet_mutations_are_bounded_and_panic_free ... ok
+test mtp::encrypted::tests::service_messages_respect_packet_capacity_and_preserve_deferred_acks ... ok
+test mtp::encrypted::tests::time_offset_jitter_preserves_monotonic_message_ids ... ok
+test mtp::plain::tests::ensure_finalize_preserves_buffer ... ok
+test mtp::plain::tests::ensure_only_one_push_allowed ... ok
+test mtp::plain::tests::plain_deserialize_rejects_invalid_headers_and_lengths ... ok
+test mtp::plain::tests::plain_deserialize_returns_only_the_declared_body ... ok
+test transport::abridged::tests::a_message_starting_with_negative_bytes_is_not_a_transport_error ... ok
+test transport::abridged::tests::pack_empty ... ok
+test transport::abridged::tests::pack_large ... ok
+test transport::abridged::tests::pack_non_padded - should panic ... ok
+test transport::abridged::tests::pack_normal ... ok
+test transport::abridged::tests::regression_extended_length_is_unsigned_and_waits_for_payload ... ok
+test transport::abridged::tests::unpack_bad_status ... ok
+test transport::abridged::tests::unpack_large ... ok
+test transport::abridged::tests::unpack_normal ... ok
+test transport::abridged::tests::unpack_small ... ok
+test transport::abridged::tests::unpack_two_at_once ... ok
+test transport::full::tests::pack_empty ... ok
+test transport::full::tests::pack_non_padded - should panic ... ok
+test transport::full::tests::pack_normal ... ok
+test transport::full::tests::pack_twice ... ok
+test transport::full::tests::regression_minimum_status_does_not_overflow ... ok
+test transport::full::tests::unpack_bad_crc ... ok
+test transport::full::tests::unpack_bad_seq ... ok
+test transport::full::tests::unpack_bad_status ... ok
+test transport::full::tests::unpack_normal ... ok
+test transport::full::tests::unpack_small ... ok
+test transport::full::tests::unpack_two_at_once ... ok
+test transport::intermediate::tests::pack_empty ... ok
+test transport::intermediate::tests::pack_non_padded - should panic ... ok
+test transport::intermediate::tests::pack_normal ... ok
+test transport::intermediate::tests::regression_fragmented_packets_wait_for_header_and_entire_body ... ok
+test transport::intermediate::tests::unpack_bad_status ... ok
+test transport::intermediate::tests::unpack_normal ... ok
+test transport::intermediate::tests::unpack_small ... ok
+test transport::intermediate::tests::unpack_two_at_once ... ok
+test transport::obfuscated::tests::benchmark_obfuscated_handshake_setup ... ignored, isolated obfuscated handshake setup benchmark; randomness included, no network
+test transport::obfuscated::tests::obfuscated_handshake_preserves_tag_and_advances_outgoing_cipher_once ... ok
+test transport::property_tests::seeded_transport_mutations_never_return_out_of_bounds_offsets ... ok
+
+test result: ok. 93 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running unittests src/lib.rs (target/release/deps/grammers_mtsender-9e64502d115faf15)
+
+running 109 tests
+test configuration::retry_budget_tests::auto_sleep_retries_only_definite_connection_errors ... ok
+test configuration::retry_budget_tests::retry_budget_preserves_delays_and_stops_at_total_limit ... ok
+test errors::tests::categories_and_wait_delays_are_typed ... ok
+test errors::tests::check_rpc_error_parsing ... ok
+test errors::tests::unframed_setup_errors_preserve_source_and_correct_certainty ... ok
+test invocation_tracker::benchmarks::benchmark_invocation_tracking_cost ... ignored, local tracker cost comparison; no routing, sockets or requests
+test net::tcp::tests::connections_disable_nagle ... ok
+test net::tcp::tests::invalid_proxy_urls_preserve_error_kind_and_context_without_connecting ... ok
+test queue::tests::benchmark_queue_handoff ... ignored, local queue cost comparison; run release with nocapture
+test queue::tests::cancelled_receive_loses_nothing ... ok
+test queue::tests::close_rejects_sends_but_drains_queued_items ... ok
+test queue::tests::concurrent_senders_deliver_everything ... ok
+test queue::tests::dropping_the_receiver_drops_queued_items_and_rejects_sends ... ok
+test queue::tests::items_arrive_in_order_and_storage_starts_empty ... ok
+test queue::tests::receiver_wakes_for_items_and_for_the_last_sender ... ok
+test sender::optimization_tests::auth_generation_uses_bounded_jobs_for_both_cpu_steps ... ok
+test sender::optimization_tests::benchmark_initial_receive_allocation ... ignored, isolated allocation benchmark; run release with nocapture
+test sender::optimization_tests::benchmark_own_full_update_decoding ... ignored, isolated full-update decoding benchmark; synthetic requests, no sockets
+test sender::optimization_tests::benchmark_ping_timer_reuse ... ignored, isolated pending timer polling benchmark; no sockets
+test sender::optimization_tests::buffered_reply_after_liveness_deadline_is_processed_before_expiry ... ok
+test sender::optimization_tests::cancellation_before_framing_releases_reservation_without_a_send ... ok
+test sender::optimization_tests::cancellation_preserves_framed_data_but_does_not_resend_rejected_requests ... ok
+test sender::optimization_tests::cancelled_sent_request_keeps_reservation_until_reply_or_disconnect ... ok
+test sender::optimization_tests::cancelled_steps_keep_one_ping_timer_and_do_not_postpone_keepalive ... ok
+test sender::optimization_tests::cancelled_unsent_requests_are_removed_but_keepalives_are_sent ... ok
+test sender::optimization_tests::connection_failures_preserve_delivery_certainty_and_error_source ... ok
+test sender::optimization_tests::dh_job_does_not_block_single_thread_io_progress ... ok
+test sender::optimization_tests::execute_then_drop_response_reports_uncertain_legacy_invocation ... ok
+test sender::optimization_tests::factorization_step_runs_with_current_thread_progress ... ok
+test sender::optimization_tests::four_started_dh_jobs_retain_capacity_after_caller_cancellation ... ok
+test sender::optimization_tests::invalid_raw_enqueues_release_permits_before_returning_errors ... ok
+test sender::optimization_tests::keepalive_backlog_is_bounded_and_pong_allows_the_next_ping ... ok
+test sender::optimization_tests::malformed_own_updates_do_not_consult_the_original_request ... ok
+test sender::optimization_tests::own_affected_messages_preserve_channel_identity_and_common_fallback ... ok
+test sender::optimization_tests::own_full_updates_do_not_consult_the_original_request ... ok
+test sender::optimization_tests::own_full_updates_survive_missing_or_malformed_original_requests ... ok
+test sender::optimization_tests::own_short_sent_update_falls_back_without_a_decodable_send_message ... ok
+test sender::optimization_tests::own_short_sent_update_keeps_the_original_message_and_fields ... ok
+test sender::optimization_tests::own_update_is_expanded_before_cancelled_request_retirement ... ok
+test sender::optimization_tests::partial_ready_packet_does_not_extend_liveness_deadline ... ok
+test sender::optimization_tests::partially_written_keepalive_survives_repeated_ping_deadlines ... ok
+test sender::optimization_tests::plain_handshake_never_enqueues_keepalives ... ok
+test sender::optimization_tests::protocol_rejections_have_a_finite_retry_budget ... ok
+test sender::optimization_tests::receive_buffer_grows_for_fragmented_packets_and_keeps_the_hard_limit ... ok
+test sender::optimization_tests::result_waiter_finds_the_reservation_already_released ... ok
+test sender::optimization_tests::sent_ping_is_replaced_when_pong_is_late ... ok
+test sender::optimization_tests::service_deadline_uses_the_retained_timer_across_step_cancellation ... ok
+test sender::optimization_tests::short_liveness_pings_before_deadline_and_huge_timeout_is_safe ... ok
+test sender::optimization_tests::silent_connection_obeys_liveness_deadline ... ok
+test sender::optimization_tests::terminal_error_waiters_observe_released_reservations_during_wake ... ok
+test sender::optimization_tests::tracked_requests_record_when_they_were_written ... ok
+test sender::optimization_tests::unsent_response_variants_fail_at_the_existing_request_lookup ... ok
+test sender::optimization_tests::waiting_step_reports_liveness_expiry_without_another_step ... ok
+test sender::optimization_tests::zero_byte_writes_are_errors_instead_of_busy_loops ... ok
+test sender_pool::footprint_tests::long_lived_futures_hold_their_state_once ... ok
+test sender_pool::optimization_tests::admission_covers_warm_raw_and_tracked_entry_points ... ok
+test sender_pool::optimization_tests::benchmark_cold_waiter_scan ... ignored, local cold-waiter scan comparison; no network connection
+test sender_pool::optimization_tests::benchmark_prepared_request_clones ... ignored, isolated payload clone benchmark; run release with nocapture
+test sender_pool::optimization_tests::benchmark_warm_connection_route ... ignored, isolated routing benchmark; no sockets or Telegram RPCs
+test sender_pool::optimization_tests::bounded_admission_survives_waiter_cancellation ... ok
+test sender_pool::optimization_tests::byte_admission_is_released_with_sdk_request_not_waiter ... ok
+test sender_pool::optimization_tests::checked_runner_classifies_child_panic_and_clears_routes ... ok
+test sender_pool::optimization_tests::cold_arrivals_poll_only_new_waiters_until_a_closure_wake ... ok
+test sender_pool::optimization_tests::concurrent_configuration_merges_survive_yielding_storage ... ok
+test sender_pool::optimization_tests::connection_cancel_wakeup_is_scoped_and_cannot_be_missed ... ok
+test sender_pool::optimization_tests::connection_errors_still_return_without_emitting_disabled_update_events ... ok
+test sender_pool::optimization_tests::connection_initialization_deadline_releases_tracked_request ... ok
+test sender_pool::optimization_tests::control_backlog_yields_before_draining_ready_work ... ok
+test sender_pool::optimization_tests::disabled_update_configuration_closes_channel_and_rejects_stream_creation ... ok
+test sender_pool::optimization_tests::dropped_queued_requests_release_reservations_before_waking_waiters ... ok
+test sender_pool::optimization_tests::empty_update_receiver_rearms_get_state_after_home_failure ... ok
+test sender_pool::optimization_tests::full_update_queue_does_not_hide_home_failure_notification ... ok
+test sender_pool::optimization_tests::get_state_survives_cancelled_next_and_failed_storage_with_saved_channels ... ok
+test sender_pool::optimization_tests::invalid_dc_config_is_rejected_before_any_storage_write ... ok
+test sender_pool::optimization_tests::invalid_get_state_preserves_storage_and_retries_recovery ... ok
+test sender_pool::optimization_tests::invalid_remote_config_reports_protocol_category_to_observers ... ok
+test sender_pool::optimization_tests::invalid_socket_channel_does_not_start_recovery_or_block_updates ... ok
+test sender_pool::optimization_tests::logged_out_home_failure_does_not_request_account_state ... ok
+test sender_pool::optimization_tests::malformed_raw_bodies_fail_before_reaching_the_runner ... ok
+test sender_pool::optimization_tests::overflow_is_counted_and_observer_lag_is_explicit ... ok
+test sender_pool::optimization_tests::oversized_raw_bodies_fail_before_routing_and_exact_limits_are_accepted ... ok
+test sender_pool::optimization_tests::parked_pool_rejects_requests_before_activation ... ok
+test sender_pool::optimization_tests::partial_cold_cancellation_releases_admission_for_other_dc ... ok
+test sender_pool::optimization_tests::pending_disconnects_block_stale_route_publication ... ok
+test sender_pool::optimization_tests::preexisting_connections_classify_failures_using_the_current_home_dc ... ok
+test sender_pool::optimization_tests::public_checked_and_legacy_runners_contain_policy_panics ... ok
+test sender_pool::optimization_tests::quit_releases_cached_channels_and_stops_connection_tasks ... ok
+test sender_pool::optimization_tests::ready_connection_queue_yields_before_draining_its_backlog ... ok
+test sender_pool::optimization_tests::receiver_created_before_login_rechecks_self_while_next_is_waiting ... ok
+test sender_pool::optimization_tests::receiver_startup_repairs_bad_saved_channels_and_keeps_valid_rows ... ok
+test sender_pool::optimization_tests::regression_cancelled_cold_call_does_not_block_pool_shutdown ... ok
+test sender_pool::optimization_tests::regression_quit_interrupts_cold_initialization_with_a_live_caller ... ok
+test sender_pool::optimization_tests::rejected_cached_key_starts_a_fresh_plain_handshake ... ok
+test sender_pool::optimization_tests::rejected_queue_send_falls_back_once_but_lost_reply_does_not ... ok
+test sender_pool::optimization_tests::rejected_retry_does_not_format_the_original_error ... ok
+test sender_pool::optimization_tests::request_exceeding_entire_byte_budget_is_permanently_invalid ... ok
+test sender_pool::optimization_tests::same_dc_initialization_is_shared_and_other_dcs_remain_responsive ... ok
+test sender_pool::optimization_tests::setup_task_panic_retires_live_waiters_and_their_permits ... ok
+test sender_pool::optimization_tests::shared_and_owned_request_apis_preserve_the_payload_allocation ... ok
+test sender_pool::optimization_tests::slow_setup_storage_rearms_connection_liveness_after_key_persistence ... FAILED
+test sender_pool::optimization_tests::socket_failure_drains_unframed_queue_with_original_error_and_permits ... ok
+test sender_pool::optimization_tests::stale_setup_completion_cannot_retire_replacement_waiter ... ok
+test sender_pool::optimization_tests::stopped_pool_rejects_even_a_still_open_cached_route ... ok
+test sender_pool::optimization_tests::two_hundred_cold_cancellations_close_peer_without_quit ... ok
+test sender_pool::optimization_tests::typed_retry_reuses_request_storage_and_keeps_retry_policy ... ok
+test sender_pool::optimization_tests::unaligned_raw_bodies_do_not_reach_cold_or_warm_senders ... ok
+test sender_pool::optimization_tests::update_receiver_skips_missing_and_invalid_channels_without_stalling ... ok
+test sender_pool::optimization_tests::warm_route_bypasses_pool_and_keeps_shared_payload ... ok
+test sender_pool::optimization_tests::warm_route_cancellation_keeps_the_response_channel_cancelled ... ok
+
+failures:
+
+---- sender_pool::optimization_tests::slow_setup_storage_rearms_connection_liveness_after_key_persistence stdout ----
+
+thread 'sender_pool::optimization_tests::slow_setup_storage_rearms_connection_liveness_after_key_persistence' (653) panicked at grammers-mtsender/src/sender_pool.rs:1902:9:
+assertion failed: started.elapsed() >= Duration::from_secs(10)
+
+
+failures:
+    sender_pool::optimization_tests::slow_setup_storage_rearms_connection_liveness_after_key_persistence
+
+test result: FAILED. 100 passed; 1 failed; 8 ignored; 0 measured; 0 filtered out; finished in 1.85s
+
+error: test failed, to rerun pass `-p grammers-mtsender --lib`

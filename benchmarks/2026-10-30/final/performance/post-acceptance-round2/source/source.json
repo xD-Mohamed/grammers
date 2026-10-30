@@ -1,0 +1,24 @@
+{
+  "baseline": "7774ed666317d981e1dfea0d12311cbd38acb43e",
+  "correction_checkpoint": "5f0cb0511416e666b5476c078c0aaa86d9bce69e",
+  "branch": "<candidate-branch>",
+  "diff_command": "scripts/check-optimization-evidence.py: source_diff(repo, --cached, correction_checkpoint), using isolated Git configuration and full-index binary diffs",
+  "diff_sha256": "f410843b1ec757d095b6d12940ec73cb2219d05082e3cebe61a41d1ff0d1672f",
+  "source_inputs_sha256": "f39d322de0885831e90e74ee4c232b0b079042314bfe0df2b3b743273b413c00",
+  "harness_sha256": "b840c64ac397e50117e58faae89dadeba61e85e3c61bdc7eb09cc125878f7071",
+  "integration": "Correction of the acceptance review findings. Exact-tree acceptance and publication receipts are external under PUBLICATION.md.",
+  "final_loopback_binary_sha256": "18a5a263b0e6cd628ecd79f8079c878a39bd97aea47036ba8d2c633b7353a7f6",
+  "baseline_loopback_binary_sha256": "a69fa15ecf14db57bd3b149189458b86405c1a9f331925d561d49f6c5bc95ae1",
+  "build_receipt": "performance/post-acceptance-round2/build.json",
+  "validation_receipt": "validation/acceptance-r2-commands.json",
+  "benchmark_configurations": {
+    "paired": "performance/post-acceptance-round2/paired/configuration.json",
+    "overload": "performance/post-acceptance-round2/overload/configuration.json",
+    "heap": "performance/post-acceptance-round2/heap/configuration.json",
+    "allocations": "performance/post-acceptance-round2/allocations/configuration.json"
+  },
+  "deadline_receipt": "performance/post-acceptance-round2/deadlines/receipt.json",
+  "scenario_receipt": "performance/post-acceptance-round2/scenarios/receipt.json",
+  "retry_pass_receipt": "performance/post-acceptance-round2/retry-pass/receipt.json",
+  "receiver_receipt": "performance/post-acceptance-round2/receiver/receipt.json"
+}

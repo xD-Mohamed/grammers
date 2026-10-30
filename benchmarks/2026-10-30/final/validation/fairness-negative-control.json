@@ -1,0 +1,20 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--locked",
+    "--release",
+    "-p",
+    "grammers-mtsender",
+    "--lib",
+    "sender_pool::optimization_tests::ready_connection_queue_yields_before_draining_its_backlog",
+    "--",
+    "--exact",
+    "--nocapture"
+  ],
+  "expected_exit": 101,
+  "actual_exit": 101,
+  "elapsed_seconds": 86.482,
+  "patch_sha256": "d6a144475dbe84755dc14f149dbdc279c4ebd2316ee452feceb4c3784b63b2c0"
+}
