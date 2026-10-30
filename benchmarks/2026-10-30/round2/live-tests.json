@@ -1,0 +1,39 @@
+{
+  "binary_sha256": "676af34b22e1aa59a13527cab517c4bbbaf993526554f9ab95aa1739aa056a36",
+  "source_diff_sha256": "637188bcaf8d743259babb13250dee1c0e4e97143ab832310fcd6c313f600138",
+  "source_diff_command": "git diff 5b16ac41ae9d6b0cdd0bf42df50d6064561bc19e -- grammers-mtsender/src grammers-mtproto/src grammers-session/src",
+  "tests": [
+    {
+      "name": "test_no_updates_initialization_on_public_test_dc",
+      "exit_code": 0,
+      "command": [
+        "timeout",
+        "--kill-after=2s",
+        "40s",
+        "<binary>",
+        "--exact",
+        "test_no_updates_initialization_on_public_test_dc",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ]
+    },
+    {
+      "name": "test_invoke_encrypted_method",
+      "exit_code": 0,
+      "command": [
+        "timeout",
+        "--kill-after=2s",
+        "40s",
+        "<binary>",
+        "--exact",
+        "test_invoke_encrypted_method",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ]
+    }
+  ],
+  "reviewed_checkpoint": "5b16ac41ae9d6b0cdd0bf42df50d6064561bc19e",
+  "source_snapshot": "live-source.patch records the diff at the live-test build, before later warning-policy/test edits; this is not a command to reconstruct it from a later working tree."
+}

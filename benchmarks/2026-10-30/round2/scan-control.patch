@@ -1,0 +1,27 @@
+--- a/grammers-mtsender/src/sender.rs
++++ b/grammers-mtsender/src/sender.rs
+@@ -632,6 +632,24 @@
+         mut results: Vec<Deserialization>,
+         updates: &mut Vec<UpdatesLike>,
+     ) -> Result<(), ReadError> {
++        for result in &results {
++            let (id, container) = match result {
++                Deserialization::RpcResult(r) => (r.msg_id, false),
++                Deserialization::RpcError(r) => (r.msg_id, false),
++                Deserialization::BadMessage(r) => (r.msg_id, true),
++                Deserialization::Failure(r) => (r.msg_id, false),
++                _ => continue,
++            };
++            if self.requests.iter().any(|r| {
++                matches!(&r.state, RequestState::Serialized(pair)
++                if pair.msg_id == id || (container && pair.container_msg_id == id))
++            }) {
++                return Err(mtp::DeserializeError::InvalidEnvelope {
++                    reason: "response for an unsent request",
++                }
++                .into());
++            }
++        }
+         for result in results.drain(..) {
+             match result {
+                 Deserialization::OwnUpdate { msg_id, update } => {

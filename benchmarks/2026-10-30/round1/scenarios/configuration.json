@@ -1,0 +1,598 @@
+[
+  {
+    "version": "baseline",
+    "case": "current-1cpu-0",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "current-1cpu-0",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "multi-1cpu-0",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "multi-1cpu-0",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "multi-2cpu-0",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "multi-2cpu-0",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "blocking-1cpu-0",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "blocking-1cpu-0",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "blocking-2cpu-0",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "blocking-2cpu-0",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "current-1cpu-1",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "current-1cpu-1",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "multi-1cpu-1",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "multi-1cpu-1",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "multi-2cpu-1",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "multi-2cpu-1",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "blocking-1cpu-1",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "blocking-1cpu-1",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "blocking-2cpu-1",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "blocking-2cpu-1",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "current-1cpu-2",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "current-1cpu-2",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "multi-1cpu-2",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "multi-1cpu-2",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "multi-2cpu-2",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "multi-2cpu-2",
+    "test": "loopback_rpc_cost",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "blocking-1cpu-2",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "blocking-1cpu-2",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "blocking-2cpu-2",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "blocking-2cpu-2",
+    "test": "loopback_blocking_control",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "open-warm",
+    "test": "loopback_open_loop",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RATE": "20000"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "open-warm",
+    "test": "loopback_open_loop",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RATE": "20000"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "open-overload",
+    "test": "loopback_open_loop",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RATE": "120000"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "open-overload",
+    "test": "loopback_open_loop",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RATE": "120000"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "open-cold",
+    "test": "loopback_open_loop",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RATE": "20000",
+      "LOOPBACK_COLD": "1"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "open-cold",
+    "test": "loopback_open_loop",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RATE": "20000",
+      "LOOPBACK_COLD": "1"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "open-large",
+    "test": "loopback_open_loop",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RATE": "100",
+      "LOOPBACK_LARGE": "1",
+      "LOOPBACK_COLD": "1"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "open-large",
+    "test": "loopback_open_loop",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RATE": "100",
+      "LOOPBACK_LARGE": "1",
+      "LOOPBACK_COLD": "1"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "open-large-burst",
+    "test": "loopback_open_loop",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RATE": "2000",
+      "LOOPBACK_LARGE": "1",
+      "LOOPBACK_COLD": "1"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "open-large-burst",
+    "test": "loopback_open_loop",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RATE": "2000",
+      "LOOPBACK_LARGE": "1",
+      "LOOPBACK_COLD": "1"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "baseline",
+    "case": "saturated-heap",
+    "test": "loopback_session_footprint",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3"
+    },
+    "exit_code": 0
+  },
+  {
+    "version": "candidate",
+    "case": "saturated-heap",
+    "test": "loopback_session_footprint",
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1500",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3"
+    },
+    "exit_code": 0
+  }
+]

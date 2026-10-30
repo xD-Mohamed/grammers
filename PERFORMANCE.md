@@ -2,6 +2,29 @@
 
 ## Protocol reliability and concurrent initialization (2026-10-30)
 
+The [second-review correction ledger](REVIEW-ROUND2.md) records the latest
+measured source and all twelve findings. Twelve repeated overload pairs still
+show a regression against `7774ed6`: completed RPCs −8.21% (95% paired bootstrap
+interval [−14.80%, −2.20%]), busy-pool p99 +135.52% [+119.04%, +184.11%], and
+quiet-pool p99 −38.17% [−44.08%, −18.40%]. Removing the redundant response scan
+does not show a resolved improvement in a separate twelve-pair isolated control;
+it is not an established explanation for the regression. These are short,
+scheduled-arrival local overload runs, not production capacity guarantees.
+
+Cold-waiter arrival bookkeeping improves in an isolated release control:
+20,000 waiters take median 1324.423 ms with the previous poll-all expression and
+3.876 ms with closure-wake/new-suffix polling. This does not measure full
+handshakes or a cancellation storm. A full factorization-budget control takes
+14.871 ms median, 15.081 ms maximum on this host; factorization now runs off the
+async worker. Its fixture and wall-clock limitations are explicit in the ledger.
+[Complete artifacts](benchmarks/2026-10-30/round2/README.md) retain raw samples,
+source/binary hashes and reproduction commands. Two read-only public test-DC
+probes passed; no account login, stress traffic or consumer deployment ran.
+
+The following measurements describe the earlier `5b16ac4` review checkpoint.
+In particular, saturated-session heap was not remeasured for the second-round
+correction; the replay cache is retained.
+
 The [implementation and review ledger](OPTIMIZATION-2026-10.md) records the
 retained P0/P1/P2/P3 findings, upstream attribution, compatibility changes,
 validation and remaining independent review. Changes bound handshake/gzip work,
@@ -9,7 +32,7 @@ separate inbound/outbound limits, preserve delivery certainty, schedule service
 traffic with a retained timer, and isolate cold initialization by DC. They add
 optional byte admission and checked update recovery; Tokio remains the runtime.
 
-After review corrections, **saturated client heap is 7,911 -> 15,887 B/session
+At that checkpoint, **saturated client heap is 7,911 -> 15,887 B/session
 (+100.8%)**, measured across 400 sessions after 1100 replies each. Replay history
 accounts for 8192 bytes at saturation. Before connection the census is
 2103 -> 2143 B; after nine replies 7911 -> 7823 B. The nine-reply snapshot misses
@@ -36,8 +59,8 @@ are per packet, not a global cap across connections.
 fairness, syscall diagnostics, limits and all review dispositions.
 [Raw samples and reproduction instructions](benchmarks/2026-10-30/round1/README.md)
 identify exact source and binaries. Historical three-pair results remain in the
-original ledger, explicitly separated from these final measurements. No Telegram
-traffic or consumer deployment ran.
+original ledger, explicitly separated from the round-one measurements. No Telegram
+traffic or consumer deployment ran during that round-one measurement campaign.
 
 ## Per-session footprint and AES-IGE (2026-10-23)
 

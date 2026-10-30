@@ -1,0 +1,38 @@
+[
+  {
+    "provider": "codex",
+    "role": "implementer",
+    "model": "gpt-6-astra",
+    "native_model": "gpt-6-astra",
+    "expected_model": "gpt-6-astra",
+    "canonical_model": "gpt-6-astra",
+    "reported_provider": "codex",
+    "effort": "xhigh",
+    "reported_effort": null,
+    "effort_source": "requested",
+    "identity_status": "accepted",
+    "available": true,
+    "complete": true,
+    "ok": true,
+    "read_only": false
+  },
+  {
+    "provider": "claude",
+    "role": "reviewer",
+    "model": "opus",
+    "native_model": "claude-opus-5-5",
+    "expected_model": "claude-opus-5-5",
+    "canonical_model": "claude-opus-5-5",
+    "reported_provider": "claude",
+    "effort": "xhigh",
+    "reported_effort": null,
+    "effort_source": "requested",
+    "identity_status": "accepted",
+    "available": true,
+    "complete": true,
+    "ok": true,
+    "read_only": true,
+    "original_report_sha256": "6a1f476227912fd896ec9c551ca14d3da3026c235507347795c0526d8482ef58",
+    "original_report_unicode_characters": 14171
+  }
+]

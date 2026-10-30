@@ -205,16 +205,24 @@ impl MessageContainer {
         let mut check = Cursor::from_slice(data);
         for _ in 0..count {
             let inner = MessageView::deserialize(&mut check)?;
-            if parent.is_some_and(|(id, seq)| {
-                inner.msg_id <= 0
-                    || inner.msg_id % 2 != 1
-                    || inner.msg_id >= id
-                    || inner.seq_no < 0
-                    || inner.seq_no > seq
+            if parent.is_some_and(|(id, _)| {
+                inner.msg_id <= 0 || inner.msg_id % 2 != 1 || inner.msg_id >= id || inner.seq_no < 0
             }) {
                 return Err(crate::mtp::DeserializeError::InvalidEnvelope {
                     reason: "invalid message envelope",
                 });
+            }
+            if let Some((_, seq)) = parent
+                && inner.seq_no > seq
+            {
+                // The documented ordering rule has not been verified against
+                // representative server containers; retain compatibility while
+                // keeping the structural, ID and nonnegative-sequence checks.
+                tracing::warn!(
+                    child_seq = inner.seq_no,
+                    parent_seq = seq,
+                    "container child sequence exceeds parent"
+                );
             }
         }
         if check.pos() != data.len() {

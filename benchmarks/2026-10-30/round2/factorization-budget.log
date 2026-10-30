@@ -1,0 +1,34 @@
+
+running 1 test
+test factorize::tests::benchmark_factorization_budget ... factorization_full_budget round=0 steps=1250000 elapsed_us=15081
+factorization_full_budget round=1 steps=1250000 elapsed_us=14947
+factorization_full_budget round=2 steps=1250000 elapsed_us=14804
+factorization_full_budget round=3 steps=1250000 elapsed_us=14871
+factorization_full_budget round=4 steps=1250000 elapsed_us=14519
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 35 filtered out; finished in 0.07s
+
+	Command being timed: "taskset -c 0 <worktree>/target/release/deps/grammers_crypto-f5b45a6da0c9a623 --exact factorize::tests::benchmark_factorization_budget --ignored --nocapture --test-threads=1"
+	User time (seconds): 0.06
+	System time (seconds): 0.00
+	Percent of CPU this job got: 98%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.07
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 3344
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 2
+	Minor (reclaiming a frame) page faults: 222
+	Voluntary context switches: 5
+	Involuntary context switches: 3
+	Swaps: 0
+	File system inputs: 48
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

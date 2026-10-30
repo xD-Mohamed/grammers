@@ -112,7 +112,7 @@ impl UpdatesReceiver {
         };
         // Don't bother getting pristine update state if we're not logged in.
         let should_get_state =
-            message_box.is_empty() && session.peer(PeerId::self_user()).await?.is_some();
+            !message_box.has_primary_state() && session.peer(PeerId::self_user()).await?.is_some();
 
         Ok(UpdatesReceiver {
             handle,
@@ -143,13 +143,13 @@ impl UpdatesReceiver {
             tokio::task::consume_budget().await;
             let generation = self.handle.home_failure_generation();
             if generation != self.home_failure_generation {
-                self.home_failure_generation = generation;
-                self.should_get_state |= self.message_box.is_empty();
+                self.should_get_state |= !self.message_box.has_primary_state()
+                    && session.peer(PeerId::self_user()).await?.is_some();
                 self.process_socket_updates(UpdatesLike::ConnectionClosed)
                     .await;
+                self.home_failure_generation = generation;
             }
             if self.should_get_state {
-                self.should_get_state = false;
                 match self.invoke(&tl::functions::updates::GetState {}).await {
                     Ok(tl::enums::updates::State::State(state)) => {
                         session
@@ -159,10 +159,12 @@ impl UpdatesReceiver {
                                 qts: state.qts,
                                 date: state.date,
                                 seq: state.seq,
-                                channels: Vec::new(),
+                                channels: self.message_box.session_state().channels,
                             }))
                             .await?;
                         self.message_box.set_state(state);
+                        // Cancellation or storage failure must leave recovery armed.
+                        self.should_get_state = false;
                     }
                     Err(error) => {
                         // Recovery failures must reach the caller. Otherwise a connection failing during GetState

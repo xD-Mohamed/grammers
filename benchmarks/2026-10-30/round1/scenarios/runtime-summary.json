@@ -1,0 +1,252 @@
+{
+  "current-1cpu": {
+    "baseline": {
+      "runs": [
+        {
+          "rate": 71132,
+          "user_us_rpc": 6.23,
+          "sys_us_rpc": 7.75
+        },
+        {
+          "rate": 73891,
+          "user_us_rpc": 5.75,
+          "sys_us_rpc": 7.72
+        },
+        {
+          "rate": 67083,
+          "user_us_rpc": 5.79,
+          "sys_us_rpc": 8.9
+        }
+      ],
+      "median": {
+        "rate": 71132,
+        "user_us_rpc": 5.79,
+        "sys_us_rpc": 7.75
+      }
+    },
+    "candidate": {
+      "runs": [
+        {
+          "rate": 68325,
+          "user_us_rpc": 6.81,
+          "sys_us_rpc": 7.63
+        },
+        {
+          "rate": 73949,
+          "user_us_rpc": 5.8,
+          "sys_us_rpc": 7.69
+        },
+        {
+          "rate": 61930,
+          "user_us_rpc": 7.55,
+          "sys_us_rpc": 8.21
+        }
+      ],
+      "median": {
+        "rate": 68325,
+        "user_us_rpc": 6.81,
+        "sys_us_rpc": 7.69
+      }
+    }
+  },
+  "multi-1cpu": {
+    "baseline": {
+      "runs": [
+        {
+          "rate": 67613,
+          "worker_user_us": 659283,
+          "worker_sys_us": 837391
+        },
+        {
+          "rate": 71993,
+          "worker_user_us": 707868,
+          "worker_sys_us": 796776
+        },
+        {
+          "rate": 71474,
+          "worker_user_us": 681634,
+          "worker_sys_us": 820094
+        }
+      ],
+      "median": {
+        "rate": 71474,
+        "worker_user_us": 681634,
+        "worker_sys_us": 820094
+      }
+    },
+    "candidate": {
+      "runs": [
+        {
+          "rate": 73127,
+          "worker_user_us": 709385,
+          "worker_sys_us": 797641
+        },
+        {
+          "rate": 67314,
+          "worker_user_us": 578631,
+          "worker_sys_us": 921518
+        },
+        {
+          "rate": 70589,
+          "worker_user_us": 663386,
+          "worker_sys_us": 842472
+        }
+      ],
+      "median": {
+        "rate": 70589,
+        "worker_user_us": 663386,
+        "worker_sys_us": 842472
+      }
+    }
+  },
+  "multi-2cpu": {
+    "baseline": {
+      "runs": [
+        {
+          "rate": 87562,
+          "worker_user_us": 1073457,
+          "worker_sys_us": 1255944
+        },
+        {
+          "rate": 82600,
+          "worker_user_us": 1063339,
+          "worker_sys_us": 1145120
+        },
+        {
+          "rate": 91712,
+          "worker_user_us": 1043377,
+          "worker_sys_us": 1298360
+        }
+      ],
+      "median": {
+        "rate": 87562,
+        "worker_user_us": 1063339,
+        "worker_sys_us": 1255944
+      }
+    },
+    "candidate": {
+      "runs": [
+        {
+          "rate": 82145,
+          "worker_user_us": 1170626,
+          "worker_sys_us": 1246491
+        },
+        {
+          "rate": 87745,
+          "worker_user_us": 1144104,
+          "worker_sys_us": 1246455
+        },
+        {
+          "rate": 84955,
+          "worker_user_us": 1039037,
+          "worker_sys_us": 1317431
+        }
+      ],
+      "median": {
+        "rate": 84955,
+        "worker_user_us": 1144104,
+        "worker_sys_us": 1246491
+      }
+    }
+  },
+  "blocking-1cpu": {
+    "baseline": {
+      "runs": [
+        {
+          "rate": 62786,
+          "user_us_rpc": 5.77,
+          "sys_us_rpc": 9.96
+        },
+        {
+          "rate": 58746,
+          "user_us_rpc": 5.847,
+          "sys_us_rpc": 10.863
+        },
+        {
+          "rate": 61608,
+          "user_us_rpc": 5.793,
+          "sys_us_rpc": 10.233
+        }
+      ],
+      "median": {
+        "rate": 61608,
+        "user_us_rpc": 5.793,
+        "sys_us_rpc": 10.233
+      }
+    },
+    "candidate": {
+      "runs": [
+        {
+          "rate": 56810,
+          "user_us_rpc": 5.853,
+          "sys_us_rpc": 11.316
+        },
+        {
+          "rate": 60804,
+          "user_us_rpc": 6.314,
+          "sys_us_rpc": 9.949
+        },
+        {
+          "rate": 60481,
+          "user_us_rpc": 5.826,
+          "sys_us_rpc": 10.523
+        }
+      ],
+      "median": {
+        "rate": 60481,
+        "user_us_rpc": 5.853,
+        "sys_us_rpc": 10.523
+      }
+    }
+  },
+  "blocking-2cpu": {
+    "baseline": {
+      "runs": [
+        {
+          "rate": 86939,
+          "user_us_rpc": 4.524,
+          "sys_us_rpc": 12.736
+        },
+        {
+          "rate": 80215,
+          "user_us_rpc": 4.536,
+          "sys_us_rpc": 13.979
+        },
+        {
+          "rate": 87920,
+          "user_us_rpc": 3.732,
+          "sys_us_rpc": 13.115
+        }
+      ],
+      "median": {
+        "rate": 86939,
+        "user_us_rpc": 4.524,
+        "sys_us_rpc": 13.115
+      }
+    },
+    "candidate": {
+      "runs": [
+        {
+          "rate": 88397,
+          "user_us_rpc": 5.008,
+          "sys_us_rpc": 11.943
+        },
+        {
+          "rate": 81642,
+          "user_us_rpc": 5.277,
+          "sys_us_rpc": 13.441
+        },
+        {
+          "rate": 87888,
+          "user_us_rpc": 3.85,
+          "sys_us_rpc": 13.089
+        }
+      ],
+      "median": {
+        "rate": 87888,
+        "user_us_rpc": 5.008,
+        "sys_us_rpc": 13.089
+      }
+    }
+  }
+}

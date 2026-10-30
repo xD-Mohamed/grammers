@@ -13,8 +13,8 @@ use std::num::NonZeroU32;
 use std::ops::{ControlFlow, Deref};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
-use std::task::Poll;
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -86,6 +86,67 @@ struct PendingConnection {
     dc_id: i32,
     requests: Vec<Rpc>,
     abort_handle: AbortHandle,
+    watched: usize,
+    closure: Arc<ClosureWake>,
+    #[cfg(test)]
+    closure_polls: usize,
+}
+
+#[derive(Default)]
+struct ClosureWake {
+    dirty: AtomicBool,
+    runner: Mutex<Option<Waker>>,
+}
+
+impl Wake for ClosureWake {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.dirty.store(true, Ordering::Release);
+        let runner = self.runner.lock().unwrap().take();
+        if let Some(runner) = runner {
+            runner.wake();
+        }
+    }
+}
+
+impl PendingConnection {
+    fn poll_closed(&mut self, cx: &mut Context<'_>) -> bool {
+        {
+            let mut runner = self.closure.runner.lock().unwrap();
+            if runner.as_ref().is_none_or(|w| !w.will_wake(cx.waker())) {
+                *runner = Some(cx.waker().clone());
+            }
+        }
+        // Register before checking the flag so a concurrent close cannot be
+        // missed. Arrivals only poll the new suffix; a closure wake rescans.
+        let start = if self.closure.dirty.swap(false, Ordering::AcqRel) {
+            0
+        } else {
+            self.watched
+        };
+        let waker = Waker::from(Arc::clone(&self.closure));
+        let mut context = Context::from_waker(&waker);
+        #[cfg(test)]
+        {
+            self.closure_polls += self.requests.len() - start;
+        }
+        self.requests
+            .extract_if(start.., |rpc| rpc.tx.poll_closed(&mut context).is_ready())
+            .for_each(drop);
+        self.watched = self.requests.len();
+        self.requests.is_empty()
+    }
+}
+
+impl Drop for PendingConnection {
+    fn drop(&mut self) {
+        // Response senders may outlive setup; their old closure wakers must
+        // not retain the runner task after this pending group is gone.
+        self.closure.runner.lock().unwrap().take();
+    }
 }
 
 struct ConnectionSetup {
@@ -832,11 +893,7 @@ impl SenderPoolRunner {
                 }
                 dc_id = poll_fn(|cx| {
                     for pending in &mut self.pending {
-                          // Remove closed waiters as we go. poll_closed spends
-                          // cooperative budget; revisiting the same closed prefix
-                          // would otherwise starve both setup cancellation and I/O.
-                          pending.requests.retain_mut(|rpc| rpc.tx.poll_closed(cx).is_pending());
-                          if pending.requests.is_empty() { return Poll::Ready(pending.dc_id); }
+                        if pending.poll_closed(cx) { return Poll::Ready(pending.dc_id); }
                     }
                     Poll::Pending
                 }), if !self.pending.is_empty() => {
@@ -1011,6 +1068,10 @@ impl SenderPoolRunner {
             dc_id,
             requests: vec![rpc],
             abort_handle,
+            watched: 0,
+            closure: Arc::default(),
+            #[cfg(test)]
+            closure_polls: 0,
         });
     }
 
@@ -1028,20 +1089,21 @@ impl SenderPoolRunner {
         else {
             return;
         };
-        let pending = self.pending.swap_remove(index);
+        let mut pending = self.pending.swap_remove(index);
+        let requests = std::mem::take(&mut pending.requests);
         let sender = match result {
             Ok(sender) => sender,
             Err(error) => {
                 let error = error.for_unframed_request();
                 self.report_setup_failure(dc_id, &error);
-                if pending.requests.len() == 1 {
-                    let rpc = pending.requests.into_iter().next().unwrap();
+                if requests.len() == 1 {
+                    let rpc = requests.into_iter().next().unwrap();
                     drop(rpc.permit);
                     let _ = rpc.tx.send(Err(error));
                     return;
                 }
                 let error = Arc::new(error);
-                for rpc in pending.requests {
+                for rpc in requests {
                     drop(rpc.permit);
                     let _ = rpc
                         .tx
@@ -1051,7 +1113,7 @@ impl SenderPoolRunner {
             }
         };
         let (rpc_tx, rpc_rx) = queue::unbounded_channel();
-        for rpc in pending.requests {
+        for rpc in requests {
             if !rpc.tx.is_closed() {
                 let _ = rpc_tx.send(rpc);
             }
@@ -1395,6 +1457,21 @@ fn run_sender(
                         }
                     },
                     Err(err) => {
+                        // The sender retires framed requests itself. Close the
+                        // route before draining calls still owned by this queue:
+                        // none of these could have reached the wire.
+                        let shared = match err {
+                            ReadError::Shared(error) => error,
+                            error => Arc::new(error),
+                        };
+                        rpc_rx.close();
+                        while let Ok(rpc) = rpc_rx.try_recv() {
+                            drop(rpc.permit);
+                            let _ = rpc.tx.send(Err(InvocationError::Read {
+                                error: Arc::clone(&shared),
+                                may_have_been_sent: false,
+                            }));
+                        }
                         // Login migration can promote a connection created while
                         // another DC was home. Classify only at failure, without a
                         // lookup on the RPC path or recreating a live sender.
@@ -1406,7 +1483,7 @@ fn run_sender(
                             state.home_failure.notify_waiters();
                             let _ = forward_update(updates, &state, UpdatesLike::ConnectionClosed);
                         }
-                        break Err(err)
+                        break Err(ReadError::Shared(shared))
                     },
                 },
                 rpc = rpc_rx.recv() => match rpc {
@@ -1460,6 +1537,381 @@ impl fmt::Debug for Request {
 mod optimization_tests {
     use super::*;
     use tl::Serializable;
+
+    #[tokio::test]
+    async fn socket_failure_drains_unframed_queue_with_original_error_and_permits() {
+        use crate::configuration::{AutoSleep, RetryPolicy};
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (sender, peer) = tokio::join!(
+            connect_with_auth(
+                Transport::new(),
+                ServerAddr::Tcp {
+                    address: listener.local_addr().unwrap()
+                },
+                [0; 256]
+            ),
+            listener.accept()
+        );
+        let mut peer = peer.unwrap().0;
+        peer.shutdown().await.unwrap();
+        let (tx, rx) = queue::unbounded_channel();
+        let capacity = Arc::new(Semaphore::new(512));
+        let mut receivers = Vec::new();
+        for _ in 0..512 {
+            let (response, result) = oneshot::channel();
+            let permit = crate::InvocationPermit::with_capacity(
+                None,
+                Arc::clone(&capacity).try_acquire_owned().unwrap(),
+            );
+            tx.send(Rpc {
+                body: Bytes::from(tl::functions::Ping { ping_id: 1 }.to_bytes()),
+                permit: Some(permit),
+                tx: response,
+            })
+            .unwrap();
+            receivers.push(result);
+        }
+        let session = erase(Arc::new(
+            grammers_session::storages::MemorySession::default(),
+        ));
+        let (_, error) = tokio::time::timeout(
+            Duration::from_secs(1),
+            run_sender(sender.unwrap(), rx, None, 2, session, Arc::default()),
+        )
+        .await
+        .unwrap();
+        let ReadError::Shared(source) = error.unwrap_err() else {
+            panic!("shared socket failure")
+        };
+        assert_eq!(
+            source.io_error().unwrap().kind(),
+            std::io::ErrorKind::ConnectionReset
+        );
+        let mut unframed = 0;
+        for result in receivers {
+            let error = result.await.unwrap().unwrap_err();
+            let InvocationError::Read {
+                error: ref inner,
+                may_have_been_sent,
+            } = error
+            else {
+                panic!("lost delivery certainty: {error}")
+            };
+            assert!(Arc::ptr_eq(inner, &source));
+            let retry = AutoSleep::default().should_retry(&RetryContext {
+                fail_count: NonZeroU32::new(1).unwrap(),
+                slept_so_far: Duration::ZERO,
+                error,
+            });
+            if !may_have_been_sent {
+                unframed += 1;
+                assert!(retry.is_continue());
+            } else {
+                assert!(retry.is_break());
+            }
+        }
+        assert!(
+            unframed > 128,
+            "fixture must leave a real queue behind the socket failure"
+        );
+        assert_eq!(capacity.available_permits(), 512);
+        assert!(tx.is_closed());
+    }
+
+    async fn cache_self_user<S: Session>(session: &S)
+    where
+        S::Error: std::fmt::Debug,
+    {
+        session
+            .cache_peer(grammers_session::types::PeerInfo::User {
+                id: 1,
+                auth: None,
+                bot: Some(false),
+                is_self: Some(true),
+            })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn cold_arrivals_poll_only_new_waiters_until_a_closure_wake() {
+        let mut pool = SenderPool::new(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+        );
+        let mut receivers = Vec::new();
+        let mut cx = Context::from_waker(Waker::noop());
+        for _ in 0..20_000 {
+            let (tx, rx) = oneshot::channel();
+            receivers.push(rx);
+            pool.runner.start_setup(
+                999,
+                Rpc {
+                    body: Bytes::from_static(&[1; 4]),
+                    tx,
+                    permit: None,
+                },
+            );
+            assert!(!pool.runner.pending[0].poll_closed(&mut cx));
+        }
+        let pending = &mut pool.runner.pending[0];
+        assert_eq!(pending.closure_polls, 20_000);
+        assert!(!pending.poll_closed(&mut cx));
+        assert_eq!(pending.closure_polls, 20_000);
+        drop(receivers.swap_remove(123));
+        assert!(pending.closure.dirty.load(Ordering::Acquire));
+        assert!(!pending.poll_closed(&mut cx));
+        assert_eq!(pending.requests.len(), 19_999);
+        assert_eq!(pending.closure_polls, 40_000);
+        assert!(!pending.poll_closed(&mut cx));
+        assert_eq!(pending.closure_polls, 40_000);
+    }
+
+    #[test]
+    #[ignore = "local cold-waiter scan comparison; no network connection"]
+    fn benchmark_cold_waiter_scan() {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            for count in [1024, 20_000] {
+                for round in 0..3 {
+                    for incremental in [round % 2 == 0, round % 2 != 0] {
+                        let mut pool = SenderPool::new(Arc::new(grammers_session::storages::MemorySession::default()), 1);
+                        let mut receivers = Vec::with_capacity(count);
+                        let mut cx = Context::from_waker(Waker::noop());
+                        let began = Instant::now();
+                        for _ in 0..count {
+                            let (tx, rx) = oneshot::channel();
+                            receivers.push(rx);
+                            pool.runner.start_setup(999, Rpc { body: Bytes::from_static(&[1; 4]), tx, permit: None });
+                            let pending = &mut pool.runner.pending[0];
+                            if incremental {
+                                assert!(!pending.poll_closed(&mut cx));
+                            } else {
+                                pending.requests.retain_mut(|rpc| rpc.tx.poll_closed(&mut cx).is_pending());
+                            }
+                        }
+                        println!("cold_waiters={count} round={round} incremental={incremental} elapsed_us={}", began.elapsed().as_micros());
+                        // Invalid DC 999 never opens a socket, and dropping the
+                        // runner owns and cancels its single setup task.
+                        drop(pool);
+                        drop(receivers);
+                    }
+                }
+            }
+        });
+    }
+
+    struct RecoverySession {
+        memory: grammers_session::storages::MemorySession,
+        fail_state: AtomicBool,
+    }
+
+    impl Session for RecoverySession {
+        type Error = std::io::Error;
+        fn home_dc_id(&self) -> Result<i32, Self::Error> {
+            self.memory.home_dc_id().map_err(std::io::Error::other)
+        }
+        fn set_home_dc_id(
+            &self,
+            id: i32,
+        ) -> grammers_session::BoxFuture<'_, Result<(), Self::Error>> {
+            Box::pin(async move {
+                self.memory
+                    .set_home_dc_id(id)
+                    .await
+                    .map_err(std::io::Error::other)
+            })
+        }
+        fn dc_option(&self, id: i32) -> Result<Option<DcOption>, Self::Error> {
+            self.memory.dc_option(id).map_err(std::io::Error::other)
+        }
+        fn set_dc_option(
+            &self,
+            option: &DcOption,
+        ) -> grammers_session::BoxFuture<'_, Result<(), Self::Error>> {
+            let option = option.clone();
+            Box::pin(async move {
+                self.memory
+                    .set_dc_option(&option)
+                    .await
+                    .map_err(std::io::Error::other)
+            })
+        }
+        fn peer(
+            &self,
+            id: grammers_session::types::PeerId,
+        ) -> grammers_session::BoxFuture<
+            '_,
+            Result<Option<grammers_session::types::PeerInfo>, Self::Error>,
+        > {
+            Box::pin(async move { self.memory.peer(id).await.map_err(std::io::Error::other) })
+        }
+        fn cache_peer(
+            &self,
+            peer: grammers_session::types::PeerInfo,
+        ) -> grammers_session::BoxFuture<'_, Result<(), Self::Error>> {
+            Box::pin(async move {
+                self.memory
+                    .cache_peer(peer)
+                    .await
+                    .map_err(std::io::Error::other)
+            })
+        }
+        fn updates_state(
+            &self,
+        ) -> grammers_session::BoxFuture<
+            '_,
+            Result<grammers_session::types::UpdatesState, Self::Error>,
+        > {
+            Box::pin(async move {
+                self.memory
+                    .updates_state()
+                    .await
+                    .map_err(std::io::Error::other)
+            })
+        }
+        fn set_update_state(
+            &self,
+            state: grammers_session::types::UpdateState,
+        ) -> grammers_session::BoxFuture<'_, Result<(), Self::Error>> {
+            Box::pin(async move {
+                if self.fail_state.swap(false, Ordering::Relaxed) {
+                    return Err(std::io::Error::other("state fixture failure"));
+                }
+                self.memory
+                    .set_update_state(state)
+                    .await
+                    .map_err(std::io::Error::other)
+            })
+        }
+    }
+
+    async fn expect_get_state(
+        runner: &mut SenderPoolRunner,
+    ) -> oneshot::Sender<Result<Vec<u8>, InvocationError>> {
+        use tl::Identifiable;
+        let Request::Invoke { body, tx, .. } = runner.request_rx.recv().await.unwrap() else {
+            panic!("expected GetState")
+        };
+        assert_eq!(
+            u32::from_le_bytes(body[..4].try_into().unwrap()),
+            tl::functions::updates::GetState::CONSTRUCTOR_ID
+        );
+        tx
+    }
+
+    fn state_reply() -> Vec<u8> {
+        tl::enums::updates::State::State(tl::types::updates::State {
+            pts: 100,
+            qts: 0,
+            date: 1,
+            seq: 1,
+            unread_count: 0,
+        })
+        .to_bytes()
+    }
+
+    fn config_update() -> UpdatesLike {
+        UpdatesLike::Updates(
+            tl::types::UpdateShort {
+                update: tl::enums::Update::Config,
+                date: 1,
+            }
+            .into(),
+        )
+    }
+
+    #[tokio::test]
+    async fn get_state_survives_cancelled_next_and_failed_storage_with_saved_channels() {
+        use grammers_session::types::{ChannelState, UpdateState, UpdatesState};
+        let session = Arc::new(RecoverySession {
+            memory: Default::default(),
+            fail_state: AtomicBool::new(false),
+        });
+        cache_self_user(session.as_ref()).await;
+        let channels = vec![ChannelState { id: 7, pts: 10 }];
+        session
+            .set_update_state(UpdateState::All(UpdatesState {
+                pts: 0,
+                qts: 5,
+                channels: channels.clone(),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        // Cancel next only after GetState has actually entered the request queue.
+        let cancelled = {
+            let next = receiver.next();
+            tokio::pin!(next);
+            tokio::select! { biased; _ = &mut next => panic!("no response"), tx = expect_get_state(&mut pool.runner) => tx }
+        };
+        assert!(cancelled.is_closed());
+        drop(cancelled);
+        session.fail_state.store(true, Ordering::Relaxed);
+        let (result, ()) = tokio::join!(receiver.next(), async {
+            expect_get_state(&mut pool.runner)
+                .await
+                .send(Ok(state_reply()))
+                .unwrap();
+        });
+        assert!(matches!(result, Err(InvocationError::Session(_))));
+        assert_eq!(session.updates_state().await.unwrap().pts, 0);
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let (result, ()) = tokio::join!(receiver.next(), async {
+            expect_get_state(&mut pool.runner)
+                .await
+                .send(Ok(state_reply()))
+                .unwrap();
+            update_tx.send(config_update()).await.unwrap();
+        });
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        let saved = session.updates_state().await.unwrap();
+        assert_eq!(saved.pts, 100);
+        assert_eq!(saved.qts, 0);
+        assert_eq!(saved.channels, channels);
+    }
+
+    #[tokio::test]
+    async fn logged_out_home_failure_does_not_request_account_state() {
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(session),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        pool.runner
+            .state
+            .home_failures
+            .fetch_add(1, Ordering::Release);
+        pool.runner
+            .updates_tx
+            .as_ref()
+            .unwrap()
+            .send(config_update())
+            .await
+            .unwrap();
+        assert_eq!(
+            receiver.next().await.unwrap().0[0].0,
+            tl::enums::Update::Config
+        );
+        assert!(matches!(
+            pool.runner.request_rx.try_recv(),
+            Err(queue::TryRecvError::Empty)
+        ));
+    }
 
     #[tokio::test]
     async fn public_checked_and_legacy_runners_contain_policy_panics() {
@@ -2076,12 +2528,13 @@ mod optimization_tests {
         let mut pool = SenderPool::new(Arc::clone(&session), 1);
         let mut receiver = crate::UpdatesReceiver::create(
             pool.handle.thin.clone(),
-            erase(session),
+            erase(Arc::clone(&session)),
             pool.updates,
             crate::UpdatesConfiguration { catch_up: false },
         )
         .await
         .unwrap();
+        cache_self_user(session.as_ref()).await;
         pool.runner
             .state
             .home_failures

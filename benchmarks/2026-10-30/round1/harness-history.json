@@ -1,0 +1,5 @@
+{
+  "prevalidation_harness_sha256": "bfe9bdfa2c48346651c06a133029ec97578b9d5446dd8d4989b1626369202a88",
+  "change": "Warm independent pools concurrently before measured windows; identical at every compared revision. Blocking control also uses the same four responder workers as the Tokio RPC controls.",
+  "final_harness_sha256": "b840c64ac397e50117e58faae89dadeba61e85e3c61bdc7eb09cc125878f7071"
+}

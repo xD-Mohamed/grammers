@@ -1,0 +1,41 @@
+
+running 1 test
+test sender_pool::optimization_tests::benchmark_cold_waiter_scan ... cold_waiters=1024 round=0 incremental=true elapsed_us=190
+cold_waiters=1024 round=0 incremental=false elapsed_us=3325
+cold_waiters=1024 round=1 incremental=false elapsed_us=3277
+cold_waiters=1024 round=1 incremental=true elapsed_us=149
+cold_waiters=1024 round=2 incremental=true elapsed_us=80
+cold_waiters=1024 round=2 incremental=false elapsed_us=2929
+cold_waiters=20000 round=0 incremental=true elapsed_us=3506
+cold_waiters=20000 round=0 incremental=false elapsed_us=1299173
+cold_waiters=20000 round=1 incremental=false elapsed_us=1341225
+cold_waiters=20000 round=1 incremental=true elapsed_us=3876
+cold_waiters=20000 round=2 incremental=true elapsed_us=3906
+cold_waiters=20000 round=2 incremental=false elapsed_us=1324423
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 95 filtered out; finished in 4.43s
+
+	Command being timed: "taskset -c 0 <worktree>/target/release/deps/grammers_mtsender-dadd0f6c624e0f25 --exact sender_pool::optimization_tests::benchmark_cold_waiter_scan --ignored --nocapture --test-threads=1"
+	User time (seconds): 4.28
+	System time (seconds): 0.14
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:04.43
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 11352
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 39725
+	Voluntary context switches: 282
+	Involuntary context switches: 232
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,0 +1,22 @@
+{
+  "binaries": {
+    "baseline": {
+      "name": "timer-control-loopback",
+      "sha256": "b2dd645bde55392ecef81ed4f422c83b9578dc1772966b94ef5eab0d7036a56b"
+    },
+    "candidate": {
+      "name": "final-loopback",
+      "sha256": "c28044d624f53746a0e6ef5c844b31edd164c92a1e37ed1415490d0307dd5e69"
+    }
+  },
+  "environment": {
+    "LOOPBACK_SHORT": "1",
+    "LOOPBACK_WINDOW_MS": "1500",
+    "LOOPBACK_CLIENT_CPUS": "0",
+    "LOOPBACK_SERVER_CPUS": "2,3",
+    "LOOPBACK_RUNTIME": "current"
+  },
+  "pairs": 22,
+  "command": "<binary> --exact loopback_rpc_cost --ignored --nocapture --test-threads=1",
+  "cpu_affinity": "client thread 0; responder threads 2,3"
+}

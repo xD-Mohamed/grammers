@@ -26,6 +26,31 @@ thread_local! {
 }
 
 #[test]
+fn relearning_primary_state_preserves_saved_channel_recovery() {
+    let channels = vec![ChannelState { id: 7, pts: 10 }];
+    let mut boxes = MessageBoxes::try_load(UpdatesState {
+        pts: 0,
+        qts: 5,
+        channels: channels.clone(),
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(!boxes.is_empty());
+    assert!(!boxes.has_primary_state());
+    let before = boxes.get_channel_difference().unwrap();
+    boxes.set_state(tl::types::updates::State {
+        pts: 100,
+        qts: 0,
+        date: 1,
+        seq: 1,
+        unread_count: 0,
+    });
+    assert!(boxes.has_primary_state());
+    assert_eq!(boxes.session_state().channels, channels);
+    assert_eq!(boxes.get_channel_difference().unwrap(), before);
+}
+
+#[test]
 fn checked_saved_state_and_difference_reject_invalid_counters_without_mutation() {
     let state = UpdatesState {
         pts: 10,

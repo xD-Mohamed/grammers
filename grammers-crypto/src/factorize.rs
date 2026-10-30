@@ -6,6 +6,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+const WORK_LIMIT: usize = 1_250_000;
+
 fn gcd(mut a: u128, mut b: u128) -> u128 {
     while b != 0 {
         let (na, nb) = (b, a % b);
@@ -70,7 +72,7 @@ pub fn try_factorize(pq: u64) -> Option<(u64, u64)> {
     if root * root == pq {
         return is_prime(root).then_some((root, root));
     }
-    let mut work = 1_250_000;
+    let mut work = WORK_LIMIT;
     const ATTEMPTS: [u64; 5] = [43, 47, 53, 59, 61];
     for attempt in ATTEMPTS {
         // > Note that this algorithm may not find the factors and will return failure for composite n.
@@ -209,6 +211,7 @@ mod tests {
             test_factorization_2();
             test_factorization_3();
             factorization_u64_edges_and_shared_budget();
+            full_factorization_budget_is_finite();
             println!("factorization-deadline-child-completed");
             return;
         }
@@ -254,6 +257,32 @@ mod tests {
         assert_eq!(factorize_with_param(p * q, 43, &mut work), None);
         assert_eq!(work, 0);
         assert_eq!(factorize_with_param(p * q, 47, &mut work), None);
+    }
+
+    #[test]
+    fn full_factorization_budget_is_finite() {
+        // A prime forces the inner rho loop to spend its entire budget.
+        // Public try_factorize rejects this input before rho; this deliberately
+        // measures the work ceiling, not a claimed accepted handshake fixture.
+        let mut work = WORK_LIMIT;
+        assert_eq!(
+            factorize_with_param(18_446_744_073_709_551_557, 43, &mut work),
+            None
+        );
+        assert_eq!(work, 0);
+    }
+
+    #[test]
+    #[ignore = "local full-budget factorization cost; no network"]
+    fn benchmark_factorization_budget() {
+        for round in 0..5 {
+            let start = std::time::Instant::now();
+            full_factorization_budget_is_finite();
+            println!(
+                "factorization_full_budget round={round} steps={WORK_LIMIT} elapsed_us={}",
+                start.elapsed().as_micros()
+            );
+        }
     }
 
     #[test]

@@ -1,0 +1,580 @@
+diff --git a/grammers-mtproto/src/mtp/encrypted.rs b/grammers-mtproto/src/mtp/encrypted.rs
+index 6caae74..77ffa9b 100644
+--- a/grammers-mtproto/src/mtp/encrypted.rs
++++ b/grammers-mtproto/src/mtp/encrypted.rs
+@@ -11,7 +11,7 @@ use std::{borrow::Cow, collections::VecDeque, mem};
+ 
+ use grammers_crypto::{AuthKey, DequeBuffer, decrypt_data_v2, encrypt_data_v2};
+ use grammers_tl_types::{self as tl, Cursor, Deserializable, Identifiable, Serializable};
+-use tracing::info;
++use tracing::{info, warn};
+ 
+ use super::{
+     DecodeLimits, Deserialization, DeserializationFailure, DeserializeError, Mtp, RpcResult,
+@@ -459,6 +459,7 @@ impl Encrypted {
+         if buffer.is_empty()
+             && self.salts.len() == 1
+             && self.salt_request_msg_id.is_none()
++            && self.salt_request_failures <= 3
+             && self.get_current_salt() != 0
+             && self.message_fits(buffer, 8)
+         {
+@@ -985,10 +986,8 @@ impl Encrypted {
+             // Response to internal request, do not propagate.
+             self.salt_request_msg_id = None;
+             self.salt_request_failures = self.salt_request_failures.saturating_add(1);
+-            if self.salt_request_failures > 3 {
+-                return Err(DeserializeError::ResourceLimit {
+-                    resource: "salt request retries",
+-                });
++            if self.salt_request_failures == 4 {
++                warn!("disabling optional salt prefetch after repeated rejection");
+             }
+         } else {
+             self.deserialization
+diff --git a/grammers-mtsender/src/sender.rs b/grammers-mtsender/src/sender.rs
+index 5ed5bcf..3340fa8 100644
+--- a/grammers-mtsender/src/sender.rs
++++ b/grammers-mtsender/src/sender.rs
+@@ -632,34 +632,16 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         mut results: Vec<Deserialization>,
+         updates: &mut Vec<UpdatesLike>,
+     ) -> Result<(), ReadError> {
+-        for result in &results {
+-            let (id, container) = match result {
+-                Deserialization::RpcResult(r) => (r.msg_id, false),
+-                Deserialization::RpcError(r) => (r.msg_id, false),
+-                Deserialization::BadMessage(r) => (r.msg_id, true),
+-                Deserialization::Failure(r) => (r.msg_id, false),
+-                _ => continue,
+-            };
+-            if self.requests.iter().any(|r| {
+-                matches!(&r.state, RequestState::Serialized(pair)
+-                if pair.msg_id == id || (container && pair.container_msg_id == id))
+-            }) {
+-                return Err(mtp::DeserializeError::InvalidEnvelope {
+-                    reason: "response for an unsent request",
+-                }
+-                .into());
+-            }
+-        }
+         for result in results.drain(..) {
+             match result {
+                 Deserialization::OwnUpdate { msg_id, update } => {
+                     self.process_own_update(updates, msg_id, update)
+                 }
+                 Deserialization::Update(update) => self.process_update(updates, update),
+-                Deserialization::RpcResult(result) => self.process_result(result),
+-                Deserialization::RpcError(error) => self.process_error(error),
+-                Deserialization::BadMessage(bad_msg) => self.process_bad_message(bad_msg),
+-                Deserialization::Failure(failure) => self.process_deserialize_error(failure),
++                Deserialization::RpcResult(result) => self.process_result(result)?,
++                Deserialization::RpcError(error) => self.process_error(error)?,
++                Deserialization::BadMessage(bad_msg) => self.process_bad_message(bad_msg)?,
++                Deserialization::Failure(failure) => self.process_deserialize_error(failure)?,
+             }
+         }
+         self.mtp.recycle_deserialization(results);
+@@ -702,12 +684,12 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         }
+     }
+ 
+-    fn process_result(&mut self, result: RpcResult) {
+-        if let Some(request) = self.pop_request(result.msg_id) {
++    fn process_result(&mut self, result: RpcResult) -> Result<(), ReadError> {
++        if let Some(request) = self.pop_request(result.msg_id)? {
+             let x = result.body;
+             if x.len() < 4 {
+                 request.complete(Err(mtp::DeserializeError::MessageBufferTooSmall.into()));
+-                return;
++                return Ok(());
+             }
+             let res_id = u32::from_le_bytes([x[0], x[1], x[2], x[3]]);
+             debug!(
+@@ -723,10 +705,11 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+                 "got rpc result but no such request is saved",
+             );
+         }
++        Ok(())
+     }
+ 
+-    fn process_error(&mut self, error: RpcResultError) {
+-        if let Some(req) = self.pop_request(error.msg_id) {
++    fn process_error(&mut self, error: RpcResultError) -> Result<(), ReadError> {
++        if let Some(req) = self.pop_request(error.msg_id)? {
+             debug!(error = ?error.error, "got rpc error");
+             let x = req.body.as_ref();
+             let outcome = InvocationError::Rpc(
+@@ -740,9 +723,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+                 "got rpc error but no such request is saved",
+             );
+         }
++        Ok(())
+     }
+ 
+-    fn process_bad_message(&mut self, bad_msg: BadMessage) {
++    fn process_bad_message(&mut self, bad_msg: BadMessage) -> Result<(), ReadError> {
+         for i in (0..self.requests.len()).rev() {
+             match &self.requests[i].state {
+                 RequestState::Serialized(pair)
+@@ -750,7 +734,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+                 {
+                     // Leave partially written metadata alive until the packet
+                     // completes or the connection is torn down.
+-                    warn!("ignoring bad message for an unsent request");
++                    return Err(mtp::DeserializeError::InvalidEnvelope {
++                        reason: "response for an unsent request",
++                    }
++                    .into());
+                 }
+                 RequestState::Sent(pair)
+                     if pair.msg_id == bad_msg.msg_id || pair.container_msg_id == bad_msg.msg_id =>
+@@ -797,10 +784,14 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+                 _ => {}
+             }
+         }
++        Ok(())
+     }
+ 
+-    fn process_deserialize_error(&mut self, failure: DeserializationFailure) {
+-        if let Some(req) = self.pop_request(failure.msg_id) {
++    fn process_deserialize_error(
++        &mut self,
++        failure: DeserializationFailure,
++    ) -> Result<(), ReadError> {
++        if let Some(req) = self.pop_request(failure.msg_id)? {
+             debug!(error = ?failure.error, "got deserialization failure");
+             req.complete(Err(InvocationError::from(failure.error)));
+         } else {
+@@ -809,6 +800,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+                 "got deserialization failure but no such request is saved",
+             );
+         }
++        Ok(())
+     }
+ 
+     fn peek_request(&self, msg_id: MsgId) -> Option<&Request> {
+@@ -819,21 +811,23 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         })
+     }
+ 
+-    fn pop_request(&mut self, msg_id: MsgId) -> Option<Request> {
++    fn pop_request(&mut self, msg_id: MsgId) -> Result<Option<Request>, ReadError> {
+         for i in 0..self.requests.len() {
+             match &self.requests[i].state {
+                 RequestState::Serialized(pair) if pair.msg_id == msg_id => {
+-                    warn!("ignoring response for an unsent request");
+-                    return None;
++                    return Err(mtp::DeserializeError::InvalidEnvelope {
++                        reason: "response for an unsent request",
++                    }
++                    .into());
+                 }
+                 RequestState::Sent(pair) if pair.msg_id == msg_id => {
+-                    return Some(self.requests.swap_remove(i));
++                    return Ok(Some(self.requests.swap_remove(i)));
+                 }
+                 _ => {}
+             }
+         }
+ 
+-        None
++        Ok(None)
+     }
+ }
+ 
+@@ -896,7 +890,7 @@ pub async fn generate_auth_key<T: Transport>(
+     debug!("gen auth key: sending step 1");
+     let response = sender.invoke(&request).await?;
+     debug!("gen auth key: starting step 2");
+-    let (request, data) = authentication::step2(data, response)?;
++    let (request, data) = run_dh_job(move || authentication::step2(data, response)).await?;
+     debug!("gen auth key: sending step 2");
+     let response = sender.invoke(&request).await?;
+     debug!("gen auth key: starting step 3");
+@@ -1332,10 +1326,12 @@ mod optimization_tests {
+             panic!("unsent");
+         };
+         let msg_id = pair.msg_id;
+-        sender.process_result(RpcResult {
+-            msg_id,
+-            body: vec![1; 4],
+-        });
++        sender
++            .process_result(RpcResult {
++                msg_id,
++                body: vec![1; 4],
++            })
++            .unwrap();
+         assert_eq!(tracker.sent_at(), Some(sent));
+         let _next = tracker.try_acquire().expect("released");
+         assert!(tracker.sent_at().is_none());
+@@ -1369,10 +1365,12 @@ mod optimization_tests {
+             if disconnect {
+                 drop(sender);
+             } else {
+-                sender.process_result(RpcResult {
+-                    msg_id,
+-                    body: vec![1; 4],
+-                });
++                sender
++                    .process_result(RpcResult {
++                        msg_id,
++                        body: vec![1; 4],
++                    })
++                    .unwrap();
+             }
+             assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+             assert_eq!(capacity.available_permits(), 1);
+@@ -1399,10 +1397,12 @@ mod optimization_tests {
+             let reply = rx.blocking_recv();
+             (reply.is_ok(), observer.stage())
+         });
+-        sender.process_result(RpcResult {
+-            msg_id,
+-            body: vec![1; 4],
+-        });
++        sender
++            .process_result(RpcResult {
++                msg_id,
++                body: vec![1; 4],
++            })
++            .unwrap();
+         let (replied, stage) = waiter.join().unwrap();
+         assert!(replied);
+         assert_eq!(stage, crate::InvocationStage::Idle);
+@@ -1468,24 +1468,30 @@ mod optimization_tests {
+                 drop(sender);
+             } else {
+                 match kind {
+-                    0 => sender.process_error(RpcResultError {
+-                        msg_id,
+-                        error: tl::types::RpcError {
+-                            error_code: 420,
+-                            error_message: "FLOOD_WAIT_7".into(),
+-                        },
+-                    }),
+-                    1 => sender.process_deserialize_error(DeserializationFailure {
+-                        msg_id,
+-                        error: mtp::DeserializeError::DecompressionFailed,
+-                    }),
++                    0 => sender
++                        .process_error(RpcResultError {
++                            msg_id,
++                            error: tl::types::RpcError {
++                                error_code: 420,
++                                error_message: "FLOOD_WAIT_7".into(),
++                            },
++                        })
++                        .unwrap(),
++                    1 => sender
++                        .process_deserialize_error(DeserializationFailure {
++                            msg_id,
++                            error: mtp::DeserializeError::DecompressionFailed,
++                        })
++                        .unwrap(),
+                     2 => {
+                         sender.on_error(ReadError::Io(io::Error::new(
+                             io::ErrorKind::ConnectionReset,
+                             "fixture",
+                         )));
+                     }
+-                    _ => sender.process_bad_message(BadMessage { msg_id, code: 32 }),
++                    _ => sender
++                        .process_bad_message(BadMessage { msg_id, code: 32 })
++                        .unwrap(),
+                 }
+                 assert!(sender.requests.is_empty());
+             }
+@@ -1674,10 +1680,12 @@ mod optimization_tests {
+         let RequestState::Sent(pair) = &sender.requests[0].state else {
+             panic!("unsent ping");
+         };
+-        sender.process_result(RpcResult {
+-            msg_id: pair.msg_id,
+-            body: true.to_bytes(),
+-        });
++        sender
++            .process_result(RpcResult {
++                msg_id: pair.msg_id,
++                body: true.to_bytes(),
++            })
++            .unwrap();
+         assert!(sender.requests.is_empty());
+         sender.on_ping_timeout();
+         assert_eq!(sender.requests.len(), 1);
+@@ -1810,10 +1818,12 @@ mod optimization_tests {
+             let RequestState::Sent(pair) = &sender.requests[0].state else {
+                 panic!("not sent");
+             };
+-            sender.process_bad_message(BadMessage {
+-                msg_id: pair.msg_id,
+-                code: 48,
+-            });
++            sender
++                .process_bad_message(BadMessage {
++                    msg_id: pair.msg_id,
++                    code: 48,
++                })
++                .unwrap();
+             assert_eq!(sender.requests.is_empty(), attempt == 3);
+         }
+         assert!(matches!(
+@@ -1892,7 +1902,9 @@ mod optimization_tests {
+             RequestState::Sent(pair) => pair.msg_id,
+             _ => panic!("not sent"),
+         };
+-        sender.process_bad_message(BadMessage { msg_id, code: 48 });
++        sender
++            .process_bad_message(BadMessage { msg_id, code: 48 })
++            .unwrap();
+         assert!(sender.requests.is_empty());
+         sender.try_fill_write();
+         assert!(sender.write_buffer.is_empty());
+diff --git a/grammers-mtsender/src/sender_pool.rs b/grammers-mtsender/src/sender_pool.rs
+index d44d365..46cb8dd 100644
+--- a/grammers-mtsender/src/sender_pool.rs
++++ b/grammers-mtsender/src/sender_pool.rs
+@@ -13,8 +13,8 @@ use std::num::NonZeroU32;
+ use std::ops::{ControlFlow, Deref};
+ use std::panic::{AssertUnwindSafe, catch_unwind};
+ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+-use std::sync::{Arc, OnceLock, RwLock};
+-use std::task::Poll;
++use std::sync::{Arc, Mutex, OnceLock, RwLock};
++use std::task::{Context, Poll, Wake, Waker};
+ use std::time::{Duration, Instant};
+ 
+ use bytes::Bytes;
+@@ -86,6 +86,61 @@ struct PendingConnection {
+     dc_id: i32,
+     requests: Vec<Rpc>,
+     abort_handle: AbortHandle,
++    watched: usize,
++    closure: Arc<ClosureWake>,
++}
++
++#[derive(Default)]
++struct ClosureWake {
++    dirty: AtomicBool,
++    runner: Mutex<Option<Waker>>,
++}
++
++impl Wake for ClosureWake {
++    fn wake(self: Arc<Self>) {
++        self.wake_by_ref();
++    }
++
++    fn wake_by_ref(self: &Arc<Self>) {
++        self.dirty.store(true, Ordering::Release);
++        let runner = self.runner.lock().unwrap().take();
++        if let Some(runner) = runner {
++            runner.wake();
++        }
++    }
++}
++
++impl PendingConnection {
++    fn poll_closed(&mut self, cx: &mut Context<'_>) -> bool {
++        {
++            let mut runner = self.closure.runner.lock().unwrap();
++            if runner.as_ref().is_none_or(|w| !w.will_wake(cx.waker())) {
++                *runner = Some(cx.waker().clone());
++            }
++        }
++        // Register before checking the flag so a concurrent close cannot be
++        // missed. Arrivals only poll the new suffix; a closure wake rescans.
++        let start = if self.closure.dirty.swap(false, Ordering::AcqRel) {
++            0
++        } else {
++            self.watched
++        };
++        let waker = Waker::from(Arc::clone(&self.closure));
++        let mut context = Context::from_waker(&waker);
++        self.requests
++            .extract_if(start.., |rpc| rpc.tx.poll_closed(&mut context).is_ready())
++            .for_each(drop);
++        self.watched = self.requests.len();
++        self.requests.is_empty()
++    }
++}
++
++impl Drop for PendingConnection {
++    fn drop(&mut self) {
++        // Response senders may outlive setup; their old closure wakers must
++        // not retain the runner task after this pending group is gone.
++        self.closure.runner.lock().unwrap().take();
++    }
+ }
+ 
+ struct ConnectionSetup {
+@@ -832,11 +887,7 @@ impl SenderPoolRunner {
+                 }
+                 dc_id = poll_fn(|cx| {
+                     for pending in &mut self.pending {
+-                          // Remove closed waiters as we go. poll_closed spends
+-                          // cooperative budget; revisiting the same closed prefix
+-                          // would otherwise starve both setup cancellation and I/O.
+-                          pending.requests.retain_mut(|rpc| rpc.tx.poll_closed(cx).is_pending());
+-                          if pending.requests.is_empty() { return Poll::Ready(pending.dc_id); }
++                        if pending.poll_closed(cx) { return Poll::Ready(pending.dc_id); }
+                     }
+                     Poll::Pending
+                 }), if !self.pending.is_empty() => {
+@@ -1011,6 +1062,8 @@ impl SenderPoolRunner {
+             dc_id,
+             requests: vec![rpc],
+             abort_handle,
++            watched: 0,
++            closure: Arc::default(),
+         });
+     }
+ 
+@@ -1028,20 +1081,21 @@ impl SenderPoolRunner {
+         else {
+             return;
+         };
+-        let pending = self.pending.swap_remove(index);
++        let mut pending = self.pending.swap_remove(index);
++        let requests = std::mem::take(&mut pending.requests);
+         let sender = match result {
+             Ok(sender) => sender,
+             Err(error) => {
+                 let error = error.for_unframed_request();
+                 self.report_setup_failure(dc_id, &error);
+-                if pending.requests.len() == 1 {
+-                    let rpc = pending.requests.into_iter().next().unwrap();
++                if requests.len() == 1 {
++                    let rpc = requests.into_iter().next().unwrap();
+                     drop(rpc.permit);
+                     let _ = rpc.tx.send(Err(error));
+                     return;
+                 }
+                 let error = Arc::new(error);
+-                for rpc in pending.requests {
++                for rpc in requests {
+                     drop(rpc.permit);
+                     let _ = rpc
+                         .tx
+@@ -1051,7 +1105,7 @@ impl SenderPoolRunner {
+             }
+         };
+         let (rpc_tx, rpc_rx) = queue::unbounded_channel();
+-        for rpc in pending.requests {
++        for rpc in requests {
+             if !rpc.tx.is_closed() {
+                 let _ = rpc_tx.send(rpc);
+             }
+@@ -1395,6 +1449,21 @@ fn run_sender(
+                         }
+                     },
+                     Err(err) => {
++                        // The sender retires framed requests itself. Close the
++                        // route before draining calls still owned by this queue:
++                        // none of these could have reached the wire.
++                        let shared = match err {
++                            ReadError::Shared(error) => error,
++                            error => Arc::new(error),
++                        };
++                        rpc_rx.close();
++                        while let Ok(rpc) = rpc_rx.try_recv() {
++                            drop(rpc.permit);
++                            let _ = rpc.tx.send(Err(InvocationError::Read {
++                                error: Arc::clone(&shared),
++                                may_have_been_sent: false,
++                            }));
++                        }
+                         // Login migration can promote a connection created while
+                         // another DC was home. Classify only at failure, without a
+                         // lookup on the RPC path or recreating a live sender.
+@@ -1406,7 +1475,7 @@ fn run_sender(
+                             state.home_failure.notify_waiters();
+                             let _ = forward_update(updates, &state, UpdatesLike::ConnectionClosed);
+                         }
+-                        break Err(err)
++                        break Err(ReadError::Shared(shared))
+                     },
+                 },
+                 rpc = rpc_rx.recv() => match rpc {
+diff --git a/grammers-mtsender/src/updates_receiver.rs b/grammers-mtsender/src/updates_receiver.rs
+index 481c814..59a055a 100644
+--- a/grammers-mtsender/src/updates_receiver.rs
++++ b/grammers-mtsender/src/updates_receiver.rs
+@@ -112,7 +112,7 @@ impl UpdatesReceiver {
+         };
+         // Don't bother getting pristine update state if we're not logged in.
+         let should_get_state =
+-            message_box.is_empty() && session.peer(PeerId::self_user()).await?.is_some();
++            !message_box.has_primary_state() && session.peer(PeerId::self_user()).await?.is_some();
+ 
+         Ok(UpdatesReceiver {
+             handle,
+@@ -143,13 +143,13 @@ impl UpdatesReceiver {
+             tokio::task::consume_budget().await;
+             let generation = self.handle.home_failure_generation();
+             if generation != self.home_failure_generation {
+-                self.home_failure_generation = generation;
+-                self.should_get_state |= self.message_box.is_empty();
++                self.should_get_state |= !self.message_box.has_primary_state()
++                    && session.peer(PeerId::self_user()).await?.is_some();
+                 self.process_socket_updates(UpdatesLike::ConnectionClosed)
+                     .await;
++                self.home_failure_generation = generation;
+             }
+             if self.should_get_state {
+-                self.should_get_state = false;
+                 match self.invoke(&tl::functions::updates::GetState {}).await {
+                     Ok(tl::enums::updates::State::State(state)) => {
+                         session
+@@ -159,10 +159,12 @@ impl UpdatesReceiver {
+                                 qts: state.qts,
+                                 date: state.date,
+                                 seq: state.seq,
+-                                channels: Vec::new(),
++                                channels: self.message_box.session_state().channels,
+                             }))
+                             .await?;
+                         self.message_box.set_state(state);
++                        // Cancellation or storage failure must leave recovery armed.
++                        self.should_get_state = false;
+                     }
+                     Err(error) => {
+                         // Recovery failures must reach the caller. Otherwise a connection failing during GetState
+diff --git a/grammers-session/src/message_box/mod.rs b/grammers-session/src/message_box/mod.rs
+index 1ae7833..2bc3834 100644
+--- a/grammers-session/src/message_box/mod.rs
++++ b/grammers-session/src/message_box/mod.rs
+@@ -275,6 +275,11 @@ impl MessageBoxes {
+         self.entries.is_empty()
+     }
+ 
++    /// Whether account state is known, independently of saved channel state.
++    pub fn has_primary_state(&self) -> bool {
++        self.entry(Key::Common).is_some()
++    }
++
+     /// Return the next deadline when receiving updates should timeout.
+     ///
+     /// If a deadline expired, the corresponding entries will be marked as needing to get its difference.
+@@ -348,10 +353,10 @@ impl MessageBoxes {
+     /// Should be called right after login if [`MessageBoxes::new`] was used, otherwise undesirable
+     /// updates will be fetched.
+     ///
+-    /// Should only be called while [`MessageBoxes::is_empty`].
++    /// Should only be called while account state is missing. Saved channel state is preserved.
+     pub fn set_state(&mut self, state: tl::types::updates::State) {
+         trace!(?state, "setting state");
+-        debug_assert!(self.is_empty());
++        debug_assert!(!self.has_primary_state());
+         let deadline = next_updates_deadline();
+         self.set_entry(LiveEntry {
+             key: Key::Common,
+@@ -367,7 +372,7 @@ impl MessageBoxes {
+         });
+         self.date = state.date;
+         self.seq = state.seq;
+-        self.next_deadline = deadline;
++        self.next_deadline = self.next_deadline.min(deadline);
+     }
+ 
+     /// Like [`MessageBoxes::set_state`], but for channels. Useful when getting dialogs.

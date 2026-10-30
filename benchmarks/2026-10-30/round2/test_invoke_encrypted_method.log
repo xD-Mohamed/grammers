@@ -1,0 +1,38 @@
+
+running 1 test
+test test_invoke_encrypted_method ...  INFO grammers_mtsender::net::tcp: connecting...
+ INFO grammers_mtsender::sender: generating new authorization key...
+DEBUG grammers_mtsender::sender: gen auth key: sending step 1
+DEBUG grammers_mtsender::sender: enqueueing request req_pq_multi to be serialized
+DEBUG grammers_mtsender::sender: serialized request req_id=be7e8ef1 req_name="req_pq_multi" msg_id=MsgId(0)
+DEBUG grammers_mtsender::sender: sent request with pair=MsgIdPair { msg_id: MsgId(0), container_msg_id: MsgId(0) }
+DEBUG grammers_mtsender::sender: deserializing valid transport packet...
+DEBUG grammers_mtsender::sender: got result res_id=5162463 res_name="resPQ" request=MsgId(0)
+DEBUG grammers_mtsender::sender: gen auth key: starting step 2
+DEBUG grammers_mtsender::sender: gen auth key: sending step 2
+DEBUG grammers_mtsender::sender: enqueueing request req_DH_params to be serialized
+DEBUG grammers_mtsender::sender: serialized request req_id=d712e4be req_name="req_DH_params" msg_id=MsgId(0)
+DEBUG grammers_mtsender::sender: sent request with pair=MsgIdPair { msg_id: MsgId(0), container_msg_id: MsgId(0) }
+DEBUG grammers_mtsender::sender: deserializing valid transport packet...
+DEBUG grammers_mtsender::sender: got result res_id=d0e8075c res_name="server_DH_params_ok" request=MsgId(0)
+DEBUG grammers_mtsender::sender: gen auth key: starting step 3
+DEBUG grammers_mtsender::sender: gen auth key: sending step 3
+DEBUG grammers_mtsender::sender: enqueueing request set_client_DH_params to be serialized
+DEBUG grammers_mtsender::sender: serialized request req_id=f5045f1f req_name="set_client_DH_params" msg_id=MsgId(0)
+DEBUG grammers_mtsender::sender: sent request with pair=MsgIdPair { msg_id: MsgId(0), container_msg_id: MsgId(0) }
+DEBUG grammers_mtsender::sender: deserializing valid transport packet...
+DEBUG grammers_mtsender::sender: got result res_id=3bcbf734 res_name="dh_gen_ok" request=MsgId(0)
+DEBUG grammers_mtsender::sender: gen auth key: completing generation
+ INFO grammers_mtsender::sender: authorization key generated successfully
+DEBUG grammers_mtsender::sender: enqueueing request invokeWithLayer to be serialized
+ INFO grammers_mtproto::mtp::encrypted: only one future salt remaining; asking for more salts
+DEBUG grammers_mtsender::sender: serialized request req_id=da9b0d0d req_name="invokeWithLayer" msg_id=MsgId(7702458641286907652)
+DEBUG grammers_mtsender::sender: sent request with pair=MsgIdPair { msg_id: MsgId(7702458641286907652), container_msg_id: MsgId(7702458641286907652) }
+DEBUG grammers_mtsender::sender: deserializing valid transport packet...
+DEBUG grammers_mtsender::sender: deserializing valid transport packet...
+ INFO grammers_mtproto::mtp::encrypted: got 64 future salts
+DEBUG grammers_mtsender::sender: deserializing valid transport packet...
+DEBUG grammers_mtsender::sender: got result res_id=8e1a1775 res_name="nearestDc" request=MsgId(7702458641286907652)
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.14s

@@ -1,0 +1,45 @@
+{
+  "baseline_commit": "7774ed666317d981e1dfea0d12311cbd38acb43e",
+  "reviewed_checkpoint": "8f109a67458acf35f278451ee6d32c0acaab80e3",
+  "corrections": "Measured before checkpointing; subsequently recorded by the orchestrator at measured_source_checkpoint. Publication is not asserted.",
+  "diff_command": "git diff --binary 8f109a67458acf35f278451ee6d32c0acaab80e3 5b16ac41ae9d6b0cdd0bf42df50d6064561bc19e -- Cargo.lock ':(glob)**/Cargo.toml' ':(glob)**/*.rs'",
+  "diff_sha256": "c01142894a4de5cdaf99975bb12c16b2bb68572349384bde1e4d7118b3d12005",
+  "source_input_hashes": "source-inputs.json",
+  "source_inputs_sha256": "1c879f72e1f63590ac74f0d4c4b228a3d9f545ced8c5d03d203841fe769fd9b8",
+  "harness_sha256": "b840c64ac397e50117e58faae89dadeba61e85e3c61bdc7eb09cc125878f7071",
+  "binaries": {
+    "baseline": "a69fa15ecf14db57bd3b149189458b86405c1a9f331925d561d49f6c5bc95ae1",
+    "final": "c28044d624f53746a0e6ef5c844b31edd164c92a1e37ed1415490d0307dd5e69",
+    "timer-control": "b2dd645bde55392ecef81ed4f422c83b9578dc1772966b94ef5eab0d7036a56b"
+  },
+  "build_command": "cargo test --locked --release -p grammers-mtsender --test loopback --no-run --message-format=json",
+  "build_flags": "default features, default release profile; no target-cpu override",
+  "baseline_overlay": [
+    "grammers-mtsender/tests/loopback.rs",
+    "grammers-mtsender/Cargo.toml",
+    "Cargo.lock"
+  ],
+  "timer_control": "same corrected source plus timer-control.patch",
+  "environment": {
+    "rustc": "1.99.1 (58cf8f9c3 2026-10-13)",
+    "cargo": "1.99.1",
+    "os": "Linux x86_64 5.15.0-124-generic",
+    "cpu_model": "AMD Ryzen 9 7950X3D",
+    "visible_cpus": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "memory_gib_approx": 5.8,
+    "shared_host": true
+  },
+  "component_test_binaries": {
+    "grammers_mtproto-9f20828b2922801d": "fef57ddaf0375aae351a6170969b45f7fb8a75103f69f162630e2dbacfa77871",
+    "grammers_mtsender-dadd0f6c624e0f25": "7c610764d2c925810a513b3dc4a211fdbd1fe02d48e296a586860701a11b9742",
+    "grammers_crypto-f5b45a6da0c9a623": "8b72aa6682352684f5eda272617cd0322a2defc11c3430ac824590312c79bf1a",
+    "grammers_crypto-beb17f4c5dd099c6": "7702c3fddc7fc1289eb1e22b1714368528ac6970855dd81df44fc3b090bc50c1"
+  },
+  "prime_reproduction_command": "cargo test --locked --release -p grammers-crypto --lib two_factor_auth::tests::benchmark_published_prime_validation -- --exact --ignored --nocapture --test-threads=1",
+  "measured_source_checkpoint": "5b16ac41ae9d6b0cdd0bf42df50d6064561bc19e"
+}

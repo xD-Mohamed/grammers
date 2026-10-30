@@ -2,7 +2,9 @@
 
 Reviewed checkpoint: `8f109a67458acf35f278451ee6d32c0acaab80e3`, against
 `7774ed666317d981e1dfea0d12311cbd38acb43e`. This document covers the subsequent
-uncommitted correction diff. It does not assert independent review acceptance.
+correction source subsequently checkpointed by the orchestrator as
+`5b16ac41ae9d6b0cdd0bf42df50d6064561bc19e`. The second review requested changes;
+see [REVIEW-ROUND2.md](REVIEW-ROUND2.md). This historical report does not assert acceptance.
 
 The [complete review](benchmarks/2026-10-30/round1/claude-review.md) and
 [provider receipts](benchmarks/2026-10-30/round1/provenance.json) preserve the new
@@ -47,7 +49,7 @@ not independently reported native effort. The older missing prose remains missin
 | 31 | Accepted. Exercise authenticated container validation through process_plaintext. | Equal/lower child seq accepted; higher/negative seq and nonpositive/even/not-older IDs rejected before delivery. |
 | 32 | Accepted. Add caller-only, partial cancellation, disconnect and stale completion cases. | Socket EOF and admission checked before Quit; old task identity cannot remove the replacement waiter. |
 | 33 | Accepted. Drive next with an RPC responder; force storage to yield during concurrent config merge. | Real next recovery tests, a ready-control-backlog cooperative-yield test and deterministic concurrent IPv4/IPv6 merge test; cross-pool fairness measured by scheduled arrivals. |
-| 34 | Accepted. Add deterministic seeded mutation/property corpora without I/O. | 4096 structured authenticated-packet mutations and transport offsets checked over 512 input sizes. This is finite property coverage, not a claim of continuous coverage-guided fuzzing. |
+| 34 | Accepted. Add deterministic seeded mutation/property corpora without I/O. | 4096 mutations of one small rpc_result seed, plus transport offsets checked over 512 input sizes. The mutation corpus does not cover container, gzip or service seeds; those have separate example regressions. This is finite coverage, not continuous coverage-guided fuzzing. |
 | 35 | Accepted. Identify reviewed checkpoint separately from baseline; revalidate minimal client after corrections. | Current validation logs and reproducible source manifest. |
 | 36 | Accepted. Record new behavior in AGENTS and exhaustive-enum migration in CHANGELOG. | Public variants and configuration fields explicitly listed. |
 | 37 | Accepted. Replace causal claims from three noisy pairs with 22 CPU-pinned pairs and paired bootstrap intervals. | Raw executions, per-pair arrays, configuration and deterministic analysis script. |
@@ -59,13 +61,15 @@ not independently reported native effort. The older missing prose remains missin
 
 The review additionally suggests logging a child seqno greater than its container
 instead of rejecting it until captured production traffic establishes the rule.
-That relaxation is not adopted. Telegram's primary specification explicitly
+At this checkpoint that relaxation was not adopted. Telegram's primary specification explicitly
 requires a container's ID to exceed its children and its sequence number to be
 at least theirs: [message ID and sequence rules](https://core.telegram.org/mtproto/description#message-sequence-number-msg-seqno).
 Authentication does not make a malformed envelope valid. Fixtures now test this
 through the authenticated packet entry point; a violation remains a typed error
 scoped to its connection. No captured Telegram traffic or live compatibility
-claim is made. An independent reviewer should verify the fixtures and rule.
+claim was made for this checkpoint. Round two subsequently ran the two public
+test-DC probes and made child-sequence ordering warn-only; see its ledger for
+the operational decision. Structural/ID/nonnegative-sequence checks remain strict.
 
 ## P2 proposal matrix
 
@@ -289,7 +293,7 @@ separately from successful latency, retain bounded in-flight work, and use
 millisecond-granularity Tokio timers. RSS includes the local responder; allocation
 census excludes responder threads. No traffic reaches Telegram.
 
-Independent acceptance of this correction diff is still required. No commit or
-push is authorized by the current coding instruction. The historical upstream
+Independent acceptance remains required; round two requested further changes.
+The historical upstream
 and compatibility dispositions remain in the main ledger; no claim of all
 possible optimizations is made.

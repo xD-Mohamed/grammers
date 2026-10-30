@@ -15,6 +15,14 @@
 - GetState recovery errors now reach the update-stream caller, retaining state
   for an explicit subsequent next call instead of silently waiting or spinning.
 - Empty reply albums fail locally; download errors remain errors on subsequent calls.
+- Preserve the original connection failure for queued, unframed calls; close the
+  route and release admission before notifying them. Avoid repeated full request
+  scans on replies and full cold-waiter scans on every arrival.
+- Keep GetState recovery armed across cancellation/storage errors, preserve saved
+  channels when relearning primary state, and avoid logged-out recovery requests.
+- Offload PQ factorization alongside DH work. Disable optional salt prefetch after
+  repeated rejection without closing the connection. Diagnose unexpected container
+  child sequence ordering with a warning while preserving other validation.
 
 ### Compatibility and migration
 

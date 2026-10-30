@@ -3,8 +3,8 @@
 All network work is on loopback with fixed mock keys. No Telegram traffic,
 credentials, consumer deployment, hosted CI result or publication is involved.
 The [correction ledger](../../../REVIEW-ROUND1.md) maps every review finding to
-its decision and evidence. The final source is an uncommitted correction of
-`8f109a6`; the historical baseline is `7774ed6`.
+its decision and evidence. The measured source was subsequently checkpointed
+as `5b16ac4`, following `8f109a6`; the historical baseline is `7774ed6`.
 
 ## Reproduce the three release binaries
 
@@ -13,17 +13,18 @@ Both baseline and candidate use the **entire identical** final loopback harness,
 SHA-256 `b840c64ac397e50117e58faae89dadeba61e85e3c61bdc7eb09cc125878f7071`.
 
 1. Archive baseline `7774ed666317d981e1dfea0d12311cbd38acb43e` to a separate
-   directory outside the working checkout. Overlay the current
+   directory outside the working checkout. Overlay checkpoint `5b16ac4`'s
    `grammers-mtsender/tests/loopback.rs`, `grammers-mtsender/Cargo.toml`, and
    `Cargo.lock`. The manifest/lock overlay supplies the Linux-only `libc`
    development dependency for affinity and `getrusage`; production source stays
    at the baseline. This cannot be a pre-change run of the newly added harness:
    it is a reconstructed baseline, complementing the original pre-edit run.
-2. Build the corrected checkout as the candidate. [source-inputs.json](source-inputs.json)
+2. Build checkpoint `5b16ac4` as the candidate. [source-inputs.json](source-inputs.json)
    contains hashes of every tracked Rust source, Cargo manifest and lockfile.
-   The source manifest records HEAD, the exact code-diff command and its SHA-256,
-   not an invented commit for uncommitted work.
-3. Copy corrected source to a third separate directory and apply
+   The source manifest records the measured checkpoint, the exact code-diff
+   command and its SHA-256. Files in this directory describe that checkpoint,
+   not later corrections made in the working checkout.
+3. Copy that same checkpoint's source to a third separate directory and apply
    [timer-control.patch](timer-control.patch). This changes only the reset
    predicate back to `deadline() != deadline`. It isolates the timer proposal;
    it is not the historical baseline.

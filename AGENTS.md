@@ -13,14 +13,17 @@ updates for a pending key must be deferred/dropped while non-pts updates remain
 usable without advancing saved backlog state. Peerless messageEmpty channel
 updates are valid. A secondary-only saved state needs fresh primary state.
 
-Cold callers must be pruned incrementally with cancel-safe `poll_closed`; do not
-rescan already-closed senders beyond Tokio's cooperative budget. Unframed callers
+Cold callers use a flag waker: poll new waiters once and rescan on closure wakes,
+preserving cancellation across Tokio's cooperative budget. Unframed callers
 retain definite-not-sent errors even if connection initialization wrote bytes.
 Keep count/byte permits owned by SDK work until framing/delivery retires them.
 The actual spawned `run_sender` future returns `(dc_id, result)` directly.
+On connection failure, close and drain its RPC queue with the original shared
+error and definite-not-sent certainty, retiring permits before waking callers.
 
 Telegram's published DH prime skips only primality; subgroup checks still run.
-DH validation/exponentiation runs in blocking jobs bounded to four concurrently.
+PQ factorization and DH validation/exponentiation run in blocking jobs bounded
+to four concurrently.
 A started CPU job may finish after caller cancellation and retains its permit;
 it cannot be aborted by an async timeout. Factorization uses one shared work
 budget, bounded GCD batches, and a process-enforced regression deadline.
@@ -29,6 +32,12 @@ Keepalives replace a sent record even without a pong, preserving partially
 written packets. Liveness below 60 seconds requires an earlier ping; huge
 user timeouts must not overflow Instant. A corrected clock resets the message-ID
 floor. Exhaustive error enums gained variants: see CHANGELOG.md for migration.
+GetState remains armed through caller cancellation and storage failure. Detect
+missing account state independently of saved channels and check the self-user
+cache before rearming recovery. Relearning account state preserves channels.
+After four failed optional salt-prefetch attempts, keep the connection and use
+bad_server_salt recovery. Container child sequence numbers above the parent
+warn pending representative server evidence; other envelope checks remain strict.
 
 Performance claims require identical release harnesses, paired measurements and
 noise limits. Replay history is measured after more than 1024 replies; a nine-RPC
@@ -36,11 +45,16 @@ census does not represent steady-state heap. No runtime replacement follows from
 microbenchmarks alone. New review artifacts retain native identities separately
 from requested effort, and acceptance must come from the independent reviewer.
 
-Correction validation: 590 release all-feature workspace tests/doctests passed,
+Round-one checkpoint validation: 590 release all-feature workspace tests/doctests passed,
 39 ignored; all-target/all-feature check, strict Clippy, warning-free Rustdoc
 and rustfmt passed. Minimal client: 39; session memory/import/string/file-import
 configurations: 39/61/46/81 passed. Logs are under benchmarks/2026-10-30/round1.
 These local checks do not constitute independent review acceptance or a hosted run.
+Second-review correction: 599 release workspace tests/doctests passed, 41 ignored;
+strict Clippy, all-target/all-feature check, warning-free Rustdoc and fmt passed.
+Minimal client 39; session memory/import/string/file-import 40/62/47/82 passed.
+Two explicit read-only public test-DC probes passed once each, without login.
+See REVIEW-ROUND2.md for measured scope and the still-required independent review.
 
 ## Per-session footprint and AES-IGE (2026-10-23)
 

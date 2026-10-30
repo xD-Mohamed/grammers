@@ -1,0 +1,11 @@
+Clean Git-index export: PASS (no checkout-local ignored files used)
+{
+  "round1_versioned_json_files": 18,
+  "round1_verified_source_inputs": 171,
+  "round2_versioned_json_files": 12,
+  "round2_verified_source_inputs": 171,
+  "local_document_links": 54,
+  "overload_complete_pairs": 12,
+  "scan-effect_complete_pairs": 12
+}
+Review parent, source hashes, binary hashes, receipts, live patch, logs and test counts: PASS

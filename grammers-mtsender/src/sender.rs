@@ -632,34 +632,16 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         mut results: Vec<Deserialization>,
         updates: &mut Vec<UpdatesLike>,
     ) -> Result<(), ReadError> {
-        for result in &results {
-            let (id, container) = match result {
-                Deserialization::RpcResult(r) => (r.msg_id, false),
-                Deserialization::RpcError(r) => (r.msg_id, false),
-                Deserialization::BadMessage(r) => (r.msg_id, true),
-                Deserialization::Failure(r) => (r.msg_id, false),
-                _ => continue,
-            };
-            if self.requests.iter().any(|r| {
-                matches!(&r.state, RequestState::Serialized(pair)
-                if pair.msg_id == id || (container && pair.container_msg_id == id))
-            }) {
-                return Err(mtp::DeserializeError::InvalidEnvelope {
-                    reason: "response for an unsent request",
-                }
-                .into());
-            }
-        }
         for result in results.drain(..) {
             match result {
                 Deserialization::OwnUpdate { msg_id, update } => {
                     self.process_own_update(updates, msg_id, update)
                 }
                 Deserialization::Update(update) => self.process_update(updates, update),
-                Deserialization::RpcResult(result) => self.process_result(result),
-                Deserialization::RpcError(error) => self.process_error(error),
-                Deserialization::BadMessage(bad_msg) => self.process_bad_message(bad_msg),
-                Deserialization::Failure(failure) => self.process_deserialize_error(failure),
+                Deserialization::RpcResult(result) => self.process_result(result)?,
+                Deserialization::RpcError(error) => self.process_error(error)?,
+                Deserialization::BadMessage(bad_msg) => self.process_bad_message(bad_msg)?,
+                Deserialization::Failure(failure) => self.process_deserialize_error(failure)?,
             }
         }
         self.mtp.recycle_deserialization(results);
@@ -702,12 +684,12 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         }
     }
 
-    fn process_result(&mut self, result: RpcResult) {
-        if let Some(request) = self.pop_request(result.msg_id) {
+    fn process_result(&mut self, result: RpcResult) -> Result<(), ReadError> {
+        if let Some(request) = self.pop_request(result.msg_id)? {
             let x = result.body;
             if x.len() < 4 {
                 request.complete(Err(mtp::DeserializeError::MessageBufferTooSmall.into()));
-                return;
+                return Ok(());
             }
             let res_id = u32::from_le_bytes([x[0], x[1], x[2], x[3]]);
             debug!(
@@ -723,10 +705,11 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 "got rpc result but no such request is saved",
             );
         }
+        Ok(())
     }
 
-    fn process_error(&mut self, error: RpcResultError) {
-        if let Some(req) = self.pop_request(error.msg_id) {
+    fn process_error(&mut self, error: RpcResultError) -> Result<(), ReadError> {
+        if let Some(req) = self.pop_request(error.msg_id)? {
             debug!(error = ?error.error, "got rpc error");
             let x = req.body.as_ref();
             let outcome = InvocationError::Rpc(
@@ -740,9 +723,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 "got rpc error but no such request is saved",
             );
         }
+        Ok(())
     }
 
-    fn process_bad_message(&mut self, bad_msg: BadMessage) {
+    fn process_bad_message(&mut self, bad_msg: BadMessage) -> Result<(), ReadError> {
         for i in (0..self.requests.len()).rev() {
             match &self.requests[i].state {
                 RequestState::Serialized(pair)
@@ -750,7 +734,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 {
                     // Leave partially written metadata alive until the packet
                     // completes or the connection is torn down.
-                    warn!("ignoring bad message for an unsent request");
+                    return Err(mtp::DeserializeError::InvalidEnvelope {
+                        reason: "response for an unsent request",
+                    }
+                    .into());
                 }
                 RequestState::Sent(pair)
                     if pair.msg_id == bad_msg.msg_id || pair.container_msg_id == bad_msg.msg_id =>
@@ -797,10 +784,14 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 _ => {}
             }
         }
+        Ok(())
     }
 
-    fn process_deserialize_error(&mut self, failure: DeserializationFailure) {
-        if let Some(req) = self.pop_request(failure.msg_id) {
+    fn process_deserialize_error(
+        &mut self,
+        failure: DeserializationFailure,
+    ) -> Result<(), ReadError> {
+        if let Some(req) = self.pop_request(failure.msg_id)? {
             debug!(error = ?failure.error, "got deserialization failure");
             req.complete(Err(InvocationError::from(failure.error)));
         } else {
@@ -809,6 +800,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 "got deserialization failure but no such request is saved",
             );
         }
+        Ok(())
     }
 
     fn peek_request(&self, msg_id: MsgId) -> Option<&Request> {
@@ -819,21 +811,23 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         })
     }
 
-    fn pop_request(&mut self, msg_id: MsgId) -> Option<Request> {
+    fn pop_request(&mut self, msg_id: MsgId) -> Result<Option<Request>, ReadError> {
         for i in 0..self.requests.len() {
             match &self.requests[i].state {
                 RequestState::Serialized(pair) if pair.msg_id == msg_id => {
-                    warn!("ignoring response for an unsent request");
-                    return None;
+                    return Err(mtp::DeserializeError::InvalidEnvelope {
+                        reason: "response for an unsent request",
+                    }
+                    .into());
                 }
                 RequestState::Sent(pair) if pair.msg_id == msg_id => {
-                    return Some(self.requests.swap_remove(i));
+                    return Ok(Some(self.requests.swap_remove(i)));
                 }
                 _ => {}
             }
         }
 
-        None
+        Ok(None)
     }
 }
 
@@ -866,7 +860,7 @@ pub async fn connect<T: Transport>(
     generate_auth_key(sender).await
 }
 
-// CPU-bound primality validation and DH exponentiation must not block I/O.
+// CPU-bound PQ factorization, primality validation and DH exponentiation must not block I/O.
 // Started jobs cannot be preempted; hold their capacity until they finish even
 // if the handshake caller cancels. Waiting for capacity is cancel-safe.
 async fn run_dh_job<T: Send + 'static>(
@@ -896,7 +890,7 @@ pub async fn generate_auth_key<T: Transport>(
     debug!("gen auth key: sending step 1");
     let response = sender.invoke(&request).await?;
     debug!("gen auth key: starting step 2");
-    let (request, data) = authentication::step2(data, response)?;
+    let (request, data) = run_dh_job(move || authentication::step2(data, response)).await?;
     debug!("gen auth key: sending step 2");
     let response = sender.invoke(&request).await?;
     debug!("gen auth key: starting step 3");
@@ -1332,10 +1326,12 @@ mod optimization_tests {
             panic!("unsent");
         };
         let msg_id = pair.msg_id;
-        sender.process_result(RpcResult {
-            msg_id,
-            body: vec![1; 4],
-        });
+        sender
+            .process_result(RpcResult {
+                msg_id,
+                body: vec![1; 4],
+            })
+            .unwrap();
         assert_eq!(tracker.sent_at(), Some(sent));
         let _next = tracker.try_acquire().expect("released");
         assert!(tracker.sent_at().is_none());
@@ -1369,10 +1365,12 @@ mod optimization_tests {
             if disconnect {
                 drop(sender);
             } else {
-                sender.process_result(RpcResult {
-                    msg_id,
-                    body: vec![1; 4],
-                });
+                sender
+                    .process_result(RpcResult {
+                        msg_id,
+                        body: vec![1; 4],
+                    })
+                    .unwrap();
             }
             assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
             assert_eq!(capacity.available_permits(), 1);
@@ -1399,10 +1397,12 @@ mod optimization_tests {
             let reply = rx.blocking_recv();
             (reply.is_ok(), observer.stage())
         });
-        sender.process_result(RpcResult {
-            msg_id,
-            body: vec![1; 4],
-        });
+        sender
+            .process_result(RpcResult {
+                msg_id,
+                body: vec![1; 4],
+            })
+            .unwrap();
         let (replied, stage) = waiter.join().unwrap();
         assert!(replied);
         assert_eq!(stage, crate::InvocationStage::Idle);
@@ -1468,24 +1468,30 @@ mod optimization_tests {
                 drop(sender);
             } else {
                 match kind {
-                    0 => sender.process_error(RpcResultError {
-                        msg_id,
-                        error: tl::types::RpcError {
-                            error_code: 420,
-                            error_message: "FLOOD_WAIT_7".into(),
-                        },
-                    }),
-                    1 => sender.process_deserialize_error(DeserializationFailure {
-                        msg_id,
-                        error: mtp::DeserializeError::DecompressionFailed,
-                    }),
+                    0 => sender
+                        .process_error(RpcResultError {
+                            msg_id,
+                            error: tl::types::RpcError {
+                                error_code: 420,
+                                error_message: "FLOOD_WAIT_7".into(),
+                            },
+                        })
+                        .unwrap(),
+                    1 => sender
+                        .process_deserialize_error(DeserializationFailure {
+                            msg_id,
+                            error: mtp::DeserializeError::DecompressionFailed,
+                        })
+                        .unwrap(),
                     2 => {
                         sender.on_error(ReadError::Io(io::Error::new(
                             io::ErrorKind::ConnectionReset,
                             "fixture",
                         )));
                     }
-                    _ => sender.process_bad_message(BadMessage { msg_id, code: 32 }),
+                    _ => sender
+                        .process_bad_message(BadMessage { msg_id, code: 32 })
+                        .unwrap(),
                 }
                 assert!(sender.requests.is_empty());
             }
@@ -1674,10 +1680,12 @@ mod optimization_tests {
         let RequestState::Sent(pair) = &sender.requests[0].state else {
             panic!("unsent ping");
         };
-        sender.process_result(RpcResult {
-            msg_id: pair.msg_id,
-            body: true.to_bytes(),
-        });
+        sender
+            .process_result(RpcResult {
+                msg_id: pair.msg_id,
+                body: true.to_bytes(),
+            })
+            .unwrap();
         assert!(sender.requests.is_empty());
         sender.on_ping_timeout();
         assert_eq!(sender.requests.len(), 1);
@@ -1693,6 +1701,81 @@ mod optimization_tests {
         };
         let (result, ()) = tokio::join!(job, peer);
         assert!(result.unwrap(), "DH job blocked the only runtime worker");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn factorization_step_runs_with_current_thread_progress() {
+        let (request, data) = authentication::step1().unwrap();
+        let response = tl::types::ResPq {
+            nonce: request.nonce,
+            server_nonce: [1; 16],
+            pq: (4_294_967_291u64 * 4_294_967_279).to_be_bytes().to_vec(),
+            server_public_key_fingerprints: vec![],
+        }
+        .into();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let job = run_dh_job(move || {
+            // This reaches factorization before rejecting the missing RSA key.
+            assert!(matches!(
+                authentication::step2(data, response),
+                Err(authentication::Error::UnknownFingerprints { .. })
+            ));
+            Ok(rx.recv_timeout(Duration::from_secs(2)).is_ok())
+        });
+        let progress = async {
+            tokio::task::yield_now().await;
+            tx.send(()).unwrap();
+        };
+        let (result, ()) = tokio::join!(job, progress);
+        assert!(
+            result.unwrap(),
+            "factorization job monopolized the runtime worker"
+        );
+    }
+
+    #[tokio::test]
+    async fn unsent_response_variants_fail_at_the_existing_request_lookup() {
+        for kind in 0..4 {
+            let (mut sender, _peer) = pair().await;
+            let (tx, _rx) = oneshot::channel();
+            sender.enqueue_body(
+                Bytes::from(tl::functions::Ping { ping_id: 1 }.to_bytes()),
+                tx,
+            );
+            sender.try_fill_write();
+            let RequestState::Serialized(pair) = &sender.requests[0].state else {
+                panic!("fixture not framed")
+            };
+            let msg_id = pair.msg_id;
+            let result = match kind {
+                0 => Deserialization::RpcResult(RpcResult {
+                    msg_id,
+                    body: vec![1; 4],
+                }),
+                1 => Deserialization::RpcError(RpcResultError {
+                    msg_id,
+                    error: tl::types::RpcError {
+                        error_code: 400,
+                        error_message: "BAD_REQUEST".into(),
+                    },
+                }),
+                2 => Deserialization::Failure(DeserializationFailure {
+                    msg_id,
+                    error: mtp::DeserializeError::DecompressionFailed,
+                }),
+                _ => Deserialization::BadMessage(BadMessage { msg_id, code: 48 }),
+            };
+            assert!(
+                sender
+                    .process_mtp_buffer(vec![result], &mut Vec::new())
+                    .is_err()
+            );
+            assert_eq!(
+                sender.requests.len(),
+                1,
+                "unsent metadata must survive until teardown"
+            );
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -1810,10 +1893,12 @@ mod optimization_tests {
             let RequestState::Sent(pair) = &sender.requests[0].state else {
                 panic!("not sent");
             };
-            sender.process_bad_message(BadMessage {
-                msg_id: pair.msg_id,
-                code: 48,
-            });
+            sender
+                .process_bad_message(BadMessage {
+                    msg_id: pair.msg_id,
+                    code: 48,
+                })
+                .unwrap();
             assert_eq!(sender.requests.is_empty(), attempt == 3);
         }
         assert!(matches!(
@@ -1892,7 +1977,9 @@ mod optimization_tests {
             RequestState::Sent(pair) => pair.msg_id,
             _ => panic!("not sent"),
         };
-        sender.process_bad_message(BadMessage { msg_id, code: 48 });
+        sender
+            .process_bad_message(BadMessage { msg_id, code: 48 })
+            .unwrap();
         assert!(sender.requests.is_empty());
         sender.try_fill_write();
         assert!(sender.write_buffer.is_empty());

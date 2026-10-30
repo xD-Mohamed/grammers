@@ -1,0 +1,32 @@
+{
+  "workspace": {
+    "passed": 590,
+    "failed": 0,
+    "ignored": 39
+  },
+  "client-minimal": {
+    "passed": 39,
+    "failed": 0,
+    "ignored": 0
+  },
+  "session-memory": {
+    "passed": 39,
+    "failed": 0,
+    "ignored": 1
+  },
+  "session-import": {
+    "passed": 61,
+    "failed": 0,
+    "ignored": 1
+  },
+  "session-string": {
+    "passed": 46,
+    "failed": 0,
+    "ignored": 1
+  },
+  "session-files": {
+    "passed": 81,
+    "failed": 0,
+    "ignored": 1
+  }
+}

@@ -15,3 +15,5 @@ testbed.rs
 # Synthetic local benchmark measurements and executable identities.
 !benchmarks/2026-10-30/*.json
 !benchmarks/2026-10-30/first-candidate/summary.json
+!benchmarks/2026-10-30/round1/**/*.json
+!benchmarks/2026-10-30/round2/**/*.json

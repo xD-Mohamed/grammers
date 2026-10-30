@@ -275,6 +275,11 @@ impl MessageBoxes {
         self.entries.is_empty()
     }
 
+    /// Whether account state is known, independently of saved channel state.
+    pub fn has_primary_state(&self) -> bool {
+        self.entry(Key::Common).is_some()
+    }
+
     /// Return the next deadline when receiving updates should timeout.
     ///
     /// If a deadline expired, the corresponding entries will be marked as needing to get its difference.
@@ -348,10 +353,10 @@ impl MessageBoxes {
     /// Should be called right after login if [`MessageBoxes::new`] was used, otherwise undesirable
     /// updates will be fetched.
     ///
-    /// Should only be called while [`MessageBoxes::is_empty`].
+    /// Should only be called while account state is missing. Saved channel state is preserved.
     pub fn set_state(&mut self, state: tl::types::updates::State) {
         trace!(?state, "setting state");
-        debug_assert!(self.is_empty());
+        debug_assert!(!self.has_primary_state());
         let deadline = next_updates_deadline();
         self.set_entry(LiveEntry {
             key: Key::Common,
@@ -367,7 +372,7 @@ impl MessageBoxes {
         });
         self.date = state.date;
         self.seq = state.seq;
-        self.next_deadline = deadline;
+        self.next_deadline = self.next_deadline.min(deadline);
     }
 
     /// Like [`MessageBoxes::set_state`], but for channels. Useful when getting dialogs.

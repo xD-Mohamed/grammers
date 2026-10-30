@@ -1,0 +1,215 @@
+[
+  {
+    "name": "gzip-reuse",
+    "command": [
+      "/usr/bin/time",
+      "-v",
+      "taskset",
+      "-c",
+      "0,1",
+      "<worktree>/target/release/deps/grammers_mtproto-9f20828b2922801d",
+      "--exact",
+      "manual_tl::optimization_tests::benchmark_reused_gzip_decoder",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "exit_code": 0
+  },
+  {
+    "name": "ack-serialization",
+    "command": [
+      "/usr/bin/time",
+      "-v",
+      "taskset",
+      "-c",
+      "0,1",
+      "<worktree>/target/release/deps/grammers_mtproto-9f20828b2922801d",
+      "--exact",
+      "mtp::encrypted::tests::benchmark_ack_serialization",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "exit_code": 0
+  },
+  {
+    "name": "shared-request",
+    "command": [
+      "/usr/bin/time",
+      "-v",
+      "taskset",
+      "-c",
+      "0,1",
+      "<worktree>/target/release/deps/grammers_mtsender-dadd0f6c624e0f25",
+      "--exact",
+      "sender_pool::optimization_tests::benchmark_prepared_request_clones",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "exit_code": 0
+  },
+  {
+    "name": "warm-route",
+    "command": [
+      "/usr/bin/time",
+      "-v",
+      "taskset",
+      "-c",
+      "0,1",
+      "<worktree>/target/release/deps/grammers_mtsender-dadd0f6c624e0f25",
+      "--exact",
+      "sender_pool::optimization_tests::benchmark_warm_connection_route",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "exit_code": 0
+  },
+  {
+    "name": "gzip-budget",
+    "command": [
+      "/usr/bin/time",
+      "-v",
+      "taskset",
+      "-c",
+      "0,1",
+      "<worktree>/target/release/deps/grammers_mtproto-9f20828b2922801d",
+      "--exact",
+      "manual_tl::optimization_tests::benchmark_gzip_resource_limit",
+      "--nocapture",
+      "--test-threads=1",
+      "--ignored"
+    ],
+    "exit_code": 0
+  },
+  {
+    "name": "future-size",
+    "command": [
+      "/usr/bin/time",
+      "-v",
+      "taskset",
+      "-c",
+      "0,1",
+      "<worktree>/target/release/deps/grammers_mtsender-dadd0f6c624e0f25",
+      "--exact",
+      "sender_pool::footprint_tests::long_lived_futures_hold_their_state_once",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0
+  },
+  {
+    "name": "baseline-allocations",
+    "command": [
+      "/usr/bin/time",
+      "-v",
+      "<binary>",
+      "--exact",
+      "loopback_rpc_cost",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1000",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "name": "final-allocations",
+    "command": [
+      "/usr/bin/time",
+      "-v",
+      "<binary>",
+      "--exact",
+      "loopback_rpc_cost",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1000",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current"
+    },
+    "exit_code": 0
+  },
+  {
+    "name": "current-syscalls",
+    "command": [
+      "strace",
+      "-f",
+      "-c",
+      "-qq",
+      "<binary>",
+      "--exact",
+      "loopback_rpc_cost",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1000",
+      "LOOPBACK_CLIENT_CPUS": "0",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain"
+    },
+    "exit_code": 0
+  },
+  {
+    "name": "multi-syscalls",
+    "command": [
+      "strace",
+      "-f",
+      "-c",
+      "-qq",
+      "<binary>",
+      "--exact",
+      "loopback_rpc_cost",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1000",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "multi",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain"
+    },
+    "exit_code": 0
+  },
+  {
+    "name": "blocking-syscalls",
+    "command": [
+      "strace",
+      "-f",
+      "-c",
+      "-qq",
+      "<binary>",
+      "--exact",
+      "loopback_blocking_control",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "environment": {
+      "LOOPBACK_WINDOW_MS": "1000",
+      "LOOPBACK_CLIENT_CPUS": "0,1",
+      "LOOPBACK_SERVER_CPUS": "2,3",
+      "LOOPBACK_RUNTIME": "current",
+      "LOOPBACK_SHORT": "1",
+      "LOOPBACK_PAYLOAD": "plain"
+    },
+    "exit_code": 0
+  }
+]

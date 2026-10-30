@@ -1,0 +1,38 @@
+[
+  {
+    "name": "factorization-budget",
+    "command": [
+      "/usr/bin/time",
+      "-v",
+      "taskset",
+      "-c",
+      "0",
+      "<worktree>/target/release/deps/grammers_crypto-f5b45a6da0c9a623",
+      "--exact",
+      "factorize::tests::benchmark_factorization_budget",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "binary_sha256": "24ed83cd489186765b151da0f297ca74f46fbebb0e57bafb25b8f37f8fa0e42a",
+    "exit_code": 0
+  },
+  {
+    "name": "cold-waiters",
+    "command": [
+      "/usr/bin/time",
+      "-v",
+      "taskset",
+      "-c",
+      "0",
+      "<worktree>/target/release/deps/grammers_mtsender-dadd0f6c624e0f25",
+      "--exact",
+      "sender_pool::optimization_tests::benchmark_cold_waiter_scan",
+      "--ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "binary_sha256": "62a6184020fd34135d80c9dd7cf3d1915e99f9070f871b2c9e68a2b257d0cfd6",
+    "exit_code": 0
+  }
+]

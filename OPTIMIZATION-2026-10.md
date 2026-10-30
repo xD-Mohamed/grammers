@@ -18,7 +18,9 @@ and review reports are available in full, including native model receipts:
 The runner accepted native `gpt-6-astra` and `claude-opus-5-5` (alias `opus`).
 Both requested `xhigh`; neither receipt independently confirms native effort.
 Claude's first implementation review requested changes and did not run builds.
-Correction acceptance remains pending; this turn must not commit or push.
+The orchestrator checkpointed round-one corrections as `5b16ac4`. The second
+review requested further changes, tracked in [REVIEW-ROUND2.md](REVIEW-ROUND2.md).
+Publication remains gated on independent acceptance.
 
 ## Scope matrix
 
@@ -223,17 +225,16 @@ Before publication the independent reviewer must check actual diff semantics,
 new API/error cases, cancellation races, performance costs, default budgets and
 the retained legacy message-box preconditions. Save native provider receipts
 and full review artifacts through the Duo runner; do not infer acceptance from
-this document. Resolve blocking findings and re-run affected checks. No commit
-or push belongs to the first implementation turn.
+this document. Resolve blocking findings and re-run affected checks.
 
-The orchestrator checkpointed the initial implementation as `8f109a6` before
-review. The current correction diff is intentionally uncommitted; the coding
-agent has not committed or pushed it. Local branch/worktree details belong in
-the private handoff, rather than public benchmark artifacts.
+The orchestrator checkpointed the initial implementation as `8f109a6` and the
+first correction as `5b16ac4`. These are historical source identities, not a
+claim about the checkout's current HEAD or publication status. Local
+branch/worktree details belong in the private handoff.
 
 Remaining-work ledger for the review/completion continuation:
 
-1. Run the configured second independent Opus review against the correction diff and raw
+1. Continue independent Opus review against the round-two correction diff and raw
    measurements. Persist its complete report and both native runner receipts
    with the Duo run; requested `xhigh` must not be described as independently
    native-confirmed effort. Current implementation acceptance is **pending**.
@@ -251,4 +252,4 @@ Remaining-work ledger for the review/completion continuation:
    for correction/review continuation; do not mark accepted or publish.
 5. Any later publication must follow the owner's applicable authorization and
    review gate, verify the intended fork/branch, use a normal push, and compare
-   the remote SHA. This correction turn performs neither commit nor push.
+   the remote SHA. No review ledger alone constitutes publication approval.

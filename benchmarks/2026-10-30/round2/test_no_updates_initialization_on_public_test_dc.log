@@ -1,0 +1,5 @@
+
+running 1 test
+test test_no_updates_initialization_on_public_test_dc ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.21s

@@ -11,7 +11,7 @@ use std::{borrow::Cow, collections::VecDeque, mem};
 
 use grammers_crypto::{AuthKey, DequeBuffer, decrypt_data_v2, encrypt_data_v2};
 use grammers_tl_types::{self as tl, Cursor, Deserializable, Identifiable, Serializable};
-use tracing::info;
+use tracing::{info, warn};
 
 use super::{
     DecodeLimits, Deserialization, DeserializationFailure, DeserializeError, Mtp, RpcResult,
@@ -459,6 +459,7 @@ impl Encrypted {
         if buffer.is_empty()
             && self.salts.len() == 1
             && self.salt_request_msg_id.is_none()
+            && self.salt_request_failures <= 3
             && self.get_current_salt() != 0
             && self.message_fits(buffer, 8)
         {
@@ -985,10 +986,8 @@ impl Encrypted {
             // Response to internal request, do not propagate.
             self.salt_request_msg_id = None;
             self.salt_request_failures = self.salt_request_failures.saturating_add(1);
-            if self.salt_request_failures > 3 {
-                return Err(DeserializeError::ResourceLimit {
-                    resource: "salt request retries",
-                });
+            if self.salt_request_failures == 4 {
+                warn!("disabling optional salt prefetch after repeated rejection");
             }
         } else {
             self.deserialization
@@ -1852,11 +1851,61 @@ mod tests {
     }
 
     #[test]
+    fn failed_optional_salt_prefetch_keeps_requests_and_salt_recovery_working() {
+        let mut mtp = Encrypted::build().first_salt(123).finish(auth_key());
+        let mut buffer = DequeBuffer::with_capacity(1024, 64);
+        for _ in 0..4 {
+            assert!(mtp.push(&mut buffer, REQUEST).is_none());
+            let id = mtp.salt_request_msg_id.unwrap();
+            mtp.finalize_plain(&mut buffer);
+            buffer.clear();
+            mtp.process_message(manual_tl::MessageView {
+                msg_id: 7,
+                seq_no: 0,
+                body: Cow::Owned(
+                    tl::enums::BadMsgNotification::Notification(tl::types::BadMsgNotification {
+                        bad_msg_id: id.0,
+                        bad_msg_seqno: 0,
+                        error_code: 64,
+                    })
+                    .to_bytes(),
+                ),
+            })
+            .unwrap();
+            assert!(mtp.deserialization.is_empty());
+        }
+        assert_eq!(mtp.get_current_salt(), 123);
+        let id = mtp
+            .push(&mut buffer, REQUEST)
+            .expect("user RPC must still progress");
+        assert!(mtp.salt_request_msg_id.is_none());
+        mtp.process_message(manual_tl::MessageView {
+            msg_id: 11,
+            seq_no: 0,
+            body: Cow::Owned(
+                tl::enums::BadMsgNotification::BadServerSalt(tl::types::BadServerSalt {
+                    bad_msg_id: id.0,
+                    bad_msg_seqno: 0,
+                    error_code: 48,
+                    new_server_salt: 456,
+                })
+                .to_bytes(),
+            ),
+        })
+        .unwrap();
+        assert_eq!(mtp.get_current_salt(), 456);
+        assert!(matches!(
+            mtp.deserialization.as_slice(),
+            [Deserialization::BadMessage(_)]
+        ));
+    }
+
+    #[test]
     fn authenticated_container_envelopes_validate_before_delivery() {
         for (inner_id, inner_seq, accept) in [
             (3, 1, true),
             (3, 2, true),
-            (3, 3, false),
+            (3, 3, true),
             (7, 1, false),
             (2, 1, false),
             (-1, 1, false),
