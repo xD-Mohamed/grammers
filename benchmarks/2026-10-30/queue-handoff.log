@@ -6,7 +6,7 @@ ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 75 filtered out; finished in 56.46s
 
-	Command being timed: "/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/target/release/deps/grammers_mtsender-13f14f567e670258 --exact queue::tests::benchmark_queue_handoff --ignored --nocapture --test-threads=1"
+	Command being timed: "<worktree>/target/release/deps/grammers_mtsender-13f14f567e670258 --exact queue::tests::benchmark_queue_handoff --ignored --nocapture --test-threads=1"
 	User time (seconds): 16.83
 	System time (seconds): 49.39
 	Percent of CPU this job got: 117%

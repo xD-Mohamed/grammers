@@ -1,0 +1,825 @@
+   Compiling grammers-mtsender v0.10.0 (<worktree>/grammers-mtsender)
+   Compiling grammers-client v0.10.0 (<worktree>/grammers-client)
+   Compiling grammers v0.1.0 (<worktree>/grammers)
+    Finished `release` profile [optimized] target(s) in 1m 41s
+     Running unittests src/main.rs (target/release/deps/grammers-58d929f7ff4b1cb3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/grammers_client-b8102033bd9da3b0)
+
+running 100 tests
+test client::auth::safety_tests::missing_zero_and_overflow_migration_dc_are_rejected ... ok
+test client::auth::safety_tests::malformed_password_fields_are_rejected_before_crypto ... ok
+test client::auth::safety_tests::password_token_debug_does_not_expose_password_state ... ok
+test client::auth::safety_tests::payment_required_is_actionable_and_redacted ... ok
+test client::auth::safety_tests::unexpected_sent_code_success_does_not_create_login_token ... ok
+test client::auth::safety_tests::missing_password_algorithm_returns_error_without_panicking ... ok
+test client::auth::safety_tests::unknown_password_algorithm_returns_unsupported_without_panicking ... ok
+test client::chats::peer_cache_tests::memory_client_can_disable_peer_cache_without_losing_reply_peers ... ok
+test client::files::safety_tests::cdn_redirect_returns_unsupported_without_exposing_key_material ... ok
+test client::files::safety_tests::chunk_results_preserve_offsets_and_exact_final_size ... ok
+test client::files::safety_tests::concurrent_initial_chunks_publish_migration_for_later_chunks ... ok
+test client::files::safety_tests::disk_failure_drops_pending_requests_without_result_channel_panics ... ok
+test client::files::safety_tests::final_flush_failure_is_returned_to_the_caller ... ok
+test client::device::tests::defaults_match_connection_platform_and_locale_defaults ... ok
+test client::files::safety_tests::late_migration_response_cannot_overwrite_a_newer_shared_route ... ok
+test client::files::safety_tests::cancelling_parallel_download_drops_all_worker_clients ... ok
+test client::files::safety_tests::migration_cycles_have_a_finite_recovery_budget ... ok
+test client::files::safety_tests::migration_then_authorization_still_retries_the_chunk_successfully ... ok
+test client::files::safety_tests::cancelling_next_preserves_the_download_request ... ok
+test client::files::safety_tests::repeated_auth_failure_exports_once_and_preserves_rpc_error ... ok
+test client::files::safety_tests::pending_chunk_requests_are_bounded ... ok
+test client::files::safety_tests::repeated_same_dc_migration_is_returned_without_retry_loop ... ok
+test client::files::safety_tests::short_or_oversized_chunks_cannot_leave_silent_gaps ... ok
+test client::files::safety_tests::worker_failure_drops_other_pending_requests_and_preserves_error ... ok
+test client::qr_login::tests::failed_import_does_not_change_home_or_finish_login ... ok
+test client::qr_login::tests::invalid_and_cyclic_migrations_never_finish_login ... ok
+test client::qr_login::tests::malformed_display_tokens_are_rejected_without_exposing_bytes ... ok
+test client::qr_login::tests::password_challenge_is_requested_from_migrated_dc_and_errors_propagate ... ok
+test client::files::safety_tests::invalid_media_inputs_fail_without_starting_network_work ... ok
+test client::qr_login::tests::sign_up_and_finish_errors_do_not_become_authorized ... ok
+test client::files::safety_tests::sequential_download_preserves_structured_error_kind ... ok
+test client::qr_login::tests::token_url_uses_base64url_without_padding_and_debug_is_redacted ... ok
+test client::qr_login::tests::unaccepted_tokens_are_displayed_without_changing_home_or_finishing_login ... ok
+test client::qr_login::tests::qr_step_future_can_be_supervised_on_send_executors ... ok
+test client::files::safety_tests::zero_download_workers_cannot_report_success_for_unwritten_file ... ok
+test client::runtime::tests::concurrent_run_and_timeout_stop_share_the_terminal_reason ... ok
+test client::runtime::tests::concurrent_run_waiters_share_one_startup_request ... ok
+test client::qr_login::tests::success_is_finished_and_migration_import_precedes_home_change ... ok
+test client::runtime::tests::concurrent_stop_deadlines_share_the_first_terminal_reason ... ok
+test client::runtime::tests::explicit_connect_does_not_report_cached_startup_success ... ok
+test client::runtime::tests::explicit_connect_retries_after_session_route_changes ... ok
+test client::runtime::tests::last_client_drop_terminates_owned_runner ... ok
+test client::runtime::tests::builder_rejects_invalid_values_without_spawning ... ok
+test client::runtime::tests::grouped_device_settings_preserve_omitted_defaults_and_flat_overrides ... ok
+test client::runtime::tests::managed_idle_start_stop_is_idempotent_and_terminal ... ok
+test client::runtime::tests::managed_defaults_do_not_retry_ambiguous_io ... ok
+test client::runtime::tests::memory_build_is_offline_and_start_reports_missing_runtime ... ok
+test client::runtime::tests::ready_shutdown_stops_without_opening_a_connection ... ok
+test client::runtime::tests::request_level_closed_startup_error_cannot_become_success ... ok
+test client::runtime::tests::foreign_sources_export_to_reusable_native_strings ... ok
+test client::runtime::tests::run_reports_runner_panic_instead_of_secondary_closed_reply ... ok
+test client::runtime::tests::run_connectivity_failure_stops_without_login_prompt ... ok
+test client::runtime::tests::native_builder_preserves_preference_and_legacy_export ... ok
+test client::runtime::tests::startup_failure_is_shared_with_other_run_and_stop_waiters ... ok
+test client::runtime::tests::shutdown_timeout_aborts_and_joins_owned_task ... ok
+test client::runtime::tests::startup_overload_does_not_stop_existing_traffic ... ok
+test client::runtime::tests::stop_before_start_closes_parked_runner ... ok
+test client::runtime::tests::stop_wakes_run_during_a_long_startup_retry_sleep ... ok
+test client::updates::tests::ensure_next_update_future_impls_send ... ok
+test client::runtime::tests::session_export_returns_a_string_and_offers_redacted_storage ... ok
+test dispatcher::tests::cancellation_drops_active_handler_and_never_starts_next ... ok
+test dispatcher::tests::composition_short_circuits_and_negation_preserves_predicates ... ok
+test dispatcher::tests::errors_preserve_source_and_skip_later_handlers ... ok
+test dispatcher::tests::handlers_run_in_registration_order_and_break_stops_propagation ... ok
+test dispatcher::tests::panics_at_all_stages_are_typed_and_payload_is_discarded ... ok
+test media::input_media::tests::audio_builder_preserves_attributes_and_thumbnail ... ok
+test media::input_media::tests::typed_media_ttl_maps_all_variants ... ok
+test media::input_media::tests::typed_media_ttl_rejects_overflow - should panic ... ok
+test media::input_media::tests::video_builder_preserves_flags_attributes_and_ttl ... ok
+test message::input_message::send_options_tests::send_options_default_explicitly_resets_only_listed_options ... ok
+test message::input_message::send_options_tests::send_options_default_matches_existing_message_defaults ... ok
+test message::input_message::send_options_tests::send_options_preserve_existing_rich_payload ... ok
+test parsers::html::tests::malformed_mentions_remain_text_links ... ok
+test parsers::html::tests::parse_all_entities ... ok
+test parsers::html::tests::parse_emoji ... ok
+test parsers::html::tests::parse_empty_pre_and_lang ... ok
+test parsers::html::tests::parse_leading ... ok
+test parsers::html::tests::parse_link_no_href ... ok
+test parsers::html::tests::parse_nested_entities ... ok
+test parsers::html::tests::parse_pre_with_lang ... ok
+test parsers::html::tests::parse_then_unparse ... ok
+test parsers::html::tests::parse_then_unparse_overlapping ... ok
+test parsers::html::tests::parse_then_unparse_time ... ok
+test parsers::html::tests::parse_then_unparse_time_with_format ... ok
+test parsers::html::tests::parse_time_with_both_valid_and_invalid_date ... ok
+test parsers::html::tests::parse_time_with_invalid_date ... ok
+test parsers::html::tests::parse_time_with_timestamp ... ok
+test parsers::html::tests::parse_time_with_zone ... ok
+test parsers::html::tests::parse_trailing ... ok
+test parsers::markdown::tests::malformed_mentions_remain_text_links ... ok
+test parsers::markdown::tests::parse_all_entities ... ok
+test parsers::markdown::tests::parse_emoji ... ok
+test parsers::markdown::tests::parse_leading ... ok
+test parsers::markdown::tests::parse_nested_entities ... ok
+test parsers::markdown::tests::parse_then_unparse ... ok
+test parsers::markdown::tests::parse_then_unparse_overlapping ... ok
+test parsers::markdown::tests::parse_trailing ... ok
+test client::runtime::tests::supervised_runner_redacts_own_panic_and_stops_clones ... ok
+test client::runtime::tests::timeout_does_not_overwrite_an_authoritative_runner_failure ... ok
+test dispatcher::tests::builtin_filters_distinguish_message_direction_edits_and_exact_commands ... ok
+
+test result: ok. 100 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+
+     Running tests/deps.rs (target/release/deps/deps-81898ed11bbe058b)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/grammers_crypto-f5b45a6da0c9a623)
+
+running 34 tests
+test aes::tests::benchmark_ige_backend_closure ... ignored, local IGE implementation comparison; run release with nocapture
+test aes::tests::rejects_partial_blocks - should panic ... ok
+test auth_key::tests::auth_key_id ... ok
+test auth_key::tests::calc_new_nonce_hash1 ... ok
+test auth_key::tests::auth_key_aux_hash ... ok
+test auth_key::tests::calc_new_nonce_hash3 ... ok
+test auth_key::tests::calc_new_nonce_hash2 ... ok
+test benchmarks::benchmark_message_crypto_components ... ignored, local per-message crypto component costs; run release with nocapture
+test aes::tests::matches_the_block_at_a_time_reference_and_round_trips ... ok
+test deque_buffer::tests::initialization ... ok
+test deque_buffer::tests::mutates_as_expected ... ok
+test deque_buffer::tests::shift_extends_if_needed ... ok
+test factorize::tests::checked_factorization_small_and_invalid ... ok
+test factorize::tests::test_factorization_2 ... ok
+test factorize::tests::test_factorization_3 ... ok
+test obfuscated::tests::benchmark_obfuscated_cipher_setup ... ignored, isolated cipher setup benchmark; no network or per-packet work
+test obfuscated::tests::obfuscated_cipher_matches_independent_ctr_fixtures_across_chunks ... ok
+test factorize::tests::test_factorization_1 ... ok
+test tests::calc_client_key ... ok
+test tests::calc_server_key ... ok
+test rsa::tests::test_rsa_encryption ... ok
+test tests::decrypt_server_data_v2 ... ok
+test tests::encrypt_client_data_v2 ... ok
+test tests::padding_is_the_smallest_the_specification_allows ... ok
+test tests::verify_ige_decryption ... ok
+test tests::verify_ige_encryption ... ok
+test two_factor_auth::tests::benchmark_published_prime_validation ... ignored, local release A/B of full safe-prime validation and prevalidated Telegram prime
+test factorize::tests::factorization_u64_edges_and_shared_budget ... ok
+test tests::key_from_nonce ... ok
+test two_factor_auth::tests::published_prime_still_checks_every_generator ... ok
+test two_factor_auth::tests::test_check_p_and_g ... ok
+test factorize::tests::factorization_has_a_process_deadline ... ok
+test two_factor_auth::tests::check_calculations_1 ... ok
+test two_factor_auth::tests::check_calculations_2 ... ok
+
+test result: ok. 30 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/deps.rs (target/release/deps/deps-c24c02bd13828ec7)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/grammers_mtproto-9f20828b2922801d)
+
+running 88 tests
+test authentication::tests::malformed_pq_and_short_dh_answers_return_errors ... ok
+test authentication::tests::hashed_invalid_dh_parameters_are_checked_before_arithmetic ... ok
+test authentication::tests::validated_dh_retry_keeps_its_distinct_error ... ok
+test manual_tl::optimization_tests::benchmark_borrowed_response_envelope ... ignored, isolated decoder copy benchmark; no encryption, sockets or Telegram
+test manual_tl::optimization_tests::benchmark_gzip_resource_limit ... ignored, isolated release gzip budget/peak RSS measurement; run explicitly
+test manual_tl::optimization_tests::benchmark_reused_gzip_decoder ... ignored, local gzip decoder comparison; no sockets or server traffic
+test manual_tl::optimization_tests::benchmark_rpc_result_reuse ... ignored, isolated allocation/copy benchmark; run release with nocapture
+test manual_tl::optimization_tests::borrowed_envelope_preserves_fields_and_points_into_input ... ok
+test manual_tl::optimization_tests::borrowed_containers_match_owned_decoder_and_validate_before_iteration ... ok
+test manual_tl::optimization_tests::container_count_and_trailing_envelopes_are_rejected ... ok
+test manual_tl::optimization_tests::borrowed_gzip_keeps_crc_and_truncation_validation ... ok
+test manual_tl::optimization_tests::gzip_scratch_is_bounded_and_handles_optional_headers ... ok
+test manual_tl::optimization_tests::gzip_limits_check_exact_limit_crc_trailing_data_and_recover ... ok
+test manual_tl::optimization_tests::inbound_file_reply_is_independent_of_outbound_limit ... ok
+test manual_tl::optimization_tests::malformed_message_lengths_return_errors_without_panicking ... ok
+test manual_tl::optimization_tests::rpc_result_reuses_allocation_and_matches_the_original_decoder ... ok
+test manual_tl::tests::gzip_decompress ... ok
+test mtp::encrypted::tests::acknowledgements_match_typed_encoding_and_reuse_ids ... ok
+test mtp::encrypted::tests::acknowledgements_ride_on_every_message_by_default ... ok
+test mtp::encrypted::tests::authenticated_container_envelopes_validate_before_delivery ... ok
+test authentication::tests::authenticated_dh_fixture_reaches_each_validation_gate ... ok
+test mtp::encrypted::tests::batched_acknowledgements_wait_for_the_batch_or_the_delay ... ok
+test mtp::encrypted::tests::benchmark_ack_serialization ... ignored, isolated ACK allocation benchmark; run release with nocapture
+test mtp::encrypted::tests::authenticated_envelope_checks_and_replay_suppression ... ok
+test mtp::encrypted::tests::borrowed_and_owned_rpc_results_survive_plain_and_gzip_paths ... ok
+test authentication::tests::emulate_successful_auth_key_gen_flow ... ok
+test mtp::encrypted::tests::disabled_updates_are_acknowledged_but_rpc_updates_are_returned ... ok
+test mtp::encrypted::tests::ensure_correct_multi_serialization ... ok
+test mtp::encrypted::tests::disabled_updates_keep_compressed_containers_errors_and_service_messages ... ok
+test mtp::encrypted::tests::ensure_correct_single_serialization ... ok
+test mtp::encrypted::tests::ensure_large_payload_is_rejected ... ok
+test mtp::encrypted::tests::ensure_correct_single_large_serialization ... ok
+test mtp::encrypted::tests::ensure_correct_multi_large_serialization ... ok
+test manual_tl::optimization_tests::reused_gzip_preserves_validation_and_recovers_after_corruption ... ok
+test mtp::encrypted::tests::ensure_non_padded_payload_is_rejected ... ok
+test mtp::encrypted::tests::ensure_serialization_has_salt_session_id ... ok
+test mtp::encrypted::tests::explicit_service_deadline_flushes_small_batch_and_backlog_is_bounded ... ok
+test mtp::encrypted::tests::ensure_no_compression_is_honored ... ok
+test mtp::encrypted::tests::fast_clock_bad_message_resets_monotonic_floor ... ok
+test mtp::encrypted::tests::idle_ack_only_packet_and_gzip_ack_once ... ok
+test mtp::encrypted::tests::malformed_container_has_no_partial_inner_effects ... ok
+test mtp::encrypted::tests::invalid_push_preserves_services_and_salt_packet_excludes_ack ... ok
+test mtp::encrypted::tests::gzip_depth_cumulative_budget_and_hidden_container_nesting ... ok
+test mtp::encrypted::tests::no_updates_wraps_api_bytes_once_and_excludes_protocol_calls ... ok
+test mtp::encrypted::tests::regression_compressed_errors_and_short_replies_are_not_successes ... ok
+test mtp::encrypted::tests::regression_drop_answer_replies_complete_their_own_request ... ok
+test mtp::encrypted::tests::maximum_request_fits_without_compression_or_indefinite_deferral ... ok
+test mtp::encrypted::tests::response_list_recycling_preserves_small_capacity_only ... ok
+test mtp::encrypted::tests::salt_prefetch_does_not_block_user_requests_waiting_for_response ... ok
+test mtp::encrypted::tests::ensure_some_compression ... ok
+test mtp::encrypted::tests::service_messages_respect_packet_capacity_and_preserve_deferred_acks ... ok
+test mtp::plain::tests::ensure_only_one_push_allowed ... ok
+test transport::abridged::tests::a_message_starting_with_negative_bytes_is_not_a_transport_error ... ok
+test transport::abridged::tests::pack_empty ... ok
+test transport::abridged::tests::pack_large ... ok
+test transport::abridged::tests::pack_non_padded - should panic ... ok
+test transport::abridged::tests::pack_normal ... ok
+test transport::abridged::tests::regression_extended_length_is_unsigned_and_waits_for_payload ... ok
+test transport::abridged::tests::unpack_bad_status ... ok
+test transport::abridged::tests::unpack_large ... ok
+test transport::abridged::tests::unpack_normal ... ok
+test transport::abridged::tests::unpack_small ... ok
+test transport::abridged::tests::unpack_two_at_once ... ok
+test transport::full::tests::pack_empty ... ok
+test transport::full::tests::pack_non_padded - should panic ... ok
+test transport::full::tests::pack_normal ... ok
+test transport::full::tests::pack_twice ... ok
+test transport::full::tests::regression_minimum_status_does_not_overflow ... ok
+test transport::full::tests::unpack_bad_crc ... ok
+test transport::full::tests::unpack_bad_seq ... ok
+test transport::full::tests::unpack_bad_status ... ok
+test transport::full::tests::unpack_normal ... ok
+test transport::full::tests::unpack_small ... ok
+test transport::full::tests::unpack_two_at_once ... ok
+test transport::intermediate::tests::pack_empty ... ok
+test transport::intermediate::tests::pack_non_padded - should panic ... ok
+test transport::intermediate::tests::pack_normal ... ok
+test transport::intermediate::tests::regression_fragmented_packets_wait_for_header_and_entire_body ... ok
+test transport::intermediate::tests::unpack_bad_status ... ok
+test transport::intermediate::tests::unpack_normal ... ok
+test transport::intermediate::tests::unpack_small ... ok
+test transport::intermediate::tests::unpack_two_at_once ... ok
+test transport::obfuscated::tests::benchmark_obfuscated_handshake_setup ... ignored, isolated obfuscated handshake setup benchmark; randomness included, no network
+test transport::obfuscated::tests::obfuscated_handshake_preserves_tag_and_advances_outgoing_cipher_once ... ok
+test mtp::encrypted::tests::seeded_authenticated_packet_mutations_are_bounded_and_panic_free ... ok
+test transport::property_tests::seeded_transport_mutations_never_return_out_of_bounds_offsets ... ok
+test mtp::encrypted::tests::maximum_compressible_request_preserves_existing_input_limit ... ok
+test mtp::plain::tests::ensure_finalize_preserves_buffer ... ok
+
+test result: ok. 82 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/deps.rs (target/release/deps/deps-ada77718c8089734)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/grammers_mtsender-dadd0f6c624e0f25)
+
+running 89 tests
+test configuration::retry_budget_tests::auto_sleep_retries_only_definite_connection_errors ... ok
+test configuration::retry_budget_tests::retry_budget_preserves_delays_and_stops_at_total_limit ... ok
+test invocation_tracker::benchmarks::benchmark_invocation_tracking_cost ... ignored, local tracker cost comparison; no routing, sockets or requests
+test errors::tests::unframed_setup_errors_preserve_source_and_correct_certainty ... ok
+test errors::tests::check_rpc_error_parsing ... ok
+test queue::tests::benchmark_queue_handoff ... ignored, local queue cost comparison; run release with nocapture
+test net::tcp::tests::connections_disable_nagle ... ok
+test net::tcp::tests::invalid_proxy_urls_preserve_error_kind_and_context_without_connecting ... ok
+test queue::tests::close_rejects_sends_but_drains_queued_items ... ok
+test queue::tests::dropping_the_receiver_drops_queued_items_and_rejects_sends ... ok
+test queue::tests::items_arrive_in_order_and_storage_starts_empty ... ok
+test queue::tests::receiver_wakes_for_items_and_for_the_last_sender ... ok
+test sender::optimization_tests::benchmark_initial_receive_allocation ... ignored, isolated allocation benchmark; run release with nocapture
+test sender::optimization_tests::benchmark_own_full_update_decoding ... ignored, isolated full-update decoding benchmark; synthetic requests, no sockets
+test sender::optimization_tests::benchmark_ping_timer_reuse ... ignored, isolated pending timer polling benchmark; no sockets
+test sender::optimization_tests::cancellation_before_framing_releases_reservation_without_a_send ... ok
+test sender::optimization_tests::cancellation_preserves_framed_data_but_does_not_resend_rejected_requests ... ok
+test sender::optimization_tests::cancelled_sent_request_keeps_reservation_until_reply_or_disconnect ... ok
+test sender::optimization_tests::cancelled_steps_keep_one_ping_timer_and_do_not_postpone_keepalive ... ok
+test sender::optimization_tests::cancelled_unsent_requests_are_removed_but_keepalives_are_sent ... ok
+test queue::tests::cancelled_receive_loses_nothing ... ok
+test sender::optimization_tests::dh_job_does_not_block_single_thread_io_progress ... ok
+test sender::optimization_tests::connection_failures_preserve_delivery_certainty_and_error_source ... ok
+test errors::tests::categories_and_wait_delays_are_typed ... ok
+test sender::optimization_tests::invalid_raw_enqueues_release_permits_before_returning_errors ... ok
+test sender::optimization_tests::execute_then_drop_response_reports_uncertain_legacy_invocation ... ok
+test queue::tests::concurrent_senders_deliver_everything ... ok
+test sender::optimization_tests::malformed_own_updates_do_not_consult_the_original_request ... ok
+test sender::optimization_tests::own_affected_messages_preserve_channel_identity_and_common_fallback ... ok
+test sender::optimization_tests::own_full_updates_do_not_consult_the_original_request ... ok
+test sender::optimization_tests::own_full_updates_survive_missing_or_malformed_original_requests ... ok
+test sender::optimization_tests::keepalive_backlog_is_bounded_and_pong_allows_the_next_ping ... ok
+test sender::optimization_tests::own_short_sent_update_keeps_the_original_message_and_fields ... ok
+test sender::optimization_tests::own_update_is_expanded_before_cancelled_request_retirement ... ok
+test sender::optimization_tests::own_short_sent_update_falls_back_without_a_decodable_send_message ... ok
+test sender::optimization_tests::plain_handshake_never_enqueues_keepalives ... ok
+test sender::optimization_tests::protocol_rejections_have_a_finite_retry_budget ... ok
+test sender::optimization_tests::service_deadline_uses_the_retained_timer_across_step_cancellation ... ok
+test sender::optimization_tests::sent_ping_is_replaced_when_pong_is_late ... ok
+test sender::optimization_tests::result_waiter_finds_the_reservation_already_released ... ok
+test sender::optimization_tests::silent_connection_obeys_liveness_deadline ... ok
+test sender::optimization_tests::receive_buffer_grows_for_fragmented_packets_and_keeps_the_hard_limit ... ok
+test sender::optimization_tests::short_liveness_pings_before_deadline_and_huge_timeout_is_safe ... ok
+test sender::optimization_tests::terminal_error_waiters_observe_released_reservations_during_wake ... ok
+test sender::optimization_tests::zero_byte_writes_are_errors_instead_of_busy_loops ... ok
+test sender_pool::optimization_tests::benchmark_prepared_request_clones ... ignored, isolated payload clone benchmark; run release with nocapture
+test sender::optimization_tests::tracked_requests_record_when_they_were_written ... ok
+test sender_pool::optimization_tests::benchmark_warm_connection_route ... ignored, isolated routing benchmark; no sockets or Telegram RPCs
+test sender_pool::optimization_tests::byte_admission_is_released_with_sdk_request_not_waiter ... ok
+test sender_pool::optimization_tests::admission_covers_warm_raw_and_tracked_entry_points ... ok
+test sender_pool::optimization_tests::bounded_admission_survives_waiter_cancellation ... ok
+test sender_pool::footprint_tests::long_lived_futures_hold_their_state_once ... ok
+test sender_pool::optimization_tests::connection_cancel_wakeup_is_scoped_and_cannot_be_missed ... ok
+test sender_pool::optimization_tests::connection_errors_still_return_without_emitting_disabled_update_events ... ok
+test sender_pool::optimization_tests::checked_runner_classifies_child_panic_and_clears_routes ... ok
+test sender_pool::optimization_tests::concurrent_configuration_merges_survive_yielding_storage ... ok
+test sender_pool::optimization_tests::dropped_queued_requests_release_reservations_before_waking_waiters ... ok
+test sender_pool::optimization_tests::control_backlog_yields_before_draining_ready_work ... ok
+test sender_pool::optimization_tests::empty_update_receiver_rearms_get_state_after_home_failure ... ok
+test sender_pool::optimization_tests::full_update_queue_does_not_hide_home_failure_notification ... ok
+test sender_pool::optimization_tests::invalid_dc_config_is_rejected_before_any_storage_write ... ok
+test sender_pool::optimization_tests::malformed_raw_bodies_fail_before_reaching_the_runner ... ok
+test sender_pool::optimization_tests::overflow_is_counted_and_observer_lag_is_explicit ... ok
+test sender_pool::optimization_tests::disabled_update_configuration_closes_channel_and_rejects_stream_creation ... ok
+test sender_pool::optimization_tests::connection_initialization_deadline_releases_tracked_request ... ok
+test sender_pool::optimization_tests::invalid_remote_config_reports_protocol_category_to_observers ... ok
+test sender_pool::optimization_tests::pending_disconnects_block_stale_route_publication ... ok
+test sender_pool::optimization_tests::preexisting_connections_classify_failures_using_the_current_home_dc ... ok
+test sender_pool::optimization_tests::oversized_raw_bodies_fail_before_routing_and_exact_limits_are_accepted ... ok
+test sender_pool::optimization_tests::parked_pool_rejects_requests_before_activation ... ok
+test sender_pool::optimization_tests::partial_cold_cancellation_releases_admission_for_other_dc ... ok
+test sender_pool::optimization_tests::quit_releases_cached_channels_and_stops_connection_tasks ... ok
+test sender_pool::optimization_tests::regression_cancelled_cold_call_does_not_block_pool_shutdown ... ok
+test sender_pool::optimization_tests::rejected_queue_send_falls_back_once_but_lost_reply_does_not ... ok
+test sender_pool::optimization_tests::rejected_retry_does_not_format_the_original_error ... ok
+test sender_pool::optimization_tests::public_checked_and_legacy_runners_contain_policy_panics ... ok
+test sender_pool::optimization_tests::rejected_cached_key_starts_a_fresh_plain_handshake ... ok
+test sender_pool::optimization_tests::shared_and_owned_request_apis_preserve_the_payload_allocation ... ok
+test sender_pool::optimization_tests::regression_quit_interrupts_cold_initialization_with_a_live_caller ... ok
+test sender_pool::optimization_tests::stopped_pool_rejects_even_a_still_open_cached_route ... ok
+test sender_pool::optimization_tests::request_exceeding_entire_byte_budget_is_permanently_invalid ... ok
+test sender_pool::optimization_tests::typed_retry_reuses_request_storage_and_keeps_retry_policy ... ok
+test sender_pool::optimization_tests::unaligned_raw_bodies_do_not_reach_cold_or_warm_senders ... ok
+test sender_pool::optimization_tests::stale_setup_completion_cannot_retire_replacement_waiter ... ok
+test sender_pool::optimization_tests::warm_route_bypasses_pool_and_keeps_shared_payload ... ok
+test sender_pool::optimization_tests::two_hundred_cold_cancellations_close_peer_without_quit ... ok
+test sender_pool::optimization_tests::same_dc_initialization_is_shared_and_other_dcs_remain_responsive ... ok
+test sender_pool::optimization_tests::warm_route_cancellation_keeps_the_response_channel_cancelled ... ok
+test sender_pool::optimization_tests::update_receiver_skips_missing_and_invalid_channels_without_stalling ... ok
+
+test result: ok. 82 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+     Running tests/deps.rs (target/release/deps/deps-2e53e0fc3085c9eb)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/lib.rs (target/release/deps/lib-1c659e4c81048b31)
+
+running 3 tests
+test test_connection_through_proxy ... ignored, contacts Telegram's public test DC through a local proxy; run explicitly with --ignored
+test test_invoke_encrypted_method ... ignored, contacts Telegram's public test DC; run explicitly with --ignored
+test test_no_updates_initialization_on_public_test_dc ... ignored, read-only unauthenticated query to Telegram's public test DC
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/loopback.rs (target/release/deps/loopback-128cd51fb12d3380)
+
+running 6 tests
+test loopback_blocking_control ... ignored, local non-Tokio client control
+test loopback_open_loop ... ignored, local open-loop multiple-DC and cross-pool latency/fairness
+test loopback_rpc_cost ... ignored, local loopback client CPU and allocation cost; run explicitly
+test loopback_session_footprint ... ignored, local loopback heap census; run explicitly with --ignored --nocapture
+test silent_dc_does_not_block_a_healthy_cold_dc ... ok
+test maximum_download_reply_survives_real_encryption_and_transport ... ok
+
+test result: ok. 2 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/lib.rs (target/release/deps/grammers_session-c866861d358a1f35)
+
+running 70 tests
+test import_files::tests::immutable_uri_connection_is_actually_read_only ... ok
+test import_files::tests::immutable_uri_escapes_metacharacters_and_platform_path_syntax ... ok
+test import_files::tests::corrupt_database_errors_are_redacted_and_source_unchanged ... ok
+test import_files::tests::gotd_json_file_is_bounded_and_typed ... ok
+test import_files::tests::missing_source_is_not_created ... ok
+test import_files::tests::kurigram_7_keeps_exact_custom_endpoint_and_flags ... ok
+test import_files::tests::polling_without_tokio_returns_a_sanitized_error ... ok
+test import_files::tests::imports_pyrogram_3_with_metadata_and_only_home_key ... ok
+test import_files::tests::pyrogram_zero_and_null_api_id_are_missing_and_test_routes_stay_test ... ok
+test import_files::tests::read_only_source_and_empty_sidecars_are_unchanged ... ok
+test import_files::tests::nonempty_wal_shm_or_journal_are_rejected_and_unchanged ... ok
+test import_files::tests::real_uncheckpointed_wal_is_rejected_without_side_effects ... ok
+test import_files::tests::refuses_empty_or_ambiguous_rows ... ok
+test import_files::tests::huge_text_endpoints_are_rejected_before_materialization ... ok
+test import_files::tests::refuses_missing_wrong_and_unsupported_schema_without_migration ... ok
+test import_files::tests::rejects_bad_keys_without_materializing_large_blobs ... ok
+test import_files::tests::telethon_test_endpoints_and_ipv6_require_explicit_preference ... ok
+test message_box::tests::channel_catch_up_rotates_after_nonfinal_pages ... ok
+test message_box::tests::checked_saved_state_and_difference_reject_invalid_counters_without_mutation ... ok
+test message_box::tests::extreme_update_counters_do_not_overflow ... ok
+test message_box::tests::live_qts_without_primary_state_does_not_create_orphan_secondary ... ok
+test message_box::tests::peerless_channel_message_preserves_non_pts_siblings_and_difference_progress ... ok
+test message_box::tests::saved_state_deduplicates_channels_and_recovers_missing_common_pts ... ok
+test message_box::tests::test_common_and_channel_difference_do_not_duplicate_message ... ok
+test message_box::tests::test_complete_login_flow ... ok
+test message_box::tests::test_connect_flow_empty ... ok
+test message_box::tests::test_connect_flow_with_data ... ok
+test message_box::tests::test_iter_dialogs_flow ... ok
+test message_box::tests::test_next_raw_update_flow_channel_ban ... ok
+test message_box::tests::test_next_raw_update_flow_channel_issues ... ok
+test message_box::tests::test_next_raw_update_flow_channel_timeout ... ok
+test message_box::tests::test_next_raw_update_flow_common_timeout ... ok
+test message_box::tests::test_next_raw_update_flow_empty ... ok
+test message_box::tests::test_next_raw_update_flow_no_new_get_diff_if_already_fetching ... ok
+test message_box::tests::test_process_socket_update_for_new_channel_dispatches_first_update ... ok
+test message_box::tests::test_process_socket_updates_flow_already_processed ... ok
+test message_box::tests::test_process_socket_updates_flow_common_already_applied ... ok
+test message_box::tests::test_process_socket_updates_flow_common_difference_ok ... ok
+test message_box::tests::test_process_socket_updates_flow_common_ok ... ok
+test message_box::tests::test_process_socket_updates_flow_common_pts_gap ... ok
+test message_box::tests::test_process_socket_updates_flow_common_pts_possible_gap_resolves ... ok
+test message_box::tests::test_process_socket_updates_flow_common_seq_gap ... ok
+test message_box::tests::test_process_socket_updates_trickle_causes_gap ... ok
+test peer::cache_merge_tests::channel_refresh_keeps_missing_hash_and_replaces_kind ... ok
+test peer::cache_merge_tests::new_user_information_replaces_cached_values_without_erasing_missing_fields ... ok
+test storages::erased::tests::benchmark_memory_and_erased_cache_peers ... ignored, local session-storage microbenchmark; run explicitly in release mode
+test storages::erased::tests::erased_cache_peers_forwards_empty_input_and_original_error ... ok
+test storages::erased::tests::erased_cache_peers_preserves_bulk_override_and_input_order ... ok
+test storages::erased::tests::memory_cache_peers_matches_ordered_individual_updates ... ok
+test storages::erased::tests::sqlite_cache_peers_matches_ordered_individual_updates ... ok
+test storages::memory::tests::cache_peers_empty_input_succeeds_with_poisoned_storage ... ok
+test storages::memory::tests::compact_dc_options_round_trip_session_data ... ok
+test storages::memory::tests::self_user_lookup_recognizes_bulk_cached_identity ... ok
+test storages::memory::tests::self_user_lookup_uses_cached_identity_and_tracks_flag_changes ... ok
+test storages::sqlite::tests::benchmark_sqlite_cache_peers_transaction ... ignored, local in-memory SQLite microbenchmark; run explicitly in release mode
+test storages::sqlite::tests::cache_peers_duplicate_after_row_error_retains_only_committed_metadata ... ok
+test storages::sqlite::tests::cache_peers_empty_input_does_not_require_database_transaction ... ok
+test storages::sqlite::tests::cache_peers_reports_row_error_and_commits_other_peers ... ok
+test storages::sqlite::tests::cache_peers_returns_prepare_error_without_panicking ... ok
+test storages::sqlite::tests::cache_peers_returns_transaction_error_without_panicking ... ok
+test storages::sqlite::tests::exercise_sqlite_session ... ok
+test import_files::tests::unix_literal_backslash_source_cannot_select_a_different_session ... ok
+test import_files::tests::telethon_7_and_8_keep_exact_routes_and_skip_temporary_keys ... ok
+test storages::sqlite::tests::native_open_accepts_existing_empty_database ... ok
+test storages::sqlite::tests::native_open_preserves_literal_backslash_in_unix_path ... ok
+test storages::sqlite::tests::native_open_creates_and_reopens_native_storage ... ok
+test storages::sqlite::tests::native_open_rejects_foreign_database_without_mutation ... ok
+test storages::sqlite::tests::native_open_rejects_sidecars_without_recovery ... ok
+test storages::sqlite::tests::native_open_rejects_wrong_version_schema_and_corruption_unchanged ... ok
+test import_files::tests::rejects_malformed_metadata_and_endpoints ... ok
+
+test result: ok. 68 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running tests/deps.rs (target/release/deps/deps-296b60945c521911)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/import.rs (target/release/deps/import-e4ec135ba89edd81)
+
+running 22 tests
+test auto_detection_handles_supported_formats ... ok
+test diagnostics_never_include_input_or_auth_key ... ok
+test gotd_allows_missing_optional_key_id_and_preserves_ipv6_address ... ok
+test explicit_parsers_select_only_the_named_format_and_address_family ... ok
+test gotd_imports_version_one_loader_json_and_verifies_key_id ... ok
+test gotd_preserves_explicit_production_endpoint_and_session_data_conversion ... ok
+test gotd_rejects_known_endpoint_environment_mismatch ... ok
+test gotd_rejects_invalid_versions_keys_key_ids_addresses_and_environment ... ok
+test gotd_rejects_missing_and_duplicate_relevant_fields ... ok
+test pyrogram_application_id_metadata_respects_signed_range ... ok
+test pyrogram_imports_current_and_both_legacy_formats_with_optional_padding ... ok
+test pyrogram_rejects_invalid_fields_and_lengths ... ok
+test pyrogram_rejects_production_only_dc_in_test_mode ... ok
+test pyrogram_supports_dc_203_without_copying_its_key_to_other_dcs ... ok
+test pyrogram_test_sessions_have_only_test_routes ... ok
+test pyrogram_zero_application_id_is_missing_metadata ... ok
+test telethon_ipv6_test_endpoint_is_classified_and_preserved ... ok
+test telethon_preserves_ipv4_endpoint_and_does_not_invent_metadata ... ok
+test telethon_preserves_ipv6_endpoint_and_requires_ipv6_preference ... ok
+test telethon_recognizes_test_endpoints_without_production_fallbacks ... ok
+test telethon_rejects_versions_truncation_trailing_bytes_and_invalid_fields ... ok
+test oversized_inputs_are_rejected_before_decoding ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/native.rs (target/release/deps/native-9aca489ebd12f4a5)
+
+running 7 tests
+test diagnostics_never_expose_input_keys_or_encoded_credentials ... ok
+test export_rejects_missing_inconsistent_and_failing_storage ... ok
+test native_preserves_test_routes_and_missing_unused_endpoint ... ok
+test native_roundtrip_preserves_only_home_route_and_exact_endpoints ... ok
+test native_preserves_ipv6_import_placeholder_without_making_it_routable ... ok
+test parser_rejects_malformed_headers_routes_and_keys_even_with_valid_checksum ... ok
+test parser_rejects_noncanonical_encoding_corruption_and_unbounded_input ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/grammers_tl_gen-e1b8434d8804ce2f)
+
+running 28 tests
+test rustifier::tests::check_def_empty_variant_name ... ok
+test rustifier::tests::check_def_namespaced_qual_name ... ok
+test rustifier::tests::check_def_numeric_variant_name ... ok
+test rustifier::tests::check_def_qual_name ... ok
+test rustifier::tests::check_def_self_variant_name ... ok
+test rustifier::tests::check_def_type_name ... ok
+test rustifier::tests::check_def_variant_name ... ok
+test rustifier::tests::check_param_attr_name ... ok
+test rustifier::tests::check_param_flags_qual_name ... ok
+test rustifier::tests::check_param_flag_def_qual_name ... ok
+test rustifier::tests::check_param_qual_name ... ok
+test rustifier::tests::check_param_self_attr_name ... ok
+test rustifier::tests::check_param_true_flags_qual_name ... ok
+test rustifier::tests::check_rusty_type_name ... ok
+test rustifier::tests::check_type_bytes_item_path ... ok
+test rustifier::tests::check_type_bytes_qual_name ... ok
+test rustifier::tests::check_type_generic_ref_qual_name ... ok
+test rustifier::tests::check_type_item_path ... ok
+test rustifier::tests::check_type_large_int_item_path ... ok
+test rustifier::tests::check_param_reserved_attr_name ... ok
+test rustifier::tests::check_type_large_int_qual_name ... ok
+test rustifier::tests::check_type_qual_bare_name ... ok
+test rustifier::tests::check_type_qual_name ... ok
+test rustifier::tests::check_type_qual_namespaced_bare_name ... ok
+test rustifier::tests::check_type_qual_namespaced_name ... ok
+test rustifier::tests::check_type_raw_vec_qual_name ... ok
+test rustifier::tests::check_type_type_name ... ok
+test rustifier::tests::check_type_vec_qual_name ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deps.rs (target/release/deps/deps-4fa0a8321ca0e70f)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/lib.rs (target/release/deps/lib-1b45c62a9718da55)
+
+running 6 tests
+test generic_bytes_with_serde_bytes ... ok
+test generic_functions_use_generic_parameters ... ok
+test recursive_types_indirect_boxed ... ok
+test recursive_types_indirect_no_hang ... ok
+test recursive_types_direct_boxed ... ok
+test recursive_types_vec_indirect_not_boxed ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/grammers_tl_parser-a63e3d6aba809239)
+
+running 38 tests
+test tl::definition::tests::parse_bad_id ... ok
+test tl::definition::tests::parse_complete ... ok
+test tl::definition::tests::parse_empty_def ... ok
+test tl::definition::tests::parse_multiline_definition ... ok
+test tl::definition::tests::parse_no_name ... ok
+test tl::definition::tests::parse_missing_generic ... ok
+test tl::definition::tests::parse_unimplemented ... ok
+test tl::definition::tests::parse_override_id ... ok
+test tl::definition::tests::parse_unknown_flags ... ok
+test tl::definition::tests::parse_no_type ... ok
+test tl::definition::tests::parse_valid_definition ... ok
+test tl::definition::tests::test_to_string ... ok
+test tl::parameter::tests::parse_bad_flags ... ok
+test tl::parameter::tests::parse_bad_generics ... ok
+test tl::parameter::tests::parse_empty_param ... ok
+test tl::parameter::tests::parse_type_def_param ... ok
+test tl::parameter::tests::parse_unknown_def_param ... ok
+test tl::parameter::tests::parse_valid_param ... ok
+test tl::ty::tests::check_bare ... ok
+test tl::parameter::tests::parse_unknown_param ... ok
+test tl::ty::tests::check_empty_namespaced ... ok
+test tl::ty::tests::check_empty_simple ... ok
+test tl::ty::tests::check_generic_arg ... ok
+test tl::ty::tests::check_generic_ref ... ok
+test tl::ty::tests::check_namespaced ... ok
+test tl::ty::tests::check_simple ... ok
+test tl_iterator::tests::parse_bad_separator ... ok
+test tl_iterator::tests::parse_file ... ok
+test utils::tests::check_infer_id ... ok
+test utils::tests::remove_comments_leading ... ok
+test utils::tests::remove_comments_noop ... ok
+test utils::tests::remove_comments_many ... ok
+test utils::tests::remove_comments_preserves_existing_crlf_behavior ... ok
+test utils::tests::remove_comments_preserves_lone_slashes ... ok
+test utils::tests::remove_comments_trailing ... ok
+test utils::tests::remove_comments_unicode_before_comment ... ok
+test utils::tests::remove_comments_unicode_comment ... ok
+test utils::tests::remove_comments_without_final_newline ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deps.rs (target/release/deps/deps-d8b267d03d79f804)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/release/deps/grammers_tl_types-2eaa6a8847a851cb)
+
+running 10 tests
+test deserialize::vector_tests::benchmark_vector_deserialization ... ignored, local release microbenchmark; no network or live performance claim
+test deserialize::borrowed_bytes_tests::borrowed_reads_reject_overflow_and_keep_lossy_string_behavior ... ok
+test deserialize::borrowed_bytes_tests::borrowed_strings_preserve_short_long_payloads_padding_and_positions ... ok
+test deserialize::vector_tests::vectors_accept_zero_sized_and_zero_byte_elements ... ok
+test deserialize::vector_tests::vectors_preserve_constructor_validation ... ok
+test deserialize::vector_tests::vectors_accept_elements_larger_than_initial_reservation_cap ... ok
+test deserialize::vector_tests::vectors_reject_truncation_at_each_element_and_header ... ok
+test deserialize::vector_tests::vectors_drop_completed_elements_on_first_middle_and_last_errors ... ok
+test deserialize::vector_tests::vectors_preserve_empty_single_and_small_values ... ok
+test deserialize::vector_tests::vectors_reject_unbounded_counts_with_short_input ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deps.rs (target/release/deps/deps-dde7263c133e8cea)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests grammers_client
+
+running 69 tests
+test grammers-client/src/client/auth.rs - client::auth::Client::is_authorized (line 183) ... ok
+test grammers-client/src/client/auth.rs - client::auth::Client::request_login_code (line 330) ... ok
+test grammers-client/src/client/auth.rs - client::auth::Client::bot_sign_in (line 257) ... ok
+test grammers-client/src/client/auth.rs - client::auth::Client::check_password (line 482) ... ok
+test grammers-client/src/client/auth.rs - client::auth::Client::sign_in (line 402) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::action (line 860) ... ok
+test grammers-client/src/client/bots.rs - client::bots::Client::inline_query (line 144) ... ok
+test grammers-client/src/client/auth.rs - client::auth::Client::sign_out (line 582) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::action (line 873) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::action (line 904) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::get_permissions (line 679) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::get_me (line 407) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::iter_participants (line 436) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::iter_profile_photos (line 599) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::kick_participant (line 468) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::resolve_peer (line 617) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::resolve_username (line 374) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::set_admin_rights (line 563) ... ok
+test grammers-client/src/client/dialogs.rs - client::dialogs::Client::clear_mentions (line 249) ... ok
+test grammers-client/src/client/dialogs.rs - client::dialogs::Client::delete_dialog (line 176) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::set_banned_rights (line 519) ... ok
+test grammers-client/src/client/dialogs.rs - client::dialogs::Client::iter_dialogs (line 147) ... ok
+test grammers-client/src/client/dialogs.rs - client::dialogs::Client::mark_as_read (line 220) ... ok
+test grammers-client/src/client/files.rs - client::files::Client::download_media (line 367) ... ok
+test grammers-client/src/client/files.rs - client::files::Client::iter_download (line 304) ... ok
+test grammers-client/src/client/files.rs - client::files::Client::upload_file (line 586) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::delete_messages (line 919) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::edit_message (line 849) ... ok
+test grammers-client/src/client/files.rs - client::files::Client::upload_stream (line 474) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::forward_messages (line 966) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::get_messages_by_id (line 1163) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::get_pinned_message (line 1212) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::get_reply_to_message (line 1018) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::iter_messages (line 1095) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::pin_message (line 1254) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::search_all_messages (line 1139) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_message (line 582) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::search_messages (line 1116) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_album (line 742) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_message_with_options (line 708) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_reactions (line 1346) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_reactions (line 1335) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_reactions (line 1360) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::unpin_message (line 1274) ... ok
+test grammers-client/src/client/messages.rs - client::messages::SearchIter::min_date (line 403) ... ok
+test grammers-client/src/client/net.rs - client::net::Client::invoke (line 81) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::unpin_all_messages (line 1310) ... ok
+test grammers-client/src/client/net.rs - client::net::Client::new (line 30) ... ok
+test grammers-client/src/client/messages.rs - client::messages::SearchIter::max_date (line 422) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputMedia::thumbnail (line 285) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputVideo (line 66) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputAudio (line 31) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputMedia::attribute (line 330) ... ok
+test grammers-client/src/message/input_message.rs - message::input_message::InputMessage::attribute (line 338) ... ok
+test grammers-client/src/message/input_message.rs - message::input_message::InputMessage::with_options (line 52) ... ok
+test grammers-client/src/message/input_rich_message.rs - message::input_rich_message::InputRichMessage::html (line 42) ... ok
+test grammers-client/src/message/input_rich_message.rs - message::input_rich_message::InputRichMessage::markdown (line 68) ... ok
+test grammers-client/src/message/input_rich_message.rs - message::input_rich_message::InputRichMessage::photo (line 130) ... ok
+test grammers-client/src/message/message.rs - message::model::Message::react (line 507) ... ok
+test grammers-client/src/message/message.rs - message::model::Message::react (line 516) ... ok
+test grammers-client/src/message/input_message.rs - message::input_message::InputMessage::thumbnail (line 293) ... ok
+test grammers-client/src/message/message.rs - message::model::Message::react (line 529) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::force_reply (line 224) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::hide (line 198) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::from_keys (line 132) ... ok
+test grammers-client/src/message/send_options.rs - message::send_options::SendOptions (line 17) ... ok
+test grammers-client/src/peer/action.rs - peer::action::ActionSender::repeat (line 79) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::from_buttons (line 54) ... ok
+test grammers-client/src/client/device.rs - client::device::DeviceConfig (line 7) ... ok
+
+test result: ok. 69 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+all doctests ran in 0.98s; merged doctests compilation took 0.87s
+   Doc-tests grammers_crypto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests grammers_mtproto
+
+running 1 test
+test grammers-mtproto/src/authentication.rs - authentication (line 13) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.23s; merged doctests compilation took 0.22s
+   Doc-tests grammers_mtsender
+
+running 5 tests
+test grammers-mtsender/src/errors.rs - errors::RpcError::name (line 119) ... ok
+test grammers-mtsender/src/errors.rs - errors::RpcError::is (line 199) ... ok
+test grammers-mtsender/src/configuration.rs - configuration::RetryBudget (line 272) ... ok
+test grammers-mtsender/src/errors.rs - errors::InvocationError::is (line 505) ... ok
+test grammers-mtsender/src/errors.rs - errors::RpcError::value (line 129) ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.36s; merged doctests compilation took 0.35s
+   Doc-tests grammers_session
+
+running 3 tests
+test grammers-session/src/types.rs - types::DcOption::id (line 26) ... ok
+test grammers-session/src/peer.rs - peer::PeerId (line 17) ... ok
+test grammers-session/src/peer.rs - peer::PeerId::to_ambient_ref (line 289) ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.30s; merged doctests compilation took 0.29s
+   Doc-tests grammers_tl_gen
+
+running 11 tests
+test grammers-tl-gen/src/enums.rs - enums::write_common_field_impl (line 94) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_deserializable (line 246) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_enum (line 26) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_impl_from (line 318) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_serializable (line 187) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_deserializable (line 263) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_identifiable (line 126) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_impl_from (line 402) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_rpc (line 370) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_serializable (line 156) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_struct (line 51) ... ignored
+
+test result: ok. 0 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test grammers-tl-gen/src/structs.rs - structs::get_generic_param_list (line 22) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.16s; merged doctests compilation took 0.15s
+   Doc-tests grammers_tl_parser
+
+running 6 tests
+test grammers-tl-parser/src/lib.rs - parse_tl_file (line 34) - compile ... ok
+test grammers-tl-parser/src/tl/parameter.rs - tl::parameter::Parameter::from_str (line 38) ... ok
+test grammers-tl-parser/src/tl/definition.rs - tl::definition::Definition::from_str (line 79) ... ok
+test grammers-tl-parser/src/tl/parameter_type.rs - tl::parameter_type::ParameterType::from_str (line 53) ... ok
+test grammers-tl-parser/src/tl/flag.rs - tl::flag::Flag::from_str (line 37) ... ok
+test grammers-tl-parser/src/tl/ty.rs - tl::ty::Type::from_str (line 69) ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.25s; merged doctests compilation took 0.24s
+   Doc-tests grammers_tl_types
+
+running 24 tests
+test grammers-tl-types/src/deserialize.rs - deserialize::Vec<u8>::deserialize (line 453) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::String::deserialize (line 410) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::Deserializable::from_bytes (line 156) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::Vec<T>::deserialize (line 365) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::[u8;32]::deserialize (line 295) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::bool::deserialize (line 177) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::[u8;16]::deserialize (line 273) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::crate::RawVec<T>::deserialize (line 391) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::i64::deserialize (line 249) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::f64::deserialize (line 318) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::i32::deserialize (line 202) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::u32::deserialize (line 226) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::&'_[u8]::serialize (line 287) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::String::serialize (line 226) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::Vec<T>::serialize (line 184) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::Vec<u8>::serialize (line 269) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::[u8;32]::serialize (line 140) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::bool::serialize (line 37) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::[u8;16]::serialize (line 121) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::i32::serialize (line 57) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::crate::RawVec<T>::serialize (line 207) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::f64::serialize (line 161) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::u32::serialize (line 79) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::i64::serialize (line 100) ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+all doctests ran in 0.41s; merged doctests compilation took 0.39s

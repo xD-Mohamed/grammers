@@ -171,6 +171,7 @@ struct PoolState {
     home_failure: tokio::sync::Notify,
     capacity: Option<Arc<Semaphore>>,
     byte_capacity: Option<Arc<Semaphore>>,
+    byte_limit: usize,
     stopped: AtomicBool,
     active: AtomicUsize,
     dropped: AtomicU64,
@@ -186,6 +187,7 @@ impl Default for PoolState {
             home_failure: tokio::sync::Notify::new(),
             capacity: None,
             byte_capacity: None,
+            byte_limit: usize::MAX,
             stopped: AtomicBool::new(false),
             active: AtomicUsize::new(0),
             dropped: AtomicU64::new(0),
@@ -451,6 +453,13 @@ impl SenderPoolHandle {
             )
             .into());
         }
+        if body.len() > self.3.byte_limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "request body exceeds the pool byte admission limit",
+            )
+            .into());
+        }
         let permit = if let Some(capacity) = &self.3.capacity {
             let capacity = Arc::clone(capacity).try_acquire_owned().map_err(|_| {
                 self.3.rejected.fetch_add(1, Ordering::Relaxed);
@@ -688,6 +697,9 @@ impl SenderPool {
             ..Default::default()
         }));
         let state = Arc::new(PoolState {
+            byte_limit: connection_params
+                .max_pending_bytes
+                .map_or(usize::MAX, |n| n.get().min(Semaphore::MAX_PERMITS)),
             byte_capacity: connection_params
                 .max_pending_bytes
                 .map(|n| Arc::new(Semaphore::new(n.get().min(Semaphore::MAX_PERMITS)))),
@@ -820,11 +832,11 @@ impl SenderPoolRunner {
                 }
                 dc_id = poll_fn(|cx| {
                     for pending in &mut self.pending {
-                        let mut all_closed = true;
-                        for rpc in &mut pending.requests {
-                            if rpc.tx.poll_closed(cx).is_pending() { all_closed = false; }
-                        }
-                        if all_closed { return Poll::Ready(pending.dc_id); }
+                          // Remove closed waiters as we go. poll_closed spends
+                          // cooperative budget; revisiting the same closed prefix
+                          // would otherwise starve both setup cancellation and I/O.
+                          pending.requests.retain_mut(|rpc| rpc.tx.poll_closed(cx).is_pending());
+                          if pending.requests.is_empty() { return Poll::Ready(pending.dc_id); }
                     }
                     Poll::Pending
                 }), if !self.pending.is_empty() => {
@@ -1020,6 +1032,7 @@ impl SenderPoolRunner {
         let sender = match result {
             Ok(sender) => sender,
             Err(error) => {
+                let error = error.for_unframed_request();
                 self.report_setup_failure(dc_id, &error);
                 if pending.requests.len() == 1 {
                     let rpc = pending.requests.into_iter().next().unwrap();
@@ -1046,12 +1059,9 @@ impl SenderPoolRunner {
         let updates = self.updates_tx.clone();
         let session = Arc::clone(&self.session);
         let state = Arc::clone(&self.state);
-        let abort_handle = self.connection_pool.spawn(async move {
-            (
-                dc_id,
-                run_sender(sender, rpc_rx, updates, dc_id, session, state).await,
-            )
-        });
+        let abort_handle = self
+            .connection_pool
+            .spawn(run_sender(sender, rpc_rx, updates, dc_id, session, state));
         self.routes
             .write()
             .unwrap_or_else(|e| e.into_inner())
@@ -1345,13 +1355,13 @@ fn run_sender(
     dc_id: i32,
     session: Arc<ErasedSession>,
     state: Arc<PoolState>,
-) -> impl Future<Output = Result<(), ReadError>> {
+) -> impl Future<Output = (i32, Result<(), ReadError>)> {
     async move {
         let mut dropped: usize = 0;
         let mut last_update_limit_warn = Instant::now();
         let mut updates_closed = false;
 
-        loop {
+        let result = loop {
             tokio::task::consume_budget().await;
             tokio::select! {
                 step = sender.step() => match step {
@@ -1404,7 +1414,8 @@ fn run_sender(
                     None => break Ok(()),
                 },
             }
-        }
+        };
+        (dc_id, result)
     }
 }
 
@@ -1448,6 +1459,7 @@ impl fmt::Debug for Request {
 #[cfg(test)]
 mod optimization_tests {
     use super::*;
+    use tl::Serializable;
 
     #[tokio::test]
     async fn public_checked_and_legacy_runners_contain_policy_panics() {
@@ -1598,6 +1610,124 @@ mod optimization_tests {
                 )
                 .is_ok()
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn control_backlog_yields_before_draining_ready_work() {
+        use std::sync::atomic::AtomicUsize;
+        struct Count(Arc<AtomicUsize>);
+        impl crate::RetryPolicy for Count {
+            fn should_retry(&self, _: &RetryContext) -> ControlFlow<(), Duration> {
+                self.0.fetch_add(1, Ordering::Relaxed);
+                ControlFlow::Break(())
+            }
+        }
+        let count = Arc::new(AtomicUsize::new(0));
+        let pool = SenderPool::with_configuration(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+            ConnectionParams {
+                retry_policy: Box::new(Count(Arc::clone(&count))),
+                ..Default::default()
+            },
+        );
+        for _ in 0..1000 {
+            let (tx, _) = oneshot::channel();
+            pool.handle
+                .thin
+                .0
+                .send(Request::CheckRetry {
+                    error: Box::new(InvocationError::InvalidDc),
+                    fail_count: NonZeroU32::MIN,
+                    slept_so_far: Duration::ZERO,
+                    tx,
+                })
+                .unwrap();
+        }
+        let runner = tokio::spawn(pool.runner.run_checked());
+        tokio::task::yield_now().await;
+        let processed = count.load(Ordering::Relaxed);
+        assert!(
+            processed > 0 && processed < 1000,
+            "runner processed {processed} before yielding"
+        );
+        pool.handle.quit();
+        runner.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_configuration_merges_survive_yielding_storage() {
+        use grammers_session::storages::MemorySession;
+        use grammers_session::{
+            BoxFuture,
+            types::{PeerId, PeerInfo, UpdateState, UpdatesState},
+        };
+        struct YieldingSession(MemorySession);
+        impl Session for YieldingSession {
+            type Error = <MemorySession as Session>::Error;
+            fn home_dc_id(&self) -> Result<i32, Self::Error> {
+                self.0.home_dc_id()
+            }
+            fn set_home_dc_id(&self, id: i32) -> BoxFuture<'_, Result<(), Self::Error>> {
+                self.0.set_home_dc_id(id)
+            }
+            fn dc_option(&self, id: i32) -> Result<Option<DcOption>, Self::Error> {
+                self.0.dc_option(id)
+            }
+            fn set_dc_option(&self, option: &DcOption) -> BoxFuture<'_, Result<(), Self::Error>> {
+                let option = option.clone();
+                Box::pin(async move {
+                    tokio::task::yield_now().await;
+                    self.0.set_dc_option(&option).await
+                })
+            }
+            fn peer(&self, id: PeerId) -> BoxFuture<'_, Result<Option<PeerInfo>, Self::Error>> {
+                self.0.peer(id)
+            }
+            fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
+                self.0.cache_peer(peer)
+            }
+            fn updates_state(&self) -> BoxFuture<'_, Result<UpdatesState, Self::Error>> {
+                self.0.updates_state()
+            }
+            fn set_update_state(
+                &self,
+                state: UpdateState,
+            ) -> BoxFuture<'_, Result<(), Self::Error>> {
+                self.0.set_update_state(state)
+            }
+        }
+        let session = Arc::new(YieldingSession(MemorySession::default()));
+        let pool = SenderPool::new(Arc::clone(&session), 1);
+        let option = tl::types::DcOption {
+            ipv6: false,
+            media_only: false,
+            tcpo_only: false,
+            cdn: false,
+            r#static: true,
+            this_port_only: false,
+            id: 90,
+            ip_address: "127.0.0.1".into(),
+            port: 444,
+            secret: None,
+        };
+        let ipv4 = [option.clone().into()];
+        let ipv6 = [tl::types::DcOption {
+            ipv6: true,
+            ip_address: "::1".into(),
+            port: 445,
+            ..option
+        }
+        .into()];
+        let (a, b) = tokio::join!(
+            pool.runner.update_dc_options(&ipv4),
+            pool.runner.update_dc_options(&ipv6)
+        );
+        a.unwrap();
+        b.unwrap();
+        let merged = session.dc_option(90).unwrap().unwrap();
+        assert_eq!(merged.ipv4, "127.0.0.1:444".parse().unwrap());
+        assert_eq!(merged.ipv6, "[::1]:445".parse().unwrap());
     }
 
     #[tokio::test]
@@ -1827,6 +1957,333 @@ mod optimization_tests {
         let result = pool.runner.run_checked().await;
         assert_eq!(result, Err(PoolRunError::TaskPanicked));
         assert!(pool.handle.status().stopped);
+    }
+
+    #[tokio::test]
+    async fn update_receiver_skips_missing_and_invalid_channels_without_stalling() {
+        use grammers_session::types::{
+            ChannelState, PeerAuth, PeerInfo, UpdateState, UpdatesState,
+        };
+        use tl::Identifiable;
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        session
+            .set_update_state(UpdateState::All(UpdatesState {
+                pts: 100,
+                qts: 0,
+                date: 1,
+                seq: 0,
+                channels: (1..=3).map(|id| ChannelState { id, pts: 10 }).collect(),
+            }))
+            .await
+            .unwrap();
+        for id in [2, 3] {
+            session
+                .cache_peer(PeerInfo::Channel {
+                    id,
+                    auth: Some(PeerAuth::from_hash(123)),
+                    kind: None,
+                })
+                .await
+                .unwrap();
+        }
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(session),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let consumer = async {
+            loop {
+                let result = receiver.next().await.unwrap();
+                if !result.0.is_empty() {
+                    assert_eq!(result.0[0].0, tl::enums::Update::Config);
+                    break;
+                }
+            }
+        };
+        let responder = async {
+            for expected in [0, 2, 3] {
+                let (body, tx) = loop {
+                    match pool.runner.request_rx.recv().await.unwrap() {
+                        Request::Invoke { body, tx, .. } => break (body, tx),
+                        Request::CheckRetry { error, tx, .. } => {
+                            let _ = tx.send(ControlFlow::Break(*error));
+                        }
+                        _ => panic!("expected RPC"),
+                    }
+                };
+                let constructor = u32::from_le_bytes(body[..4].try_into().unwrap());
+                let response =
+                    if expected == 0 {
+                        assert_eq!(
+                            constructor,
+                            tl::functions::updates::GetDifference::CONSTRUCTOR_ID
+                        );
+                        Ok(tl::enums::updates::Difference::Empty(
+                            tl::types::updates::DifferenceEmpty { date: 2, seq: 0 },
+                        )
+                        .to_bytes())
+                    } else {
+                        assert_eq!(
+                            constructor,
+                            tl::functions::updates::GetChannelDifference::CONSTRUCTOR_ID
+                        );
+                        // constructor + flags + inputChannel constructor precede its ID.
+                        assert_eq!(
+                            i64::from_le_bytes(body[12..20].try_into().unwrap()),
+                            expected
+                        );
+                        if expected == 2 {
+                            Err(InvocationError::Rpc(
+                                tl::types::RpcError {
+                                    error_code: 400,
+                                    error_message: "CHANNEL_INVALID".into(),
+                                }
+                                .into(),
+                            ))
+                        } else {
+                            Ok(tl::enums::updates::ChannelDifference::Difference(
+                                tl::types::updates::ChannelDifference {
+                                    r#final: true,
+                                    pts: 11,
+                                    timeout: None,
+                                    new_messages: vec![],
+                                    other_updates: vec![tl::enums::Update::Config],
+                                    chats: vec![],
+                                    users: vec![],
+                                },
+                            )
+                            .to_bytes())
+                        }
+                    };
+                tx.send(response).unwrap();
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(consumer, responder);
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn empty_update_receiver_rearms_get_state_after_home_failure() {
+        use tl::Identifiable;
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(session),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: false },
+        )
+        .await
+        .unwrap();
+        pool.runner
+            .state
+            .home_failures
+            .fetch_add(1, Ordering::Release);
+        let tx = pool.runner.updates_tx.clone().unwrap();
+        for fail in [true, false] {
+            let responder = async {
+                let Request::Invoke {
+                    body, tx: response, ..
+                } = pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected GetState")
+                };
+                assert_eq!(
+                    u32::from_le_bytes(body[..4].try_into().unwrap()),
+                    tl::functions::updates::GetState::CONSTRUCTOR_ID
+                );
+                if fail {
+                    response
+                        .send(Err(InvocationError::Rpc(
+                            tl::types::RpcError {
+                                error_code: 401,
+                                error_message: "AUTH_KEY_UNREGISTERED".into(),
+                            }
+                            .into(),
+                        )))
+                        .unwrap();
+                    let Request::CheckRetry { error, tx, .. } =
+                        pool.runner.request_rx.recv().await.unwrap()
+                    else {
+                        panic!("expected retry inspection")
+                    };
+                    tx.send(ControlFlow::Break(*error)).unwrap();
+                } else {
+                    response
+                        .send(Ok(tl::enums::updates::State::State(
+                            tl::types::updates::State {
+                                pts: 1,
+                                qts: 0,
+                                date: 1,
+                                seq: 0,
+                                unread_count: 0,
+                            },
+                        )
+                        .to_bytes()))
+                        .unwrap();
+                    tx.send(UpdatesLike::Updates(
+                        tl::types::UpdateShort {
+                            update: tl::enums::Update::Config,
+                            date: 1,
+                        }
+                        .into(),
+                    ))
+                    .await
+                    .unwrap();
+                }
+            };
+            tokio::time::timeout(Duration::from_secs(1), async {
+                let (result, ()) = tokio::join!(receiver.next(), responder);
+                if fail {
+                    assert!(result.unwrap_err().is("AUTH_KEY_UNREGISTERED"));
+                } else {
+                    assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+                }
+            })
+            .await
+            .unwrap();
+        }
+    }
+
+    async fn silent_pool(params: ConnectionParams) -> (SenderPool, tokio::net::TcpListener) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        session
+            .set_dc_option(&DcOption {
+                id: 4,
+                ipv4: match address {
+                    std::net::SocketAddr::V4(a) => a,
+                    _ => unreachable!(),
+                },
+                ipv6: SocketAddrV6::new(Ipv6Addr::LOCALHOST, address.port(), 0, 0),
+                auth_key: Some([0; 256]),
+            })
+            .await
+            .unwrap();
+        (SenderPool::with_configuration(session, 1, params), listener)
+    }
+
+    #[tokio::test]
+    async fn two_hundred_cold_cancellations_close_peer_without_quit() {
+        use tokio::io::AsyncReadExt;
+        let (pool, listener) = silent_pool(ConnectionParams::default()).await;
+        let calls: Vec<_> = (0..200)
+            .map(|_| {
+                pool.handle
+                    .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None)
+                    .unwrap()
+            })
+            .collect();
+        let runner = tokio::spawn(pool.runner.run_checked());
+        let (mut peer, _) = listener.accept().await.unwrap();
+        drop(calls);
+        tokio::time::timeout(Duration::from_secs(1), peer.read_to_end(&mut Vec::new()))
+            .await
+            .expect("caller cancellation must close initialization socket")
+            .unwrap();
+        assert!(!runner.is_finished());
+        pool.handle.quit();
+        runner.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn partial_cold_cancellation_releases_admission_for_other_dc() {
+        let (pool, listener) = silent_pool(ConnectionParams {
+            max_pending_requests: std::num::NonZeroUsize::new(200),
+            max_pending_bytes: std::num::NonZeroUsize::new(800),
+            ..Default::default()
+        })
+        .await;
+        let mut calls: Vec<_> = (0..200)
+            .map(|_| {
+                pool.handle
+                    .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None)
+                    .unwrap()
+            })
+            .collect();
+        let live = calls.pop().unwrap();
+        let runner = tokio::spawn(pool.runner.run_checked());
+        let (_peer, _) = listener.accept().await.unwrap();
+        drop(calls);
+        let other = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                match pool
+                    .handle
+                    .start_invoke_shared(999, Bytes::from_static(&[1; 4]), None)
+                {
+                    Ok(call) => break call.await,
+                    Err(e) if e.category() == crate::InvocationErrorCategory::Overloaded => {
+                        tokio::task::yield_now().await
+                    }
+                    Err(e) => panic!("{e}"),
+                }
+            }
+        })
+        .await
+        .expect("cancelled cold waiters retained permits");
+        assert!(matches!(other, Err(InvocationError::InvalidDc)));
+        assert!(pool.handle.disconnect_from_dc(4));
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), live)
+                .await
+                .unwrap()
+                .is_err()
+        );
+        pool.handle.quit();
+        runner.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn stale_setup_completion_cannot_retire_replacement_waiter() {
+        let (mut pool, _listener) = silent_pool(ConnectionParams::default()).await;
+        let first = pool
+            .handle
+            .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None)
+            .unwrap();
+        let request = pool.runner.request_rx.recv().await.unwrap();
+        assert!(pool.runner.process_request(request).await.is_continue());
+        let old_id = pool.runner.pending[0].abort_handle.id();
+        pool.runner.cancel_setup(4);
+        assert!(first.await.is_err());
+        let second = pool
+            .handle
+            .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None)
+            .unwrap();
+        let request = pool.runner.request_rx.recv().await.unwrap();
+        assert!(pool.runner.process_request(request).await.is_continue());
+        pool.runner
+            .finish_setup((4, old_id, Err(InvocationError::InvalidDc)));
+        assert_eq!(pool.runner.pending.len(), 1);
+        assert_eq!(pool.runner.pending[0].requests.len(), 1);
+        drop(second);
+    }
+
+    #[test]
+    fn request_exceeding_entire_byte_budget_is_permanently_invalid() {
+        let pool = SenderPool::with_configuration(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+            ConnectionParams {
+                max_pending_bytes: std::num::NonZeroUsize::new(4),
+                ..Default::default()
+            },
+        );
+        let error = pool
+            .handle
+            .start_invoke_shared(4, Bytes::from_static(&[1; 8]), None)
+            .err()
+            .unwrap();
+        assert!(
+            matches!(error, InvocationError::Io(e) if e.kind() == std::io::ErrorKind::InvalidInput)
+        );
     }
 
     #[tokio::test]
@@ -2190,7 +2647,7 @@ mod optimization_tests {
             )
             .await
             .unwrap();
-            assert!(result.is_err());
+            assert!(result.1.is_err());
             if enabled {
                 assert!(matches!(
                     updates_rx.recv().await,
@@ -2239,6 +2696,7 @@ mod optimization_tests {
                     .await
                     .unwrap()
                     .unwrap()
+                    .1
                     .is_err()
             );
             if connection_dc == 4 {
@@ -2773,6 +3231,11 @@ mod footprint_tests {
             grammers_session::storages::MemorySession::default(),
         ));
         let connection = run_sender(sender, rx, None, 2, session, Arc::default());
+        println!(
+            "spawned_connection_future={} sender={} bytes",
+            size_of_val(&connection),
+            sender_size
+        );
         assert!(
             size_of_val(&connection) < 2 * sender_size,
             "connection future {} B for a {sender_size} B sender",

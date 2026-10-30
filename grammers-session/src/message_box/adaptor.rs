@@ -487,8 +487,10 @@ impl PtsInfo {
             ReadHistoryInbox(u) => !matches!(u.peer, tl::enums::Peer::Channel(_)),
             ReadHistoryOutbox(u) => !matches!(u.peer, tl::enums::Peer::Channel(_)),
             PinnedMessages(u) => !matches!(u.peer, tl::enums::Peer::Channel(_)),
-            NewChannelMessage(u) => message_channel_id(&u.message).is_some(),
-            EditChannelMessage(u) => message_channel_id(&u.message).is_some(),
+            NewChannelMessage(u) => message_peer(&u.message)
+                .is_none_or(|peer| matches!(peer, tl::enums::Peer::Channel(_))),
+            EditChannelMessage(u) => message_peer(&u.message)
+                .is_none_or(|peer| matches!(peer, tl::enums::Peer::Channel(_))),
             _ => true,
         };
         valid_peer

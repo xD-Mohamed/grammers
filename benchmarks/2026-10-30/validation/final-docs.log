@@ -1,18 +1,18 @@
     Checking tokio v1.54.0
     Checking hickory-net v0.26.3
     Checking hickory-resolver v0.26.3
-    Checking grammers-session v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-session)
+    Checking grammers-session v0.10.0 (<worktree>/grammers-session)
     Checking tokio-socks v0.5.3
-    Checking grammers-mtsender v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-mtsender)
-    Checking grammers-client v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-client)
- Documenting grammers-tl-gen v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-tl-gen)
- Documenting grammers v0.1.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers)
- Documenting grammers-client v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-client)
- Documenting grammers-mtsender v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-mtsender)
- Documenting grammers-session v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-session)
- Documenting grammers-mtproto v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-mtproto)
- Documenting grammers-crypto v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-crypto)
- Documenting grammers-tl-parser v1.2.2 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-tl-parser)
- Documenting grammers-tl-types v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-tl-types)
+    Checking grammers-mtsender v0.10.0 (<worktree>/grammers-mtsender)
+    Checking grammers-client v0.10.0 (<worktree>/grammers-client)
+ Documenting grammers-tl-gen v0.10.0 (<worktree>/grammers-tl-gen)
+ Documenting grammers v0.1.0 (<worktree>/grammers)
+ Documenting grammers-client v0.10.0 (<worktree>/grammers-client)
+ Documenting grammers-mtsender v0.10.0 (<worktree>/grammers-mtsender)
+ Documenting grammers-session v0.10.0 (<worktree>/grammers-session)
+ Documenting grammers-mtproto v0.10.0 (<worktree>/grammers-mtproto)
+ Documenting grammers-crypto v0.10.0 (<worktree>/grammers-crypto)
+ Documenting grammers-tl-parser v1.2.2 (<worktree>/grammers-tl-parser)
+ Documenting grammers-tl-types v0.10.0 (<worktree>/grammers-tl-types)
     Finished `dev` profile [unoptimized] target(s) in 42.72s
-   Generated /var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/target/doc/grammers/index.html and 8 other files
+   Generated <worktree>/target/doc/grammers/index.html and 8 other files

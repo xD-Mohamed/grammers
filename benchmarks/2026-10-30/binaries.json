@@ -1,10 +1,10 @@
 {
   "baseline": {
-    "path": "/tmp/grammers-064ae123/baseline-loopback",
+    "path": "<artifacts>/baseline-loopback",
     "sha256": "580b9bab4a17b258db0514c76aa23613f275391101a2eabf16d9b43cbc5b4827"
   },
   "candidate": {
-    "path": "/tmp/grammers-064ae123/candidate-final-loopback",
+    "path": "<artifacts>/candidate-final-loopback",
     "sha256": "b6412b42b85fe4afb29b10475843b83df81440b283fa8b0bba2c08be0d50768a"
   }
 }

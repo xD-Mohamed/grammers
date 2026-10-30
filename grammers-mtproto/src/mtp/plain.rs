@@ -107,7 +107,12 @@ impl Mtp for Plain {
         if len <= 0 {
             return Err(DeserializeError::NegativeMessageLength { got: len });
         }
-        if len as usize > payload.len() - 20 || len % 4 != 0 {
+        if len % 4 != 0 {
+            return Err(DeserializeError::InvalidEnvelope {
+                reason: "invalid message envelope",
+            });
+        }
+        if len as usize > payload.len() - 20 {
             return Err(DeserializeError::TooLongMessageLength {
                 got: len as usize,
                 max_length: payload.len() - 20,

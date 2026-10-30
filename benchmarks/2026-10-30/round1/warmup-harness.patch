@@ -1,0 +1,52 @@
+--- a/grammers-mtsender/tests/loopback.rs
++++ b/grammers-mtsender/tests/loopback.rs
+@@ -719,6 +719,29 @@
+         .len()
+ }
+ 
++// Establish independent pools concurrently, outside every measurement window.
++// Keeping setup serial otherwise adds seconds of idle TCP startup to each pair.
++async fn warm_clients(clients: &Arc<Vec<Client>>, body: &RequestBody, second_dc: bool) {
++    let mut warming = tokio::task::JoinSet::new();
++    for index in 0..clients.len() {
++        let clients = Arc::clone(clients);
++        let body = body.clone();
++        warming.spawn(async move {
++            call(&clients[index], &body).await;
++            if second_dc {
++                clients[index]
++                    .raw
++                    .raw_invoke_shared_in_dc(4, body)
++                    .await
++                    .unwrap();
++            }
++        });
++    }
++    while let Some(result) = warming.join_next().await {
++        result.unwrap();
++    }
++}
++
+ fn client_runtime() -> tokio::runtime::Runtime {
+     pin_thread("LOOPBACK_CLIENT_CPUS");
+     let multi = std::env::var("LOOPBACK_RUNTIME").is_ok_and(|s| s == "multi");
+@@ -887,9 +910,7 @@
+         client_runtime().block_on(async {
+             let clients: Arc<Vec<Client>> =
+                 Arc::new((0..SESSIONS).map(|_| open_client(address)).collect());
+-            for client in clients.iter() {
+-                call(client, &body).await;
+-            }
++            warm_clients(&clients, &body, false).await;
+             let rounds = if std::env::var_os("LOOPBACK_SHORT").is_some() { 1 } else { 5 };
+             for (round, track) in [(0, false), (1, true), (2, false), (3, true), (4, false)].into_iter().take(rounds) {
+                 let completed = Arc::new(AtomicU64::new(0));
+@@ -1006,7 +1027,7 @@
+             }
+         }
+     }
+-    let address = start_responder(Payload::Plain, 2);
++    let address = start_responder(Payload::Plain, 4);
+     let barrier = Arc::new(std::sync::Barrier::new(17));
+     let window = bench_window();
+     let workers: Vec<_> = (0..16)

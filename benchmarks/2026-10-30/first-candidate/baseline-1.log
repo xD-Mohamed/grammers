@@ -24,7 +24,7 @@ ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 45.92s
 
-	Command being timed: "/tmp/grammers-064ae123/baseline-loopback --exact loopback_rpc_cost --ignored --nocapture --test-threads=1"
+	Command being timed: "<artifacts>/baseline-loopback --exact loopback_rpc_cost --ignored --nocapture --test-threads=1"
 	User time (seconds): 35.94
 	System time (seconds): 56.48
 	Percent of CPU this job got: 201%

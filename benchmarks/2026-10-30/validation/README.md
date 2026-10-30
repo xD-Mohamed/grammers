@@ -1,6 +1,6 @@
 # Local validation receipts
 
-All commands used Rust 1.99.1 with `/root/.cargo/bin` on PATH. No live Telegram
+All commands used Rust 1.99.1 with `<cargo-home>/bin` on PATH. No live Telegram
 tests, account authorization, deployment or hosted CI ran.
 
 | Log | Command/result |

@@ -116,7 +116,7 @@ pub struct Encrypted {
     auth_key: AuthKey,
 
     /// The time offset from the server's time, in seconds.
-    time_offset: i32,
+    time_offset: i64,
 
     /// Salts that may be used when encrypting payload, sorted by valid date descending (so the last one is the one
     /// that can be used now).
@@ -216,7 +216,7 @@ impl Builder {
             received_ids: VecDeque::new(),
             decode_limits: self.decode_limits,
             auth_key: AuthKey::from_bytes(auth_key),
-            time_offset: self.time_offset,
+            time_offset: i64::from(self.time_offset),
             salts: vec![tl::types::FutureSalt {
                 valid_since: 0,
                 valid_until: i32::MAX,
@@ -322,10 +322,14 @@ impl Encrypted {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time is before epoch")
-            .as_secs() as i32;
+            .as_secs()
+            .min(i64::MAX as u64) as i64;
 
-        let correct = (msg_id >> 32) as i32;
-        self.time_offset = correct - now;
+        let offset = (msg_id >> 32) - now;
+        if self.time_offset != offset {
+            self.time_offset = offset;
+            self.last_msg_id = 0;
+        }
     }
 
     /// Generates a new unique message ID based on the current
@@ -335,7 +339,9 @@ impl Encrypted {
             .duration_since(UNIX_EPOCH)
             .expect("system time is before epoch");
 
-        let seconds = (now.as_secs() as i32 + self.time_offset) as u64;
+        let seconds = (now.as_secs().min(i64::MAX as u64) as i64)
+            .saturating_add(self.time_offset)
+            .max(0) as u64;
         let nanoseconds = now.subsec_nanos() as u64;
         let mut new_msg_id = ((seconds << 32) | (nanoseconds << 2)) as i64;
 
@@ -450,7 +456,8 @@ impl Encrypted {
     }
 
     fn try_request_salts(&mut self, buffer: &mut DequeBuffer<u8>) {
-        if self.salts.len() == 1
+        if buffer.is_empty()
+            && self.salts.len() == 1
             && self.salt_request_msg_id.is_none()
             && self.get_current_salt() != 0
             && self.message_fits(buffer, 8)
@@ -1595,6 +1602,10 @@ impl Mtp for Encrypted {
     ///
     /// [MTProto 2.0 guidelines]: https://core.telegram.org/mtproto/description.
     fn push(&mut self, buffer: &mut DequeBuffer<u8>, request: &[u8]) -> Option<MsgId> {
+        // Invalid requests must not consume ACKs, salt state or message IDs.
+        if !Self::request_fits(request, self.receive_updates) {
+            return None;
+        }
         // TODO rather than taking in bytes, take requests, serialize them in place, and if too large drop the last part of the buffer
 
         // Check to see if the next salt can be used already. If it can, drop the current one and,
@@ -1636,12 +1647,6 @@ impl Mtp for Encrypted {
         let mut prefix: &[u8] =
             &wrapper[..Self::without_updates_prefix_len(request, self.receive_updates)];
 
-        // Requests that are too large would cause Telegram to close the
-        // connection but are so uncommon it's not worth returning `Err`.
-        if !Self::request_fits(request, self.receive_updates) {
-            return None;
-        }
-
         // Payload provided by the user is always considered to be
         // content-related, which means we can apply compression.
         let mut body = request;
@@ -1670,7 +1675,10 @@ impl Mtp for Encrypted {
     }
 
     fn finalize(&mut self, buffer: &mut DequeBuffer<u8>) -> Option<MsgId> {
-        if self.ack_due()
+        let salt_only =
+            self.msg_count == 1 && self.salt_request_msg_id == Some(MsgId(self.last_msg_id));
+        if !salt_only
+            && self.ack_due()
             && (self.ack_flush_due
                 || !buffer.is_empty()
                 || self.pending_ack.len() >= 8192
@@ -1772,6 +1780,117 @@ mod tests {
         assert_eq!(mtp.received_ids.len(), 1024);
         assert_eq!(mtp.received_ids.capacity(), 1024);
         assert!(mtp.process_plaintext(&first).unwrap().is_empty());
+    }
+
+    #[test]
+    fn seeded_authenticated_packet_mutations_are_bounded_and_panic_free() {
+        // Deterministic property corpus, including valid packets; no external fuzzer or I/O.
+        let mut seed = 0x0d1ff3e7u64;
+        for trial in 0..4096 {
+            let mut mtp = Encrypted::build().finish(auth_key());
+            let mut bytes = plaintext(mtp.session_id, 7, 16);
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            match trial % 4 {
+                0 => {}
+                1 => bytes.truncate(seed as usize % bytes.len()),
+                _ => {
+                    let at = seed as usize % bytes.len();
+                    bytes[at] ^= (seed >> 32) as u8;
+                }
+            }
+            if let Ok(messages) = mtp.process_plaintext(&bytes) {
+                assert!(messages.len() <= 1);
+                assert!(mtp.received_ids.len() <= 1);
+                assert!(mtp.pending_ack.len() <= 1);
+            }
+        }
+    }
+
+    #[test]
+    fn fast_clock_bad_message_resets_monotonic_floor() {
+        let mut mtp = Encrypted::build().time_offset(3600).finish(auth_key());
+        let old = mtp.get_new_msg_id();
+        let server_id = ((SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64)
+            << 32)
+            | 1;
+        let body = tl::enums::BadMsgNotification::Notification(tl::types::BadMsgNotification {
+            bad_msg_id: old,
+            bad_msg_seqno: 1,
+            error_code: 17,
+        })
+        .to_bytes();
+        mtp.process_message(manual_tl::MessageView {
+            msg_id: server_id,
+            seq_no: 0,
+            body: Cow::Owned(body),
+        })
+        .unwrap();
+        let corrected = mtp.get_new_msg_id();
+        assert!(corrected < old);
+        assert_eq!(corrected >> 32, server_id >> 32);
+        mtp.correct_time_offset(i64::MAX);
+        assert!(mtp.get_new_msg_id() > 0);
+    }
+
+    #[test]
+    fn invalid_push_preserves_services_and_salt_packet_excludes_ack() {
+        let mut mtp = Encrypted::build().first_salt(123).finish(auth_key());
+        mtp.pending_ack.push(7);
+        mtp.pending_ack_since = Some(Instant::now());
+        let mut buffer = DequeBuffer::with_capacity(0, 0);
+        assert!(mtp.push(&mut buffer, &[1]).is_none());
+        assert!(buffer.is_empty());
+        assert!(mtp.salt_request_msg_id.is_none());
+        assert_eq!(mtp.pending_ack, [7]);
+        assert!(mtp.push(&mut buffer, REQUEST).is_none());
+        let salt_id = mtp.salt_request_msg_id;
+        assert_eq!(mtp.finalize(&mut buffer), salt_id);
+        assert_eq!(mtp.pending_ack, [7]);
+    }
+
+    #[test]
+    fn authenticated_container_envelopes_validate_before_delivery() {
+        for (inner_id, inner_seq, accept) in [
+            (3, 1, true),
+            (3, 2, true),
+            (3, 3, false),
+            (7, 1, false),
+            (2, 1, false),
+            (-1, 1, false),
+            (3, -1, false),
+        ] {
+            let mut mtp = Encrypted::build().finish(auth_key());
+            let mut body = manual_tl::MessageContainer::CONSTRUCTOR_ID.to_bytes();
+            1i32.serialize(&mut body);
+            manual_tl::Message {
+                msg_id: inner_id,
+                seq_no: inner_seq,
+                body: test_rpc_body(4, &true.to_bytes()),
+            }
+            .serialize(&mut body);
+            let mut data = 0i64.to_bytes();
+            mtp.session_id.serialize(&mut data);
+            manual_tl::Message {
+                msg_id: 7,
+                seq_no: 2,
+                body,
+            }
+            .serialize(&mut data);
+            data.resize(data.len() + 16, 0);
+            let result = mtp.process_plaintext(&data);
+            if accept {
+                assert_eq!(result.unwrap().len(), 1);
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(DeserializeError::InvalidEnvelope { .. })
+                ));
+                assert!(mtp.pending_ack.is_empty());
+            }
+        }
     }
 
     #[test]

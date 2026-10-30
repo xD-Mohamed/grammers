@@ -71,7 +71,7 @@ ok
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 63.22s
 
-	Command being timed: "timeout 90 /tmp/grammers-064ae123/baseline-loopback --ignored --nocapture --test-threads=1"
+	Command being timed: "timeout 90 <artifacts>/baseline-loopback --ignored --nocapture --test-threads=1"
 	User time (seconds): 48.70
 	System time (seconds): 61.96
 	Percent of CPU this job got: 175%

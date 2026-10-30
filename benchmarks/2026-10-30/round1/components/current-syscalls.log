@@ -1,0 +1,71 @@
+
+running 1 test
+test loopback_rpc_cost ... Plain round 0: sampled RPC latency p50/p95/p99 2663.3/4675.5/6046.4 us (96 samples)
+Plain reply (1592 B) round 0: 6020 RPC/s; client thread 14.72 us user + 51.10 us kernel, 0 cycles per RPC
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 7.20s
+
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ------------------
+ 68.89   10.589897        2684      3945       182 futex
+ 12.47    1.916422         331      5774           epoll_wait
+ 11.72    1.801347        9382       192           wait4
+  2.22    0.341532          27     12308           sendto
+  1.14    0.174494          13     12500        64 recvfrom
+  0.69    0.105317          16      6483           getrandom
+  0.67    0.103118           3     27717      5568 newfstatat
+  0.40    0.061274           6      9164       191 read
+  0.22    0.034364           5      6214       448 openat
+  0.22    0.033770           4      7305           close
+  0.20    0.030506          19      1600           getdents64
+  0.12    0.018916           0     23750           rt_sigaction
+  0.12    0.018393          11      1537      1344 execve
+  0.12    0.017742           5      3508           mmap
+  0.11    0.017312           7      2435           brk
+  0.10    0.015602           2      7360       256 lseek
+  0.09    0.014323           3      4737      4288 ioctl
+  0.07    0.010015          16       600           munmap
+  0.05    0.008154           6      1290           mprotect
+  0.05    0.007403           9       773           poll
+  0.05    0.007346          54       134           clone3
+  0.03    0.005057          19       259           epoll_ctl
+  0.03    0.003910           4       962           prlimit64
+  0.02    0.003461          54        64           shutdown
+  0.02    0.003350           3       855           write
+  0.02    0.003262          29       109        45 accept4
+  0.02    0.003182           7       448           pipe2
+  0.02    0.003020          47        64        64 connect
+  0.02    0.002960           4       724           rt_sigprocmask
+  0.02    0.002351           6       384       320 readlink
+  0.01    0.002155          16       129           setsockopt
+  0.01    0.001483           1       772           pread64
+  0.01    0.001392          21        65           socket
+  0.01    0.001201          18        64           vfork
+  0.01    0.001191           6       193       193 access
+  0.01    0.001060           8       128           sysinfo
+  0.01    0.001019           5       192           dup
+  0.01    0.000801          12        64           getsockopt
+  0.00    0.000746           1       386       193 arch_prctl
+  0.00    0.000465           2       199           rseq
+  0.00    0.000455           2       194           fcntl
+  0.00    0.000442           2       193           set_tid_address
+  0.00    0.000405           2       199           set_robust_list
+  0.00    0.000376           5        66           epoll_create1
+  0.00    0.000358           5        71           gettid
+  0.00    0.000342           0       512           dup2
+  0.00    0.000297           4        64           uname
+  0.00    0.000160          10        15           sigaltstack
+  0.00    0.000101           1        64           umask
+  0.00    0.000098          16         6           sched_setaffinity
+  0.00    0.000075          15         5           prctl
+  0.00    0.000060           8         7           sched_getaffinity
+  0.00    0.000051           7         7         4 statx
+  0.00    0.000032          16         2           eventfd2
+  0.00    0.000030          30         1           getsockname
+  0.00    0.000020          20         1           madvise
+  0.00    0.000020          10         2           getrusage
+  0.00    0.000013          13         1           bind
+  0.00    0.000007           7         1           listen
+------ ----------- ----------- --------- --------- ------------------
+100.00   15.372655         104    146798     13160 total

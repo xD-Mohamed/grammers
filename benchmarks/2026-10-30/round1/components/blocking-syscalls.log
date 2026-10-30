@@ -1,0 +1,74 @@
+
+running 1 test
+test loopback_blocking_control ... BLOCKING_WORKER_CPU user_us=6360 sys_us=43507 rpcs=1172
+BLOCKING_WORKER_CPU user_us=9691 sys_us=31237 rpcs=1073
+BLOCKING_WORKER_CPU user_us=12568 sys_us=39586 rpcs=1136
+BLOCKING_WORKER_CPU user_us=22104 sys_us=34255 rpcs=1191
+BLOCKING_WORKER_CPU user_us=7141 sys_us=35309 rpcs=1117
+BLOCKING_WORKER_CPU user_us=8818 sys_us=28057 rpcs=1059
+BLOCKING_WORKER_CPU user_us=8031 sys_us=43890 rpcs=1152
+BLOCKING_WORKER_CPU user_us=15722 sys_us=32763 rpcs=1129
+BLOCKING_WORKER_CPU user_us=4941 sys_us=43800 rpcs=1101
+BLOCKING_WORKER_CPU user_us=4708 sys_us=55877 rpcs=1192
+BLOCKING_WORKER_CPU user_us=22339 sys_us=21708 rpcs=1133
+BLOCKING_WORKER_CPU user_us=0 sys_us=43078 rpcs=1148
+BLOCKING_WORKER_CPU user_us=13097 sys_us=27423 rpcs=1075
+BLOCKING_WORKER_CPU user_us=12160 sys_us=38686 rpcs=1174
+BLOCKING_WORKER_CPU user_us=6801 sys_us=42397 rpcs=1127
+BLOCKING_WORKER_CPU user_us=11896 sys_us=29367 rpcs=1095
+BLOCKING rate=17984 user_us=9.205 sys_us=32.696 p50_us=873.5 p95_us=1449.5 p99_us=1947.0
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 1.08s
+
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ------------------
+ 69.38   15.258426         419     36343         8 recvfrom
+ 14.01    3.080348         580      5304       906 futex
+ 11.19    2.460388          67     36276           sendto
+  4.47    0.982052          53     18210           getrandom
+  0.58    0.127303          59      2135           epoll_wait
+  0.04    0.009676          50       193           setsockopt
+  0.04    0.009351          74       126           close
+  0.03    0.007535         115        65           socket
+  0.03    0.007178         112        64           connect
+  0.03    0.006734         320        21           sched_setaffinity
+  0.02    0.005410          43       123           epoll_ctl
+  0.02    0.004350          75        58           shutdown
+  0.02    0.004306          66        65         1 accept4
+  0.02    0.004226          38       109           mprotect
+  0.02    0.003480          41        84           rt_sigprocmask
+  0.01    0.003013          47        63           sigaltstack
+  0.01    0.002948         134        22           clone3
+  0.01    0.002939          91        32           getrusage
+  0.01    0.002867          34        83           mmap
+  0.01    0.002518          51        49           write
+  0.01    0.001964          65        30           munmap
+  0.01    0.001182          69        17           madvise
+  0.00    0.000917          39        23           sched_getaffinity
+  0.00    0.000844          36        23           rseq
+  0.00    0.000832          36        23           gettid
+  0.00    0.000676          29        23           set_robust_list
+  0.00    0.000168          33         5           prctl
+  0.00    0.000055           7         7           openat
+  0.00    0.000048           5         9           read
+  0.00    0.000000           0         1           poll
+  0.00    0.000000           0         3           brk
+  0.00    0.000000           0         6           rt_sigaction
+  0.00    0.000000           0         1           ioctl
+  0.00    0.000000           0         4           pread64
+  0.00    0.000000           0         1         1 access
+  0.00    0.000000           0         1           bind
+  0.00    0.000000           0         1           listen
+  0.00    0.000000           0         1           getsockname
+  0.00    0.000000           0         1           execve
+  0.00    0.000000           0         1           fcntl
+  0.00    0.000000           0         2         1 arch_prctl
+  0.00    0.000000           0         1           set_tid_address
+  0.00    0.000000           0         5           newfstatat
+  0.00    0.000000           0         1           eventfd2
+  0.00    0.000000           0         1           epoll_create1
+  0.00    0.000000           0         2           prlimit64
+  0.00    0.000000           0         7         4 statx
+------ ----------- ----------- --------- --------- ------------------
+100.00   21.991734         220     99625       921 total

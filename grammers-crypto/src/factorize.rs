@@ -66,6 +66,11 @@ pub fn try_factorize(pq: u64) -> Option<(u64, u64)> {
     if pq < 4 || is_prime(pq) {
         return None;
     }
+    let root = pq.isqrt();
+    if root * root == pq {
+        return is_prime(root).then_some((root, root));
+    }
+    let mut work = 1_250_000;
     const ATTEMPTS: [u64; 5] = [43, 47, 53, 59, 61];
     for attempt in ATTEMPTS {
         // > Note that this algorithm may not find the factors and will return failure for composite n.
@@ -74,7 +79,7 @@ pub fn try_factorize(pq: u64) -> Option<(u64, u64)> {
         // Prime factors are used for the attempts in the hopes they'll be more likely to work.
         let c = (attempt * (pq / 103)).max(1);
         // Each restart, including the fallback loop, shares this finite budget.
-        if let Some((p, q)) = factorize_with_param(pq, c, 250_000)
+        if let Some((p, q)) = factorize_with_param(pq, c, &mut work)
             && p > 1
             && q > 1
             && p.checked_mul(q) == Some(pq)
@@ -116,7 +121,7 @@ fn is_prime(n: u64) -> bool {
     true
 }
 
-fn factorize_with_param(pq: u64, c: u64, mut work: usize) -> Option<(u64, u64)> {
+fn factorize_with_param(pq: u64, c: u64, work: &mut usize) -> Option<(u64, u64)> {
     if pq.is_multiple_of(2) {
         return Some((2, pq / 2));
     }
@@ -130,7 +135,7 @@ fn factorize_with_param(pq: u64, c: u64, mut work: usize) -> Option<(u64, u64)> 
     // c is an input free to change in case the chosen value fails.
     let mut y = 3 * (pq / 7);
     let c = c as u128;
-    let m = (7 * (pq / 13)).max(1);
+    let m = 128;
     let mut g = 1u128;
     let mut r = 1u128;
     let mut q = 1u128;
@@ -140,7 +145,7 @@ fn factorize_with_param(pq: u64, c: u64, mut work: usize) -> Option<(u64, u64)> 
     while g == 1 {
         x = y;
         for _ in 0..r {
-            work = work.checked_sub(1)?;
+            *work = work.checked_sub(1)?;
             y = (modpow(y, 2, pq) + c) % pq;
         }
 
@@ -148,7 +153,7 @@ fn factorize_with_param(pq: u64, c: u64, mut work: usize) -> Option<(u64, u64)> 
         while k < r && g == 1 {
             ys = y;
             for _ in 0..m.min(r - k) {
-                work = work.checked_sub(1)?;
+                *work = work.checked_sub(1)?;
                 y = (modpow(y, 2, pq) + c) % pq;
                 q = (q * abs_sub(x, y)) % pq;
             }
@@ -162,7 +167,7 @@ fn factorize_with_param(pq: u64, c: u64, mut work: usize) -> Option<(u64, u64)> 
 
     if g == pq {
         loop {
-            work = work.checked_sub(1)?;
+            *work = work.checked_sub(1)?;
             ys = (modpow(ys, 2, pq) + c) % pq;
             g = gcd(abs_sub(x, ys), pq);
             if g > 1 {
@@ -188,7 +193,7 @@ mod tests {
         }
         assert_eq!(try_factorize(u64::MAX), None);
         assert_eq!(try_factorize(18_446_744_073_709_551_557), None);
-        assert_eq!(factorize_with_param(1470626929934143021, 43, 0), None);
+        assert_eq!(factorize_with_param(1470626929934143021, 43, &mut 0), None);
     }
 
     #[test]
@@ -203,13 +208,17 @@ mod tests {
             test_factorization_1();
             test_factorization_2();
             test_factorization_3();
+            factorization_u64_edges_and_shared_budget();
+            println!("factorization-deadline-child-completed");
             return;
         }
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
+                "--nocapture",
                 "factorize::tests::factorization_has_a_process_deadline",
             ])
+            .stdout(std::process::Stdio::piped())
             .env(CHILD, "1")
             .spawn()
             .unwrap();
@@ -217,6 +226,12 @@ mod tests {
         loop {
             if let Some(status) = child.try_wait().unwrap() {
                 assert!(status.success());
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    String::from_utf8(output.stdout)
+                        .unwrap()
+                        .contains("factorization-deadline-child-completed")
+                );
                 break;
             }
             if Instant::now() >= deadline {
@@ -226,6 +241,19 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    #[test]
+    fn factorization_u64_edges_and_shared_budget() {
+        let p = 4_294_967_291u64;
+        let q = 4_294_967_279u64;
+        assert_eq!(try_factorize(p * p), Some((p, p)));
+        assert_eq!(try_factorize(p * q), Some((q, p)));
+        assert_eq!(try_factorize(101 * 103 * 107), None);
+        let mut work = 100;
+        assert_eq!(factorize_with_param(p * q, 43, &mut work), None);
+        assert_eq!(work, 0);
+        assert_eq!(factorize_with_param(p * q, 47, &mut work), None);
     }
 
     #[test]

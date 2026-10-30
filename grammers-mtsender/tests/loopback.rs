@@ -210,27 +210,44 @@ fn thread_cpu() -> ThreadCpu {
 
 #[cfg(target_os = "linux")]
 fn thread_cpu() -> ThreadCpu {
-    #[repr(C)]
-    struct Timespec {
-        sec: i64,
-        nsec: i64,
-    }
-    unsafe extern "C" {
-        fn clock_gettime(clock: i32, time: *mut Timespec) -> i32;
-    }
-    const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
-    let mut time = Timespec { sec: 0, nsec: 0 };
-    // SAFETY: valid clock id and out-pointer.
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    // SAFETY: getrusage initializes the valid out-pointer on success.
     assert_eq!(
-        unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut time) },
+        unsafe { libc::getrusage(libc::RUSAGE_THREAD, usage.as_mut_ptr()) },
         0
     );
+    let usage = unsafe { usage.assume_init() };
+    let duration =
+        |v: libc::timeval| Duration::from_micros(v.tv_sec as u64 * 1_000_000 + v.tv_usec as u64);
     ThreadCpu {
-        // Linux reports user and system time together at this precision.
-        user: Duration::new(time.sec as u64, time.nsec as u32),
-        kernel: Duration::ZERO,
+        user: duration(usage.ru_utime),
+        kernel: duration(usage.ru_stime),
         cycles: 0,
     }
+}
+
+fn pin_thread(variable: &str) {
+    #[cfg(target_os = "linux")]
+    if let Ok(cpus) = std::env::var(variable) {
+        let mut set = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
+        for cpu in cpus.split(',').map(|cpu| cpu.parse::<usize>().unwrap()) {
+            assert!(cpu < libc::CPU_SETSIZE as usize);
+            unsafe {
+                libc::CPU_SET(cpu, &mut set);
+            }
+        }
+        // SAFETY: valid initialized affinity set; pid 0 selects the calling thread.
+        assert_eq!(
+            unsafe { libc::sched_setaffinity(0, std::mem::size_of_val(&set), &set) },
+            0
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = variable;
+}
+
+fn bench_window() -> Duration {
+    Duration::from_millis(std::env::var("LOOPBACK_WINDOW_MS").map_or(4000, |n| n.parse().unwrap()))
 }
 
 // ---------------------------------------------------------------------------
@@ -620,9 +637,13 @@ fn start_responder(payload: Payload, threads: usize) -> SocketAddrV4 {
     };
     std::thread::spawn(move || {
         RESPONDER.with(|flag| flag.set(true));
+        pin_thread("LOOPBACK_SERVER_CPUS");
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(threads)
-            .on_thread_start(|| RESPONDER.with(|flag| flag.set(true)))
+            .on_thread_start(|| {
+                RESPONDER.with(|flag| flag.set(true));
+                pin_thread("LOOPBACK_SERVER_CPUS");
+            })
             .enable_all()
             .build()
             .unwrap();
@@ -698,11 +719,51 @@ async fn call(client: &Client, body: &RequestBody) -> usize {
         .len()
 }
 
+// Establish independent pools concurrently, outside every measurement window.
+// Keeping setup serial otherwise adds seconds of idle TCP startup to each pair.
+async fn warm_clients(clients: &Arc<Vec<Client>>, body: &RequestBody, second_dc: bool) {
+    let mut warming = tokio::task::JoinSet::new();
+    for index in 0..clients.len() {
+        let clients = Arc::clone(clients);
+        let body = body.clone();
+        warming.spawn(async move {
+            call(&clients[index], &body).await;
+            if second_dc {
+                clients[index]
+                    .raw
+                    .raw_invoke_shared_in_dc(4, body)
+                    .await
+                    .unwrap();
+            }
+        });
+    }
+    while let Some(result) = warming.join_next().await {
+        result.unwrap();
+    }
+}
+
 fn client_runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap()
+    pin_thread("LOOPBACK_CLIENT_CPUS");
+    let multi = std::env::var("LOOPBACK_RUNTIME").is_ok_and(|s| s == "multi");
+    let mut builder = if multi {
+        tokio::runtime::Builder::new_multi_thread()
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+    };
+    if multi {
+        builder
+            .worker_threads(2)
+            .on_thread_start(|| pin_thread("LOOPBACK_CLIENT_CPUS"))
+            .on_thread_stop(|| {
+                let cpu = thread_cpu();
+                println!(
+                    "CLIENT_WORKER_CPU user_us={} sys_us={}",
+                    cpu.user.as_micros(),
+                    cpu.kernel.as_micros()
+                );
+            });
+    }
+    builder.enable_all().build().unwrap()
 }
 
 #[test]
@@ -779,7 +840,8 @@ fn loopback_session_footprint() {
     const SESSIONS: usize = 400;
     let address = start_responder(Payload::Gzip, 2);
     let body = request_body();
-    let (mut base, mut created, mut connected, mut steady) = (
+    let (mut base, mut created, mut connected, mut steady, mut saturated) = (
+        HeapSnapshot::empty(),
         HeapSnapshot::empty(),
         HeapSnapshot::empty(),
         HeapSnapshot::empty(),
@@ -809,12 +871,23 @@ fn loopback_session_footprint() {
             }
         }
         steady.take();
+        for _ in 9..1100 {
+            for client in &clients {
+                call(client, &body).await;
+            }
+        }
+        saturated.take();
     });
     TRACK.store(false, Relaxed);
     println!("{SESSIONS} sessions, one connection each, gzip-packed replies");
     created.report(&base, SESSIONS, "pool created, not connected");
     connected.report(&base, SESSIONS, "connected after one RPC");
     steady.report(&base, SESSIONS, "after nine RPCs per session");
+    saturated.report(
+        &base,
+        SESSIONS,
+        "after 1100 RPCs per session (replay cache saturated)",
+    );
 }
 
 #[test]
@@ -822,7 +895,7 @@ fn loopback_session_footprint() {
 fn loopback_rpc_cost() {
     const SESSIONS: usize = 64;
     const CALLERS: usize = 16;
-    const WINDOW: Duration = Duration::from_secs(4);
+    let window = bench_window();
     // LOOPBACK_PAYLOAD=plain|gzip selects one reply shape for A/B runs.
     let selected = std::env::var("LOOPBACK_PAYLOAD").unwrap_or_default();
     for payload in [Payload::Plain, Payload::Gzip]
@@ -837,12 +910,12 @@ fn loopback_rpc_cost() {
         client_runtime().block_on(async {
             let clients: Arc<Vec<Client>> =
                 Arc::new((0..SESSIONS).map(|_| open_client(address)).collect());
-            for client in clients.iter() {
-                call(client, &body).await;
-            }
-            for (round, track) in [(0, false), (1, true), (2, false), (3, true), (4, false)] {
+            warm_clients(&clients, &body, false).await;
+            let rounds = if std::env::var_os("LOOPBACK_SHORT").is_some() { 1 } else { 5 };
+            for (round, track) in [(0, false), (1, true), (2, false), (3, true), (4, false)].into_iter().take(rounds) {
                 let completed = Arc::new(AtomicU64::new(0));
-                let deadline = Instant::now() + WINDOW;
+                let started = Instant::now();
+                let deadline = started + window;
                 let allocations = ALLOCATIONS.load(Relaxed);
                 let allocated = ALLOCATED_BYTES.load(Relaxed);
                 TRACK.store(track, Relaxed);
@@ -876,6 +949,7 @@ fn loopback_rpc_cost() {
                     latencies.extend(caller.await.unwrap());
                 }
                 let spent = thread_cpu();
+                let elapsed = started.elapsed();
                 TRACK.store(false, Relaxed);
                 let rpcs = completed.load(Relaxed) as f64;
                 latencies.sort_unstable();
@@ -895,7 +969,7 @@ fn loopback_rpc_cost() {
                 } else {
                     println!(
                         "{payload:?} reply ({reply_len} B) round {round}: {:.0} RPC/s; client thread {:.2} us user + {:.2} us kernel, {:.0} cycles per RPC",
-                        rpcs / WINDOW.as_secs_f64(),
+                        rpcs / elapsed.as_secs_f64(),
                         (spent.user - cpu.user).as_secs_f64() * 1e6 / rpcs,
                         (spent.kernel - cpu.kernel).as_secs_f64() * 1e6 / rpcs,
                         (spent.cycles - cpu.cycles) as f64 / rpcs,
@@ -904,4 +978,204 @@ fn loopback_rpc_cost() {
             }
         });
     }
+}
+
+/// Blocking socket control uses the same framing, cryptography and replies,
+/// but intentionally excludes the SDK pool, admission and async task routing.
+/// Its delta therefore cannot be attributed solely to Tokio.
+#[test]
+#[ignore = "local non-Tokio client control"]
+fn loopback_blocking_control() {
+    use grammers_crypto::DequeBuffer;
+    use grammers_mtproto::{
+        mtp::{self, Mtp},
+        transport::{self, Transport},
+    };
+    use std::io::Read;
+    struct BlockingClient {
+        socket: std::net::TcpStream,
+        mtp: mtp::Encrypted,
+        transport: transport::Abridged,
+        outgoing: DequeBuffer<u8>,
+        incoming: Vec<u8>,
+    }
+    impl BlockingClient {
+        fn call(&mut self, body: &[u8]) {
+            let id = self.mtp.push(&mut self.outgoing, body).unwrap();
+            self.mtp.finalize(&mut self.outgoing).unwrap();
+            self.transport.pack(&mut self.outgoing);
+            self.socket.write_all(&self.outgoing[..]).unwrap();
+            self.outgoing.clear();
+            loop {
+                if let Ok(packet) = self.transport.unpack(&mut self.incoming) {
+                    let results = self
+                        .mtp
+                        .deserialize(&mut self.incoming[packet.data_range])
+                        .unwrap();
+                    self.incoming.drain(..packet.next_offset);
+                    if results
+                        .iter()
+                        .any(|r| matches!(r, mtp::Deserialization::RpcResult(r) if r.msg_id == id))
+                    {
+                        return;
+                    }
+                }
+                let mut bytes = [0; 8192];
+                let count = self.socket.read(&mut bytes).unwrap();
+                assert!(count > 0);
+                self.incoming.extend_from_slice(&bytes[..count]);
+            }
+        }
+    }
+    let address = start_responder(Payload::Plain, 4);
+    let barrier = Arc::new(std::sync::Barrier::new(17));
+    let window = bench_window();
+    let workers: Vec<_> = (0..16)
+        .map(|_| {
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                pin_thread("LOOPBACK_CLIENT_CPUS");
+                let body = request_body();
+                let mut clients: Vec<_> = (0..4)
+                    .map(|_| {
+                        let socket = std::net::TcpStream::connect(address).unwrap();
+                        socket.set_nodelay(true).unwrap();
+                        socket
+                            .set_read_timeout(Some(Duration::from_secs(5)))
+                            .unwrap();
+                        BlockingClient {
+                            socket,
+                            mtp: mtp::Encrypted::build()
+                                .receive_updates(false)
+                                .finish(auth_key()),
+                            transport: transport::Abridged::new(),
+                            outgoing: DequeBuffer::with_capacity(1024, 64),
+                            incoming: Vec::with_capacity(8192),
+                        }
+                    })
+                    .collect();
+                for client in &mut clients {
+                    client.call(&body);
+                }
+                barrier.wait();
+                let cpu = thread_cpu();
+                let deadline = Instant::now() + window;
+                let mut count = 0;
+                let mut latencies = Vec::new();
+                while Instant::now() < deadline {
+                    let start = Instant::now();
+                    clients[count % 4].call(&body);
+                    if count % 64 == 0 {
+                        latencies.push(start.elapsed().as_nanos() as u64);
+                    }
+                    count += 1;
+                }
+                let spent = thread_cpu();
+                println!(
+                    "BLOCKING_WORKER_CPU user_us={} sys_us={} rpcs={count}",
+                    (spent.user - cpu.user).as_micros(),
+                    (spent.kernel - cpu.kernel).as_micros()
+                );
+                (
+                    count,
+                    spent.user - cpu.user,
+                    spent.kernel - cpu.kernel,
+                    latencies,
+                )
+            })
+        })
+        .collect();
+    barrier.wait();
+    let start = Instant::now();
+    let (mut count, mut user, mut sys, mut latencies) =
+        (0usize, Duration::ZERO, Duration::ZERO, Vec::new());
+    for worker in workers {
+        let (n, u, s, l) = worker.join().unwrap();
+        count += n;
+        user += u;
+        sys += s;
+        latencies.extend(l);
+    }
+    latencies.sort_unstable();
+    println!(
+        "BLOCKING rate={:.0} user_us={:.3} sys_us={:.3} p50_us={:.1} p95_us={:.1} p99_us={:.1}",
+        count as f64 / start.elapsed().as_secs_f64(),
+        user.as_secs_f64() * 1e6 / count as f64,
+        sys.as_secs_f64() * 1e6 / count as f64,
+        latencies[latencies.len() / 2] as f64 / 1000.0,
+        latencies[latencies.len() * 95 / 100] as f64 / 1000.0,
+        latencies[latencies.len() * 99 / 100] as f64 / 1000.0
+    );
+}
+
+#[test]
+#[ignore = "local open-loop multiple-DC and cross-pool latency/fairness"]
+fn loopback_open_loop() {
+    // Arrival timestamps are scheduled independently of completion. Late work
+    // retains the intended arrival time; bounded-admission losses are counted.
+    let large = std::env::var_os("LOOPBACK_LARGE").is_some();
+    let addresses = [
+        start_responder(
+            if large {
+                Payload::LargeFile
+            } else {
+                Payload::Plain
+            },
+            2,
+        ),
+        start_responder(Payload::Gzip, 2),
+    ];
+    let rate: usize = std::env::var("LOOPBACK_RATE")
+        .map_or(if large { 100 } else { 20000 }, |s| s.parse().unwrap());
+    let cold = std::env::var_os("LOOPBACK_COLD").is_some();
+    let window = bench_window();
+    client_runtime().block_on(async {
+        let clients: Arc<Vec<_>> = Arc::new((0..64).map(|_| open_client(addresses[0])).collect());
+        for client in clients.iter() {
+            client._fat.session.set_dc_option(&grammers_session::types::DcOption {
+                id: 4, ipv4: addresses[1], ipv6: SocketAddrV6::new(Ipv6Addr::LOCALHOST, addresses[1].port(), 0, 0), auth_key: Some(auth_key()),
+            }).await.unwrap();
+            if !cold {
+                call(client, &request_body()).await;
+                client.raw.raw_invoke_in_dc(4, request_body().to_vec()).await.unwrap();
+            }
+        }
+        let body = request_body();
+        let start = tokio::time::Instant::now();
+        let total = (window.as_secs_f64() * rate as f64) as usize;
+        let mut tasks = tokio::task::JoinSet::new();
+        let mut rows = Vec::with_capacity(total);
+        let mut dropped = 0;
+        let mut peak = 0;
+        for index in 0..total {
+            while let Some(row) = tasks.try_join_next() { rows.push(row.unwrap()); }
+            let due = start + Duration::from_secs_f64(index as f64 / rate as f64);
+            tokio::time::sleep_until(due).await;
+            if tasks.len() >= 1024 { dropped += 1; continue; }
+            let clients = Arc::clone(&clients);
+            let body = body.clone();
+            tasks.spawn(async move {
+                // Alternate the quiet and busy pool groups. Busy pools receive
+                // bursts through a single shared pool, quiet pools rotate.
+                let group = index % 2;
+                let pool = if group == 0 { 0 } else { 1 + index % 63 };
+                let dc = if index % 4 < 2 { HOME_DC } else { 4 };
+                let result = tokio::time::timeout(Duration::from_secs(5), clients[pool].raw.raw_invoke_shared_in_dc(dc, body)).await;
+                (group, due.elapsed().as_nanos() as u64, result.is_ok_and(|r| r.is_ok()))
+            });
+            peak = peak.max(tasks.len());
+        }
+        while let Some(row) = tasks.join_next().await { rows.push(row.unwrap()); }
+        let elapsed = start.elapsed();
+        for group in [0, 1] {
+            let mut latency: Vec<_> = rows.iter().filter(|r| r.0 == group && r.2).map(|r| r.1).collect();
+            latency.sort_unstable();
+            let errors = rows.iter().filter(|r| r.0 == group && !r.2).count();
+            if latency.is_empty() { println!("OPEN group={group} completed=0 errors={errors} dropped={dropped} peak={peak}"); continue; }
+            println!("OPEN group={group} cold={cold} large={large} scheduled={total} completed={} errors={errors} dropped={dropped} peak={peak} rate={:.0} p50_us={:.1} p95_us={:.1} p99_us={:.1}",
+                latency.len(), latency.len() as f64/elapsed.as_secs_f64(), latency[latency.len()/2] as f64/1000.0,
+                latency[latency.len()*95/100] as f64/1000.0, latency[latency.len()*99/100] as f64/1000.0);
+        }
+        for client in clients.iter() { client.raw.quit(); }
+    });
 }

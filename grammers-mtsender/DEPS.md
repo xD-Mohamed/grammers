@@ -80,3 +80,9 @@ Used by the loopback measurement test's local responder for MTProto 2.0 message 
 ## flate2
 
 Used by the loopback measurement test's local responder to gzip-pack replies.
+
+## libc
+
+Linux-only development dependency for the local loopback harness: per-thread
+user/system CPU accounting with getrusage and reproducible CPU affinity.
+It does not add a production runtime dependency.

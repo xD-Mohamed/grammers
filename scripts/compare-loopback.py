@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Alternate two prebuilt release loopback test binaries; no network beyond localhost.
 
-Build both revisions with the same instrumented tests/loopback.rs and toolchain.
+Historical three-pair runner: the baseline latency patch makes the RPC-cost path
+equivalent, but the complete historical harness files differ. New measurements
+use compare-loopback-r1.py with an identical complete harness at both revisions.
 Run without concurrent builds. Linux /usr/bin/time supplies whole-process CPU/RSS;
 the harness supplies client-thread CPU, sampled latency and allocation counts.
 """

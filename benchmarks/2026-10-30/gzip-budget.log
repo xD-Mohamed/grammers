@@ -5,7 +5,7 @@ ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 0.30s
 
-	Command being timed: "/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/target/release/deps/grammers_mtproto-9f20828b2922801d --exact manual_tl::optimization_tests::benchmark_gzip_resource_limit --ignored --nocapture --test-threads=1"
+	Command being timed: "<worktree>/target/release/deps/grammers_mtproto-9f20828b2922801d --exact manual_tl::optimization_tests::benchmark_gzip_resource_limit --ignored --nocapture --test-threads=1"
 	User time (seconds): 0.19
 	System time (seconds): 0.10
 	Percent of CPU this job got: 99%

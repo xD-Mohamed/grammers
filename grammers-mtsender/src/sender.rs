@@ -256,6 +256,12 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     /// This does not change individual invocation deadlines or replay policy.
     pub fn set_liveness_timeout(&mut self, timeout: Option<Duration>) {
         self.liveness = timeout.map(|limit| (limit, Instant::now()));
+        self.next_ping = self.next_ping.min(Instant::now() + self.ping_interval());
+    }
+
+    fn ping_interval(&self) -> Duration {
+        self.liveness
+            .map_or(PING_DELAY, |(limit, _)| PING_DELAY.min(limit / 2))
     }
 
     /// Serializes the given request, enqueues it to the internal buffer,
@@ -376,14 +382,15 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             .map(Instant::from_std);
         let deadline = [
             protocol_deadline,
-            self.liveness.map(|(limit, since)| since + limit),
+            self.liveness
+                .and_then(|(limit, since)| since.checked_add(limit)),
             self.mtp.supports_keepalive().then_some(self.next_ping),
         ]
         .into_iter()
         .flatten()
         .min();
         if let Some(deadline) = deadline
-            && self.ping_timer.deadline() != deadline
+            && (deadline < self.ping_timer.deadline() || self.ping_timer.is_elapsed())
         {
             self.ping_timer.as_mut().reset(deadline);
         }
@@ -570,10 +577,13 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
     /// Handle a ping timeout, meaning we need to enqueue a new ping request.
     fn on_ping_timeout(&mut self) {
-        self.next_ping = Instant::now() + PING_DELAY;
+        self.next_ping = Instant::now() + self.ping_interval();
         self.ping_timer.as_mut().reset(self.next_ping);
-        // Keep one outstanding ping; a silent peer cannot accumulate one
-        // permanent request record per interval. Its pong retires this entry.
+        // Refresh the server's disconnect deadline even if its pong was lost.
+        // Retain a partially written ping until its packet finishes writing.
+        self.requests.retain(|request| {
+            request.result.is_some() || !matches!(request.state, RequestState::Sent(_))
+        });
         if self.requests.iter().any(|request| request.result.is_none()) {
             return;
         }
@@ -856,6 +866,26 @@ pub async fn connect<T: Transport>(
     generate_auth_key(sender).await
 }
 
+// CPU-bound primality validation and DH exponentiation must not block I/O.
+// Started jobs cannot be preempted; hold their capacity until they finish even
+// if the handshake caller cancels. Waiting for capacity is cancel-safe.
+async fn run_dh_job<T: Send + 'static>(
+    job: impl FnOnce() -> Result<T, authentication::Error> + Send + 'static,
+) -> Result<T, InvocationError> {
+    static DH_JOBS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+    let permit = DH_JOBS
+        .acquire()
+        .await
+        .expect("DH semaphore is never closed");
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        job()
+    })
+    .await
+    .map_err(|error| InvocationError::Io(io::Error::other(error)))?
+    .map_err(Into::into)
+}
+
 /// Uses the input plain sender to carry the Authorization Key generation process,
 /// and returns an encrypted sender reusing the same connection, transport and buffers.
 pub async fn generate_auth_key<T: Transport>(
@@ -870,7 +900,7 @@ pub async fn generate_auth_key<T: Transport>(
     debug!("gen auth key: sending step 2");
     let response = sender.invoke(&request).await?;
     debug!("gen auth key: starting step 3");
-    let (request, data) = authentication::step3(data, response)?;
+    let (request, data) = run_dh_job(move || authentication::step3(data, response)).await?;
     debug!("gen auth key: sending step 3");
     let response = sender.invoke(&request).await?;
     debug!("gen auth key: completing generation");
@@ -1613,7 +1643,21 @@ mod optimization_tests {
             }
         }
         assert_eq!(sender.ping_timer.deadline(), due);
+        // A later ACK deadline must not re-register the timer on every RPC.
+        sender.mtp.due = due + Duration::from_secs(5);
+        tokio::select! { biased; _ = sender.step() => panic!("not due"), _ = std::future::ready(()) => {} }
+        assert_eq!(sender.ping_timer.deadline(), due);
         tokio::time::advance(Duration::from_secs(10)).await;
+        // Poll without allowing the paused runtime to advance to the later
+        // deadline merely because this is the only pending future.
+        tokio::select! { biased; result = sender.step() => { result.unwrap(); }, _ = std::future::ready(()) => {} }
+        assert!(
+            !sender.mtp.fired,
+            "an old early wake must not flush a newer deadline"
+        );
+        tokio::select! { biased; _ = sender.step() => panic!("not due"), _ = std::future::ready(()) => {} }
+        assert_eq!(sender.ping_timer.deadline(), sender.mtp.due);
+        tokio::time::advance(Duration::from_secs(5)).await;
         sender.step().await.unwrap();
         assert!(sender.mtp.fired);
         assert_eq!(sender.ping_timer.as_ref().get_ref() as *const Sleep, timer);
@@ -1637,6 +1681,46 @@ mod optimization_tests {
         assert!(sender.requests.is_empty());
         sender.on_ping_timeout();
         assert_eq!(sender.requests.len(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dh_job_does_not_block_single_thread_io_progress() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let job = run_dh_job(move || Ok(rx.recv_timeout(Duration::from_secs(2)).is_ok()));
+        let peer = async {
+            tokio::task::yield_now().await;
+            let _ = tx.send(());
+        };
+        let (result, ()) = tokio::join!(job, peer);
+        assert!(result.unwrap(), "DH job blocked the only runtime worker");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn short_liveness_pings_before_deadline_and_huge_timeout_is_safe() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        sender.set_liveness_timeout(Some(Duration::from_secs(4)));
+        assert_eq!(sender.next_ping, Instant::now() + Duration::from_secs(2));
+        tokio::time::advance(Duration::from_secs(2)).await;
+        sender.step().await.unwrap();
+        assert_eq!(sender.requests.len(), 1);
+        sender.set_liveness_timeout(Some(Duration::MAX));
+        // Poll a real step, including deadline arithmetic, then cancel it.
+        tokio::select! { biased; result = sender.step() => { result.unwrap(); }, _ = std::future::ready(()) => {} }
+    }
+
+    #[tokio::test]
+    async fn sent_ping_is_replaced_when_pong_is_late() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        sender.on_ping_timeout();
+        sender.try_fill_write();
+        sender.on_net_write(sender.write_buffer.len()).unwrap();
+        assert!(matches!(sender.requests[0].state, RequestState::Sent(_)));
+        sender.on_ping_timeout();
+        assert_eq!(sender.requests.len(), 1);
+        assert!(matches!(
+            sender.requests[0].state,
+            RequestState::NotSerialized
+        ));
     }
 
     #[tokio::test]

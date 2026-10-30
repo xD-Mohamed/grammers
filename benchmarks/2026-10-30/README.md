@@ -3,6 +3,12 @@
 See [the scope and review ledger](../../OPTIMIZATION-2026-10.md) for decisions,
 compatibility and results. All network traffic in these tests is localhost.
 
+This directory's top-level samples describe the historical implementation
+checkpoint `8f109a6`, before review corrections. Use [round1/README.md](round1/README.md)
+for the current identical-harness comparison, runtime controls, saturated heap,
+source provenance and final validation. Historical figures are retained rather
+than silently replaced.
+
 ## Reproduction
 
 Use Rust 1.99.1 and the checked-in lockfile, default release optimization, and
@@ -23,8 +29,8 @@ shared; alternating samples reduce order bias but do not remove host noise.
 
    ```sh
    python3 scripts/compare-loopback.py \
-     --baseline /tmp/grammers-064ae123/baseline-loopback \
-     --candidate /tmp/grammers-064ae123/candidate-final-loopback \
+     --baseline artifacts/baseline-loopback \
+     --candidate artifacts/candidate-final-loopback \
      --output /tmp/grammers-comparison --runs 3
    ```
 

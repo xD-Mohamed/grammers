@@ -111,13 +111,20 @@ impl MessageBoxes {
     }
 
     /// Create a [`MessageBoxes`] from a previously known update state.
-    pub fn load(state: UpdatesState) -> Self {
+    pub fn load(mut state: UpdatesState) -> Self {
+        if state.pts == NO_PTS && state.qts > NO_PTS {
+            // A QTS alone cannot form a valid getDifference request. Relearn
+            // account state instead of creating a fictitious common PTS of 0.
+            state.qts = NO_PTS;
+            state.seq = NO_SEQ;
+            state.date = NO_DATE;
+        }
         trace!(?state, "created new message box with state");
         let mut entries = Vec::with_capacity(2 + state.channels.len());
         let mut getting_diff_for = Vec::with_capacity(2 + state.channels.len());
         let deadline = next_updates_deadline();
 
-        if state.pts > NO_PTS || state.qts > NO_PTS {
+        if state.pts > NO_PTS {
             entries.push(LiveEntry {
                 key: Key::Common,
                 pts: state.pts.max(NO_PTS),
@@ -175,7 +182,6 @@ impl MessageBoxes {
             || state.qts < 0
             || state.seq < 0
             || state.date < 0
-            || (state.qts > 0 && state.pts == 0)
             || state
                 .channels
                 .iter()
@@ -429,6 +435,14 @@ impl MessageBoxes {
     ///
     /// [updates' documentation]: https://core.telegram.org/api/updates
     pub fn process_updates(&mut self, updates: UpdatesLike) -> Result<UpdateAndPeers, Gap> {
+        self.process_updates_inner(updates, &[])
+    }
+
+    fn process_updates_inner(
+        &mut self,
+        updates: UpdatesLike,
+        force: &[Key],
+    ) -> Result<UpdateAndPeers, Gap> {
         trace!(?updates, "processing updates");
 
         let deadline = next_updates_deadline();
@@ -454,8 +468,19 @@ impl MessageBoxes {
             }
         };
 
-        let new_date = if date == NO_DATE { self.date } else { date };
-        let new_seq = if seq == NO_SEQ { self.seq } else { seq };
+        let account_pending = force.is_empty()
+            && (self.getting_diff_for.contains(&Key::Common)
+                || self.getting_diff_for.contains(&Key::Secondary));
+        let new_date = if date == NO_DATE || account_pending {
+            self.date
+        } else {
+            date
+        };
+        let new_seq = if seq == NO_SEQ || account_pending {
+            self.seq
+        } else {
+            seq
+        };
         let mk_state = |message_box| State {
             date: new_date,
             seq: new_seq,
@@ -464,7 +489,7 @@ impl MessageBoxes {
 
         // > For all the other [not `updates` or `updatesCombined`] `Updates` type constructors
         // > there is no need to check `seq` or change a local state.
-        if seq_start != NO_SEQ {
+        if seq_start != NO_SEQ && !account_pending {
             match (i64::from(self.seq) + 1).cmp(&i64::from(seq_start)) {
                 // Apply
                 Ordering::Equal => {}
@@ -510,6 +535,9 @@ impl MessageBoxes {
             if let tl::enums::Update::ChannelTooLong(u) = update {
                 // Can skip this one early since no processing can be done for the entry.
                 let key = Key::Channel(u.channel_id);
+                if self.getting_diff_for.contains(&key) {
+                    continue;
+                }
                 if let Some(pts) = u.pts {
                     self.set_entry(LiveEntry {
                         key,
@@ -535,7 +563,7 @@ impl MessageBoxes {
                 return Err(Gap);
             }
 
-            if self.getting_diff_for.contains(&info.key) {
+            if force.contains(&info.key) {
                 debug!(
                     key = ?info.key,
                     count = ?info.count,
@@ -545,6 +573,15 @@ impl MessageBoxes {
                 // Order does not need to be checked. These always must be applied.
                 self.reset_deadline(info.key, next_updates_deadline());
                 result.push((update, mk_state(Some(info.into()))));
+                continue;
+            }
+            if self.getting_diff_for.contains(&info.key) {
+                // Socket updates cannot advance or deliver a sequence whose
+                // backlog is being fetched. Difference will deliver them once.
+                have_unresolved_gaps = true;
+                continue;
+            }
+            if info.key == Key::Secondary && self.entry(Key::Common).is_none() {
                 continue;
             }
 
@@ -647,10 +684,7 @@ impl MessageBoxes {
     pub fn get_difference(&self) -> Option<tl::functions::updates::GetDifference> {
         for entry in [Key::Common, Key::Secondary] {
             if self.getting_diff_for.contains(&entry) {
-                let pts = self
-                    .entry(Key::Common)
-                    .map(|entry| entry.pts)
-                    .expect("common entry to exist when getting difference for it");
+                let pts = self.entry(Key::Common).map(|entry| entry.pts)?;
 
                 let gd = tl::functions::updates::GetDifference {
                     pts,
@@ -816,7 +850,7 @@ impl MessageBoxes {
         // It is possible that the result from `GetDifference` includes users with `min = true`.
         // TODO in that case, we will have to resort to getUsers.
         let (mut result_updates, users, chats) = self
-            .process_updates(us)
+            .process_updates_inner(us, &[Key::Common, Key::Secondary])
             .expect("gap is detected while applying difference");
 
         result_updates.extend(
@@ -927,7 +961,7 @@ impl MessageBoxes {
             seq: NO_SEQ,
         }));
         let (mut result_updates, users, chats) = self
-            .process_updates(us)
+            .process_updates_inner(us, &[key])
             .expect("gap is detected while applying channel difference");
 
         result_updates.extend(new_messages.into_iter().map(|message| {

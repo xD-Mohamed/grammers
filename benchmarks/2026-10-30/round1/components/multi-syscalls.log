@@ -1,0 +1,73 @@
+
+running 1 test
+test loopback_rpc_cost ... Plain round 0: sampled RPC latency p50/p95/p99 1370.1/2314.8/2998.7 us (192 samples)
+Plain reply (1592 B) round 0: 11820 RPC/s; client thread 0.01 us user + 0.03 us kernel, 0 cycles per RPC
+CLIENT_WORKER_CPU user_us=86386 sys_us=259160
+CLIENT_WORKER_CPU user_us=108212 sys_us=222791
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 7.15s
+
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ------------------
+ 64.95   13.351199        1097     12161       921 futex
+ 16.36    3.362868         340      9868           epoll_wait
+  8.39    1.724061        8979       192           wait4
+  4.22    0.868167          36     23930           sendto
+  2.82    0.579025          24     24123        65 recvfrom
+  1.32    0.270497          21     12297           getrandom
+  0.42    0.086659           3     27717      5568 newfstatat
+  0.25    0.050490           5      9039       186 read
+  0.15    0.031652           5      6214       448 openat
+  0.15    0.029822           4      7305           close
+  0.14    0.029310          18      1600           getdents64
+  0.08    0.016502           4      3514           mmap
+  0.08    0.016013           0     23750           rt_sigaction
+  0.08    0.015808          10      1537      1344 execve
+  0.08    0.015718           2      7360       256 lseek
+  0.08    0.015428           6      2435           brk
+  0.06    0.012108           2      4737      4288 ioctl
+  0.05    0.009538          15       603           munmap
+  0.04    0.008700           6      1286           mprotect
+  0.04    0.008436          32       259           epoll_ctl
+  0.04    0.007286          53       136           clone3
+  0.03    0.005397           6       851           write
+  0.02    0.004559           7       575           poll
+  0.02    0.004006           8       448           pipe2
+  0.02    0.003596          56        64        64 connect
+  0.02    0.003591          56        64           shutdown
+  0.02    0.003523          54        65         1 accept4
+  0.01    0.003068           3       962           prlimit64
+  0.01    0.002774          42        65           socket
+  0.01    0.002429          18       129           setsockopt
+  0.01    0.002136           5       384       320 readlink
+  0.01    0.001760           2       732           rt_sigprocmask
+  0.01    0.001541          24        64           vfork
+  0.01    0.001302           1       772           pread64
+  0.01    0.001118          17        64           getsockopt
+  0.00    0.000779           6       128           sysinfo
+  0.00    0.000651           1       386       193 arch_prctl
+  0.00    0.000606           3       193       193 access
+  0.00    0.000512           2       192           dup
+  0.00    0.000434           2       201           rseq
+  0.00    0.000393           2       194           fcntl
+  0.00    0.000382           1       201           set_robust_list
+  0.00    0.000380           0       512           dup2
+  0.00    0.000349           5        66           epoll_create1
+  0.00    0.000320          15        21           sigaltstack
+  0.00    0.000260          32         8           sched_setaffinity
+  0.00    0.000259           1       193           set_tid_address
+  0.00    0.000220           3        64           uname
+  0.00    0.000209          23         9           sched_getaffinity
+  0.00    0.000205           2        73           gettid
+  0.00    0.000136          45         3           madvise
+  0.00    0.000125           1        64           umask
+  0.00    0.000117          29         4           getrusage
+  0.00    0.000110          15         7           prctl
+  0.00    0.000040           5         7         4 statx
+  0.00    0.000028          14         2           eventfd2
+  0.00    0.000015          15         1           bind
+  0.00    0.000008           8         1           listen
+  0.00    0.000005           5         1           getsockname
+------ ----------- ----------- --------- --------- ------------------
+100.00   20.556630         109    187833     13851 total

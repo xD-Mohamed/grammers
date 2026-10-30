@@ -176,24 +176,31 @@ impl MessageContainer {
     /// Validate all inner envelopes before handling any, just like the owned
     /// decoder, then walk them without allocating a Vec of copied messages.
     #[cfg(test)]
-    pub fn borrowed_messages(bytes: &[u8]) -> Result<MessageIter<'_>, tl::deserialize::Error> {
+    pub fn borrowed_messages(
+        bytes: &[u8],
+    ) -> Result<MessageIter<'_>, crate::mtp::DeserializeError> {
         Self::borrowed_messages_validated(bytes, None)
     }
 
     pub fn borrowed_messages_validated(
         bytes: &[u8],
         parent: Option<(i64, i32)>,
-    ) -> Result<MessageIter<'_>, tl::deserialize::Error> {
+    ) -> Result<MessageIter<'_>, crate::mtp::DeserializeError> {
         let mut cursor = Cursor::from_slice(bytes);
         let constructor = u32::deserialize(&mut cursor)?;
         if constructor != Self::CONSTRUCTOR_ID {
-            return Err(tl::deserialize::Error::UnexpectedConstructor { id: constructor });
+            return Err(tl::deserialize::Error::UnexpectedConstructor { id: constructor }.into());
         }
-        let count = usize::try_from(i32::deserialize(&mut cursor)?)
-            .map_err(|_| tl::deserialize::Error::UnexpectedEof)?;
+        let count = usize::try_from(i32::deserialize(&mut cursor)?).map_err(|_| {
+            crate::mtp::DeserializeError::InvalidEnvelope {
+                reason: "invalid message envelope",
+            }
+        })?;
         let data = &bytes[cursor.pos()..];
         if count > 1024 || count > data.len() / Message::SIZE_OVERHEAD {
-            return Err(tl::deserialize::Error::UnexpectedEof);
+            return Err(crate::mtp::DeserializeError::InvalidEnvelope {
+                reason: "invalid message envelope",
+            });
         }
         let mut check = Cursor::from_slice(data);
         for _ in 0..count {
@@ -205,11 +212,15 @@ impl MessageContainer {
                     || inner.seq_no < 0
                     || inner.seq_no > seq
             }) {
-                return Err(tl::deserialize::Error::UnexpectedEof);
+                return Err(crate::mtp::DeserializeError::InvalidEnvelope {
+                    reason: "invalid message envelope",
+                });
             }
         }
         if check.pos() != data.len() {
-            return Err(tl::deserialize::Error::UnexpectedEof);
+            return Err(crate::mtp::DeserializeError::InvalidEnvelope {
+                reason: "invalid message envelope",
+            });
         }
         Ok(MessageIter {
             cursor: Cursor::from_slice(data),

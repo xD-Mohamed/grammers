@@ -1,0 +1,11 @@
+--- a/grammers-mtsender/src/sender.rs
++++ b/grammers-mtsender/src/sender.rs
+@@ -390,7 +390,7 @@
+         .flatten()
+         .min();
+         if let Some(deadline) = deadline
+-            && (deadline < self.ping_timer.deadline() || self.ping_timer.is_elapsed())
++            && self.ping_timer.deadline() != deadline
+         {
+             self.ping_timer.as_mut().reset(deadline);
+         }

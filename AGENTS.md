@@ -1,5 +1,47 @@
 # grammers fork
 
+## Protocol hardening and review corrections (2026-10-30)
+
+`OPTIMIZATION-2026-10.md` and `REVIEW-ROUND1.md` contain the scope, measured
+limits and review dispositions. Keep outbound packet accounting independent of
+inbound and expanded gzip sizes. Preserve shared nesting/work/expansion budgets,
+exact-limit checksum validation, deferred ACK IDs and the original ACK deadline.
+Invalid pushes cannot consume service state. Salt-prefetch packets remain alone.
+
+Only difference results may bypass pts progression during catch-up. Socket pts
+updates for a pending key must be deferred/dropped while non-pts updates remain
+usable without advancing saved backlog state. Peerless messageEmpty channel
+updates are valid. A secondary-only saved state needs fresh primary state.
+
+Cold callers must be pruned incrementally with cancel-safe `poll_closed`; do not
+rescan already-closed senders beyond Tokio's cooperative budget. Unframed callers
+retain definite-not-sent errors even if connection initialization wrote bytes.
+Keep count/byte permits owned by SDK work until framing/delivery retires them.
+The actual spawned `run_sender` future returns `(dc_id, result)` directly.
+
+Telegram's published DH prime skips only primality; subgroup checks still run.
+DH validation/exponentiation runs in blocking jobs bounded to four concurrently.
+A started CPU job may finish after caller cancellation and retains its permit;
+it cannot be aborted by an async timeout. Factorization uses one shared work
+budget, bounded GCD batches, and a process-enforced regression deadline.
+
+Keepalives replace a sent record even without a pong, preserving partially
+written packets. Liveness below 60 seconds requires an earlier ping; huge
+user timeouts must not overflow Instant. A corrected clock resets the message-ID
+floor. Exhaustive error enums gained variants: see CHANGELOG.md for migration.
+
+Performance claims require identical release harnesses, paired measurements and
+noise limits. Replay history is measured after more than 1024 replies; a nine-RPC
+census does not represent steady-state heap. No runtime replacement follows from
+microbenchmarks alone. New review artifacts retain native identities separately
+from requested effort, and acceptance must come from the independent reviewer.
+
+Correction validation: 590 release all-feature workspace tests/doctests passed,
+39 ignored; all-target/all-feature check, strict Clippy, warning-free Rustdoc
+and rustfmt passed. Minimal client: 39; session memory/import/string/file-import
+configurations: 39/61/46/81 passed. Logs are under benchmarks/2026-10-30/round1.
+These local checks do not constitute independent review acceptance or a hosted run.
+
 ## Per-session footprint and AES-IGE (2026-10-23)
 
 Applications may hold many pools, so idle per-session state matters.

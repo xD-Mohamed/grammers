@@ -705,7 +705,15 @@ impl Message {
         &self,
         mut medias: Vec<InputMedia>,
     ) -> Result<Vec<Option<Self>>, InvocationError> {
-        medias.first_mut().unwrap().reply_to = Some(self.id());
+        if let Some(first) = medias.first_mut() {
+            first.reply_to = Some(self.id());
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "album cannot be empty",
+            )
+            .into());
+        }
         self.client
             .send_album(
                 self.peer_ref()

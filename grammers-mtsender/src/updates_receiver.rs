@@ -139,36 +139,41 @@ impl UpdatesReceiver {
     > {
         let session = self.session.clone();
 
-        if self.should_get_state {
-            self.should_get_state = false;
-            match self.invoke(&tl::functions::updates::GetState {}).await {
-                Ok(tl::enums::updates::State::State(state)) => {
-                    session
-                        .clone()
-                        .set_update_state(UpdateState::All(UpdatesState {
-                            pts: state.pts,
-                            qts: state.qts,
-                            date: state.date,
-                            seq: state.seq,
-                            channels: Vec::new(),
-                        }))
-                        .await?;
-                    self.message_box.set_state(state);
-                }
-                Err(_err) => {
-                    // The account may no longer actually be logged in, or it can rarely fail.
-                    // `message_box` will try to correct its state as updates arrive.
-                }
-            }
-        }
-
         loop {
+            tokio::task::consume_budget().await;
             let generation = self.handle.home_failure_generation();
             if generation != self.home_failure_generation {
                 self.home_failure_generation = generation;
+                self.should_get_state |= self.message_box.is_empty();
                 self.process_socket_updates(UpdatesLike::ConnectionClosed)
                     .await;
             }
+            if self.should_get_state {
+                self.should_get_state = false;
+                match self.invoke(&tl::functions::updates::GetState {}).await {
+                    Ok(tl::enums::updates::State::State(state)) => {
+                        session
+                            .clone()
+                            .set_update_state(UpdateState::All(UpdatesState {
+                                pts: state.pts,
+                                qts: state.qts,
+                                date: state.date,
+                                seq: state.seq,
+                                channels: Vec::new(),
+                            }))
+                            .await?;
+                        self.message_box.set_state(state);
+                    }
+                    Err(error) => {
+                        // Recovery failures must reach the caller. Otherwise a connection failing during GetState
+                        // can advance the home generation and spin through
+                        // repeated GetState attempts inside this same next() call.
+                        self.should_get_state = true;
+                        return Err(error);
+                    }
+                }
+            }
+
             // Catch-up must not indefinitely starve live updates or closure.
             if let Ok(update) = self.updates.try_recv() {
                 self.process_socket_updates(update).await;
@@ -182,8 +187,16 @@ impl UpdatesReceiver {
                     self.message_box.get_difference(),
                     match self.message_box.get_channel_difference() {
                         Some(gd) => {
-                            prepare_channel_difference(gd, session.clone(), &mut self.message_box)
-                                .await?
+                            match prepare_channel_difference(
+                                gd,
+                                session.clone(),
+                                &mut self.message_box,
+                            )
+                            .await?
+                            {
+                                Some(request) => Some(request),
+                                None => continue,
+                            }
                         }
                         None => None,
                     },
@@ -234,7 +247,12 @@ impl UpdatesReceiver {
                         }
                         continue;
                     }
-                    Err(e) if e.is("CHANNEL_PRIVATE") => {
+                    Err(e)
+                        if e.is("CHANNEL_PRIVATE")
+                            || e.is("CHANNEL_INVALID")
+                            || e.is("CHANNEL_PUBLIC_GROUP_NA")
+                            || e.is("USER_BANNED_IN_CHANNEL") =>
+                    {
                         info!(
                             ?request,
                             "Account is now banned so we can no longer fetch updates with request",

@@ -4,12 +4,12 @@
    Compiling glass_pumpkin v2.0.0
    Compiling tokio-macros v2.7.2
    Compiling tokio v1.54.0
-   Compiling grammers-crypto v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-crypto)
-   Compiling grammers-mtproto v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-mtproto)
-   Compiling grammers-session v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-session)
+   Compiling grammers-crypto v0.10.0 (<worktree>/grammers-crypto)
+   Compiling grammers-mtproto v0.10.0 (<worktree>/grammers-mtproto)
+   Compiling grammers-session v0.10.0 (<worktree>/grammers-session)
    Compiling futures-util v0.3.34
-   Compiling grammers-mtsender v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-mtsender)
-   Compiling grammers-client v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-client)
+   Compiling grammers-mtsender v0.10.0 (<worktree>/grammers-mtsender)
+   Compiling grammers-client v0.10.0 (<worktree>/grammers-client)
     Finished `release` profile [optimized] target(s) in 52.02s
      Running unittests src/lib.rs (target/release/deps/grammers_client-15b1fe7787fc6de5)
 

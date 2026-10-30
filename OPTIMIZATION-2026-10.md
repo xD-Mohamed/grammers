@@ -1,44 +1,41 @@
 # October 2026 optimization implementation and review ledger
 
-This continues the retained joint research, starting at
-`7774ed666317d981e1dfea0d12311cbd38acb43e`. The implementation worktree is
-`duo/1cb9a1ed/impl`, with `origin` verified as
-`https://github.com/xD-Mohamed/grammers.git`. No consumer repository, account,
-Telegram service, or deployment is part of this work.
+This continues the retained joint research from baseline
+`7774ed666317d981e1dfea0d12311cbd38acb43e`. The reviewed implementation checkpoint
+is `8f109a67458acf35f278451ee6d32c0acaab80e3`; round-one corrections are recorded
+in [REVIEW-ROUND1.md](REVIEW-ROUND1.md). The verified remote is
+`https://github.com/xD-Mohamed/grammers.git`. No consumer repository or Telegram
+account is involved.
 
 ## Evidence and review provenance
 
-The supplied handoff records completed Astra/Opus research and reciprocal
-criticism in task `ba4d0f92-8e56-4a95-bcbc-83f56066fb91`, run
-`7197ce19-17fe-46e0-a1e6-db0ca8413c52`. Individual legacy prose was not persisted;
-the repaired report reader cannot recover it. This document records decisions
-verified against code and primary sources, not reconstructed missing reports.
-
-Current implementation task: `064ae123-8016-4266-bde6-06f0c900156b`, Duo run
-`1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee`. The task configuration reports
-`gpt-6-astra`, requested `xhigh`. This is configuration evidence, not independent
-native confirmation of effort. The orchestrator will run the independent
-`opus` / `claude-opus-5-5` reviewer on the real diff after this coding turn.
-No new review receipt or acceptance existed when implementation began.
-Publication remains gated on that review and correction rounds; this coding
-turn must not commit or push.
+Earlier joint research survives only as the supplied retained summary. The
+report-reader repair cannot restore missing legacy prose. New implementation
+and review reports are available in full, including native model receipts:
+[implementation](benchmarks/2026-10-30/round1/astra-implementation.md),
+[review](benchmarks/2026-10-30/round1/claude-review.md), and
+[provider evidence](benchmarks/2026-10-30/round1/provenance.json).
+The runner accepted native `gpt-6-astra` and `claude-opus-5-5` (alias `opus`).
+Both requested `xhigh`; neither receipt independently confirms native effort.
+Claude's first implementation review requested changes and did not run builds.
+Correction acceptance remains pending; this turn must not commit or push.
 
 ## Scope matrix
 
 | Retained finding | Implementation / disposition | Verification and remaining questions |
 |---|---|---|
 | P0 factorization termination | Add `try_factorize`, reject primes/non-semiprimes, bound all rho loops/restarts; authentication uses checked path. Legacy tuple-returning `factorize` remains with documented panic on failure. | Small/composite/prime/u64 boundary corpus; existing three large PQ vectors; child-process regression killed/reaped after 10 seconds. |
-| P0 DH input validation | Bound encrypted answer before slicing, validate hash and padding, safe 2048-bit prime/subgroup before modular arithmetic, bound public values and checked time subtraction. Harden shared `check_p_and_g` against invalid generators and entropy errors. | Existing exact successful handshake vector; short ciphertext, valid-hash invalid-DH fixtures. Unknown valid primes still use existing primality backend. |
+| P0 DH input validation | Bound encrypted answer before slicing, validate hash and padding, safe 2048-bit prime/subgroup before modular arithmetic, bound public values and checked time subtraction. Harden shared `check_p_and_g` against invalid generators and entropy errors. | Existing exact successful handshake vector; short ciphertext, valid-hash invalid-DH fixtures. The published Telegram prime skips only primality; all generators retain subgroup checks. Unknown primes use the existing primality backend in a bounded blocking job. |
 | P0 outbound accounting | Reserve all encrypted/header/container/padding bytes under `0xff000`; automatic wrapper included; all requests, ACKs and salt requests use capacity checks. | Exact request limit with compression on/off and update wrapper; retained ACK IDs/deadline across full packets; batches max 8192. Conservative uncompressed limit is now 1,044,372 bytes, minus automatic wrapper. |
 | P0 inbound limits | Remove outbound-derived inbound body cap; require constructor-sized aligned bodies within the enclosing slice. | Real TL `rpc_result(upload.file)` with 1 MiB bytes: 1,048,604-byte body. Transport receive cap unchanged. |
 | P0 gzip resources | Configurable 64 MiB/member, 128 MiB cumulative/packet, depth 32, work 4096 defaults. Charge failed decode work too; iterative body unwrapping releases owned parents. | Exact-limit CRC/footer, over-limit expansion, trailing data/recovery, deep wrappers, sibling cumulative budget, hidden nested simple containers. These are resource policies, not protocol size guarantees. |
 | P0 authenticated envelopes | Check session, padding, positive odd IDs, nonnegative sequence, container count (1024), complete inner envelope layout/order; bounded recent-ID set suppresses replays and re-ACKs duplicates. Gzip bodies reuse their one authenticated envelope. | Cache adds up to 8 KiB of retained IDs/session, allocated on use. Timestamp rejection remains conditional work: a reused key does not prove local clock synchronization; bad-time service messages must remain usable. |
 | P0 input-triggered panics | Wrong session, unsupported service replies, malformed plain lengths, raw `Sender` requests, short RPC replies and responses to serialized-but-unsent requests become errors. | Sender permit-release/cancellation tests; malformed container and length tests; protocol errors scoped to the connection or addressed invocation. |
 | P0 delivery/retry certainty | Share original connection error through `Arc`; distinguish not-sent from sent/partially-written packets. Default retry accepts only not-sent connection failures. Typed transport inspection preserves cached-key 404 fallback through the new wrappers. Keep custom retry policies explicit. | Partial/complete/no-write scenarios, original OS error inspection and shared identity, bounded definitive protocol rejections; local transport-404 fixture must observe a fresh plaintext ReqPqMulti. No automatic replay after ambiguous delivery. |
-| P1 service handling | Plain phase has no automatic keepalive. ACK-only packets get an idle deadline on the retained sender timer; one salt-prefetch does not block later user RPCs. At most one outstanding ping, 65,536 pending ACK IDs, finite salt/protocol rejection retries. Optional valid-packet liveness deadline complements initialization timeout. Config persistence is outside the network initialization deadline. | Paused-time service/keepalive/liveness tests; timer cancellation, ping retirement, ACK backlog/wire compatibility/deferral; silent connections. Salt expiry and the storage/deadline boundary remain review targets. |
-| P1 pool admission/fairness | Per-DC single-flight setup tasks outside control runner; failures shared with waiters; cancellation/shutdown owns tasks; generation identity rejects stale completions. Serialize config/key merges under a cold-path async mutex. Optional request-byte admission travels with SDK permits. Cooperative runner work budgets. | Same-DC shared setup failure while another DC responds; caller cancellation and quit regressions; byte limit and release tests. Cross-pool fairness still depends on caller/runtime scheduling. |
+| P1 service handling | Plain phase has no automatic keepalive. ACK-only packets get an idle deadline on the retained sender timer; one salt-prefetch does not block later user RPCs. At most one retained keepalive record; a sent ping is replaced at the next interval even if its pong is delayed. At most 65,536 pending ACK IDs, finite salt/protocol rejection retries. Optional valid-packet liveness deadline complements initialization timeout. Config persistence is outside the network initialization deadline. | Paused-time service/keepalive/liveness tests; timer cancellation, ping retirement, ACK backlog/wire compatibility/deferral; silent connections. Salt expiry and the storage/deadline boundary remain review targets. |
+| P1 pool admission/fairness | Per-DC single-flight setup tasks outside control runner; failures shared with waiters; cancellation/shutdown owns tasks; generation identity rejects stale completions. Serialize config/key merges under a cold-path async mutex. Optional request-byte admission travels with SDK permits. Cooperative runner work budgets. | Same-DC shared setup failure while another DC responds; caller-only 200-waiter cancellation, partial cancellation, disconnect and stale-generation regressions; byte limit and release tests. Cross-pool fairness still depends on caller/runtime scheduling. |
 | P1 updates and client input | Out-of-band home failure generation wakes `UpdatesReceiver` even when updates queue is full. Catch-up alternates account/channels and rotates channel pages. Deduplicate saved channels, preserve older position, widen counters. Checked loading/account/channel recovery rejects invalid state without mutation; legacy loading repairs missing common state. Invalid mentions remain ordinary text links; empty/incomplete albums fail locally; download offsets/upload part counts checked. | Queue-overflow notification, saved-state/counter and catch-up tests, malformed HTML/Markdown, media input regressions. Legacy low-level message-box methods retain preconditions; the normal updates receiver uses the checked paths. |
-| P2 micro-optimizations | No runtime replacement, lookup rewrite, compression-policy or buffer rewrite without independent evidence. Existing AES-IGE, shared bodies, gzip reuse, queue and routing optimizations retained. | Release local/mock baseline and final comparison described below. Correctness checks can cost CPU/memory; no universal speedup claim. |
+| P2 micro-optimizations | Published-prime cache, duplicate future removal and selective timer reset adopted. Existing shared-body/gzip/ACK/routing A/B controls rerun. New compression, packing, lookup, serializer and allocator designs are **not evaluated**, not rejected by evidence. | The [correction matrix](REVIEW-ROUND1.md) distinguishes evaluated components and unevaluated proposals; paired RPC, runtime, open-loop and saturated-heap data bound the measured scope. |
 | P3 upstream intake | Inspect canonical Codeberg through `1e31e73cd9797790905bbea82cd75adcbe6f1242`; adapt `ad7b4725` accounting and `1e31e73` sender validation, preserve deferred ACKs and separate inbound cap. | No upstream merge. Schema 232, dependency/version changes, sans-I/O/transport rewrites and media API changes remain isolated intake candidates, not prerequisites for these fixes. |
 
 ## Primary sources and upstream decisions
@@ -78,20 +75,24 @@ MsgId conversion, `4101f5e` configurable transport, `e564eef` slice extension,
 `a984cac` sans-I/O extraction, `dfffb71` layer 232, `15b7afa` version,
 `5b80079` dependencies, `6ce4c54` TTL semantics.
 
-## Reproducible local measurements
+## Historical measurements at the reviewed checkpoint
+
+These measurements preceded the corrections. Current results and reproducible
+commands are in [REVIEW-ROUND1.md](REVIEW-ROUND1.md) and
+[round1/README.md](benchmarks/2026-10-30/round1/README.md).
 
 Host: Linux x86_64, AMD Ryzen 9 7950X3D; rustc 1.99.1
 (`58cf8f9c3`, 2026-10-13), cargo 1.99.1, locked workspace dependencies, default
 release optimization (no `target-cpu=native`). Cargo was not on the initial PATH;
-commands use `PATH=/root/.cargo/bin:$PATH`.
+commands require the installed Cargo toolchain on PATH.
 
 Before production edits, built the existing loopback harness with only the new
 1/64 latency sampling instrumentation. Preserved that executable as
-`/tmp/grammers-064ae123/baseline-loopback`. Workload: 64 pools, 16 callers,
+`<artifacts>/baseline-loopback`. Workload: 64 pools, 16 callers,
 4-second windows, real framing/AES-IGE/serialization, plain and gzip replies,
 alternating allocator instrumentation; responder uses four threads. No Telegram
 endpoint or credential. Linux's reported thread "user" field is actually total
-thread CPU; its kernel/cycle fields are unavailable, not measured zero cost.
+thread CPU; that original harness did not measure kernel time separately. Round-one measurements use `getrusage(RUSAGE_THREAD)` to report user/system time; cycle counts remain unavailable.
 
 Initial baseline (untracked rounds 0/2/4; median of the three round metrics):
 
@@ -107,8 +108,7 @@ per-client RSS or CPU values.
 
 No `perf` executable was available. End-to-end loopback and queue benchmarks
 can test particular scheduling costs; they cannot attribute all CPU to Tokio
-or substantiate a runtime rewrite. No runtime change is justified by the
-retained evidence.
+or substantiate a runtime rewrite. The original measurements did not evaluate a runtime replacement. The round-one runtime and blocking-socket controls address that gap with explicit scope limits.
 
 The first paired candidate is retained under
 `benchmarks/2026-10-30/first-candidate/`, including unfavorable measurements.
@@ -116,7 +116,8 @@ It used a transient additional service timer. Three alternating pairs measured
 plain throughput 60,346 -> 49,015 RPC/s and gzip 62,640 -> 58,580 RPC/s
 (medians of nine untracked windows per reply type). The final candidate reuses
 one pinned timer for service, keepalive and liveness deadlines, adds the ACK
-backlog bound and single outstanding ping, and keeps config writes outside the
+backlog bound and single outstanding ping (subsequently corrected to refresh
+sent pings), and keeps config writes outside the
 initialization timeout. Comparing these iterations is not an isolated estimate
 of the timer change's contribution; final correctness checks also have costs.
 
@@ -179,7 +180,11 @@ The unchanged queue component benchmark measured median round trips of
 cross-thread gap demonstrates this workload's scheduling/synchronization cost,
 not a runtime-wide diagnosis or evidence that replacing Tokio helps.
 
-## Final validation
+## Validation at the reviewed checkpoint
+
+The counts below belong to `8f109a6`. The correction rerun passed 590 tests
+with 39 ignored, including fresh minimal/optional builds; see
+[current validation](benchmarks/2026-10-30/round1/validation/README.md).
 
 - `cargo test --locked --release --workspace --all-features`: **565 distinct
   tests/doctests passed, 36 ignored**. The factorization deadline test also runs
@@ -221,14 +226,14 @@ and full review artifacts through the Duo runner; do not infer acceptance from
 this document. Resolve blocking findings and re-run affected checks. No commit
 or push belongs to the first implementation turn.
 
-Exact handoff: branch `duo/1cb9a1ed/impl`, worktree
-`/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl`,
-base/HEAD `7774ed666317d981e1dfea0d12311cbd38acb43e`; implementation and artifacts
-are uncommitted. No PR, remote branch, commit, push or deployment was created.
+The orchestrator checkpointed the initial implementation as `8f109a6` before
+review. The current correction diff is intentionally uncommitted; the coding
+agent has not committed or pushed it. Local branch/worktree details belong in
+the private handoff, rather than public benchmark artifacts.
 
 Remaining-work ledger for the review/completion continuation:
 
-1. Run the configured independent Opus review against this real diff and raw
+1. Run the configured second independent Opus review against the correction diff and raw
    measurements. Persist its complete report and both native runner receipts
    with the Duo run; requested `xhigh` must not be described as independently
    native-confirmed effort. Current implementation acceptance is **pending**.
@@ -237,12 +242,13 @@ Remaining-work ledger for the review/completion continuation:
    envelope/replay validation, gzip budgets, and checked message-box recovery.
    Timestamp rejection with an uncertain clock is explicitly deferred; legacy
    low-level message-box APIs still require their documented valid states.
-3. Challenge the default resource budgets and measured CPU/heap cost. P2 runtime,
-   packing, lookup, serialization, buffer and lock rewrites remain unadopted
-   without isolated evidence. No claim of all possible optimizations is made.
+3. Challenge the default resource budgets, saturated replay-cache heap and
+   overload/fairness measurements. The correction matrix names unevaluated P2
+   proposals explicitly; runtime controls do not justify replacing Tokio.
+   No claim of all possible optimizations is made.
 4. Resolve blocking review findings, run affected verification and receive a
    substantive reciprocal review. If two rounds leave blockers, record them
    for correction/review continuation; do not mark accepted or publish.
 5. Any later publication must follow the owner's applicable authorization and
    review gate, verify the intended fork/branch, use a normal push, and compare
-   the remote SHA. This first coding turn performs neither commit nor push.
+   the remote SHA. This correction turn performs neither commit nor push.

@@ -39,3 +39,6 @@ tokio = { version = "1.52.3", default-features = false, features = ["rt-multi-th
 toml = "1.1.2"
 socks5-server = "0.10.1"
 tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2"

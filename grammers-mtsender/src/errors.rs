@@ -410,6 +410,17 @@ impl From<authentication::Error> for InvocationError {
 }
 
 impl InvocationError {
+    pub(crate) fn for_unframed_request(self) -> Self {
+        // A handshake may have written bytes, but requests waiting for that
+        // handshake were never framed on the connection.
+        match self.root_cause() {
+            Self::Read { error, .. } => Self::Read {
+                error: Arc::clone(error),
+                may_have_been_sent: false,
+            },
+            _ => self,
+        }
+    }
     /// Inspect transport rejection through shared and delivery-aware errors.
     pub fn transport_error(&self) -> Option<&transport::Error> {
         match self.root_cause() {
@@ -433,13 +444,12 @@ impl InvocationError {
         match self {
             Self::BadMessage { .. } => C::Protocol,
             Self::Shared(error) => error.category(),
-            Self::Read { error, .. } => {
-                if error.io_error().is_some() {
-                    C::Network
-                } else {
-                    C::Protocol
-                }
-            }
+            Self::Read { error, .. } => match error.io_error().map(io::Error::kind) {
+                Some(io::ErrorKind::InvalidData) | None => C::Protocol,
+                Some(io::ErrorKind::InvalidInput) => C::InvalidRequest,
+                Some(io::ErrorKind::WouldBlock) => C::Overloaded,
+                Some(_) => C::Network,
+            },
             Self::Session(_) => C::Session,
             Self::Dropped(_) => C::Closed,
             Self::InvalidDc => C::InvalidRequest,
@@ -514,6 +524,27 @@ impl InvocationError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unframed_setup_errors_preserve_source_and_correct_certainty() {
+        let source = Arc::new(ReadError::Io(io::ErrorKind::ConnectionReset.into()));
+        let error = InvocationError::Shared(Arc::new(InvocationError::Read {
+            error: Arc::clone(&source),
+            may_have_been_sent: true,
+        }));
+        let converted = error.for_unframed_request();
+        assert!(
+            matches!(converted, InvocationError::Read { error, may_have_been_sent: false } if Arc::ptr_eq(&error, &source))
+        );
+        assert_eq!(
+            InvocationError::Read {
+                error: Arc::new(ReadError::Io(io::ErrorKind::InvalidData.into())),
+                may_have_been_sent: true
+            }
+            .category(),
+            InvocationErrorCategory::Protocol
+        );
+    }
 
     #[test]
     fn categories_and_wait_delays_are_typed() {

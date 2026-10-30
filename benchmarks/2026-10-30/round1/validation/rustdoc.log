@@ -1,0 +1,11 @@
+    Checking grammers-session v0.10.0 (<worktree>/grammers-session)
+    Checking grammers-mtsender v0.10.0 (<worktree>/grammers-mtsender)
+    Checking grammers-client v0.10.0 (<worktree>/grammers-client)
+ Documenting grammers v0.1.0 (<worktree>/grammers)
+ Documenting grammers-client v0.10.0 (<worktree>/grammers-client)
+ Documenting grammers-mtsender v0.10.0 (<worktree>/grammers-mtsender)
+ Documenting grammers-session v0.10.0 (<worktree>/grammers-session)
+ Documenting grammers-mtproto v0.10.0 (<worktree>/grammers-mtproto)
+ Documenting grammers-crypto v0.10.0 (<worktree>/grammers-crypto)
+    Finished `dev` profile [unoptimized] target(s) in 13.17s
+   Generated <worktree>/target/doc/grammers/index.html and 8 other files

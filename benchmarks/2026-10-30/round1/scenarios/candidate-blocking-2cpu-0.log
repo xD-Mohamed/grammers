@@ -1,0 +1,46 @@
+
+running 1 test
+test loopback_blocking_control ... BLOCKING_WORKER_CPU user_us=34289 sys_us=100040 rpcs=7919
+BLOCKING_WORKER_CPU user_us=68187 sys_us=73444 rpcs=8390
+BLOCKING_WORKER_CPU user_us=44090 sys_us=101269 rpcs=8545
+BLOCKING_WORKER_CPU user_us=36766 sys_us=107442 rpcs=8526
+BLOCKING_WORKER_CPU user_us=51808 sys_us=93236 rpcs=8576
+BLOCKING_WORKER_CPU user_us=38134 sys_us=102792 rpcs=8386
+BLOCKING_WORKER_CPU user_us=22601 sys_us=121655 rpcs=8469
+BLOCKING_WORKER_CPU user_us=49163 sys_us=94794 rpcs=8579
+BLOCKING_WORKER_CPU user_us=40825 sys_us=92521 rpcs=7908
+BLOCKING_WORKER_CPU user_us=42493 sys_us=93459 rpcs=7959
+BLOCKING_WORKER_CPU user_us=65923 sys_us=77528 rpcs=8398
+BLOCKING_WORKER_CPU user_us=30978 sys_us=105742 rpcs=8027
+BLOCKING_WORKER_CPU user_us=38124 sys_us=105858 rpcs=8498
+BLOCKING_WORKER_CPU user_us=57229 sys_us=78227 rpcs=7994
+BLOCKING_WORKER_CPU user_us=28248 sys_us=108601 rpcs=8000
+BLOCKING_WORKER_CPU user_us=15597 sys_us=127977 rpcs=8507
+BLOCKING rate=88397 user_us=5.008 sys_us=11.943 p50_us=197.5 p95_us=284.4 p99_us=408.8
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 1.56s
+
+	Command being timed: "<binary> --exact loopback_blocking_control --ignored --nocapture --test-threads=1"
+	User time (seconds): 1.37
+	System time (seconds): 2.78
+	Percent of CPU this job got: 266%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.56
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 7476
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 850
+	Voluntary context switches: 135431
+	Involuntary context switches: 2243
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

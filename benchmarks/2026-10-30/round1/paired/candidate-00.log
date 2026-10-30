@@ -1,0 +1,33 @@
+
+running 1 test
+test loopback_rpc_cost ... Plain round 0: sampled RPC latency p50/p95/p99 226.5/456.9/874.0 us (1448 samples)
+Plain reply (1592 B) round 0: 61359 RPC/s; client thread 6.93 us user + 8.94 us kernel, 0 cycles per RPC
+Gzip round 0: sampled RPC latency p50/p95/p99 198.1/380.3/497.4 us (1640 samples)
+Gzip reply (528 B) round 0: 69630 RPC/s; client thread 6.14 us user + 8.04 us kernel, 0 cycles per RPC
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 8.77s
+
+	Command being timed: "<binary> --exact loopback_rpc_cost --ignored --nocapture --test-threads=1"
+	User time (seconds): 6.45
+	System time (seconds): 5.36
+	Percent of CPU this job got: 134%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:08.77
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 11364
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 344548
+	Voluntary context switches: 54738
+	Involuntary context switches: 3671
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

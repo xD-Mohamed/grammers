@@ -111,3 +111,31 @@ pub trait Tagged {
     /// changes the internal state to avoid sending the tag again.
     fn init_tag(&mut self) -> [u8; 4];
 }
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+
+    #[test]
+    fn seeded_transport_mutations_never_return_out_of_bounds_offsets() {
+        let mut seed = 0x1234abcdu64;
+        for length in 0..512 {
+            let mut bytes = vec![0; length];
+            for byte in &mut bytes {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                *byte = (seed >> 32) as u8;
+            }
+            for transport in [
+                &mut Abridged::new() as &mut dyn Transport,
+                &mut Intermediate::new(),
+                &mut Full::new(),
+            ] {
+                if let Ok(packet) = transport.unpack(&mut bytes) {
+                    assert!(packet.data_range.start <= packet.data_range.end);
+                    assert!(packet.data_range.end <= packet.next_offset);
+                    assert!(packet.next_offset <= bytes.len());
+                }
+            }
+        }
+    }
+}

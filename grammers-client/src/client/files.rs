@@ -191,7 +191,6 @@ enum DownloadIterVariant {
     Request(tl::functions::upload::GetFile),
     PreDownloaded(Vec<u8>),
     PreFailed(io::Error),
-    Empty,
 }
 
 impl DownloadIter {
@@ -237,18 +236,18 @@ impl DownloadIter {
             return Ok(None);
         }
 
-        let variant = mem::replace(&mut self.variant, DownloadIterVariant::Empty);
-
-        let mut request = match variant {
-            DownloadIterVariant::Request(r) => r,
+        // Keep the request in the iterator while awaiting I/O. Errors and
+        // cancellation must not turn a partial download into a successful EOF.
+        let request = match &mut self.variant {
+            DownloadIterVariant::Request(request) => request,
             DownloadIterVariant::PreDownloaded(data) => {
                 self.done = true;
-                return Ok(Some(data.clone()));
+                return Ok(Some(mem::take(data)));
             }
             DownloadIterVariant::PreFailed(error) => {
-                return Err(InvocationError::Io(error));
+                let replacement = io::Error::new(error.kind(), error.to_string());
+                return Err(InvocationError::Io(mem::replace(error, replacement)));
             }
-            DownloadIterVariant::Empty => return Ok(None),
         };
 
         use tl::enums::upload::File;
@@ -258,12 +257,15 @@ impl DownloadIter {
             .dc_id
             .map_or_else(|| self.client.0.session.home_dc_id(), Ok)?;
         let route = AtomicI32::new(dc);
-        let response = fetch_download_file(
-            &route,
-            |dc| self.client.invoke_in_dc(dc, &request),
-            |dc| self.client.copy_auth_to_dc(dc),
-        )
-        .await;
+        let response = {
+            let request = &*request;
+            fetch_download_file(
+                &route,
+                |dc| self.client.invoke_in_dc(dc, request),
+                |dc| self.client.copy_auth_to_dc(dc),
+            )
+            .await
+        };
         self.dc_id = Some(route.load(Ordering::Relaxed));
         match response {
             Ok(File::File(f)) => {
@@ -280,7 +282,6 @@ impl DownloadIter {
                     }
                 }
                 request.offset += request.limit as i64;
-                self.variant = DownloadIterVariant::Request(request);
                 Ok(Some(f.bytes))
             }
             Ok(File::CdnRedirect(_)) => Err(unsupported_cdn()),
@@ -697,6 +698,21 @@ mod safety_tests {
         };
         assert!(matches!(client.send_album(peer, vec![]).await,
             Err(InvocationError::Io(e)) if e.kind() == io::ErrorKind::InvalidInput));
+        let message = crate::message::Message::from_raw(
+            &client,
+            tl::types::MessageEmpty {
+                id: 1,
+                peer_id: None,
+            }
+            .into(),
+            None,
+            crate::peer::PeerMap {
+                map: Arc::default(),
+                session: client.0.session.clone(),
+            },
+        );
+        assert!(matches!(message.reply_album(vec![]).await,
+            Err(InvocationError::Io(e)) if e.kind() == io::ErrorKind::InvalidInput));
         assert!(
             matches!(client.send_album(peer, vec![crate::media::InputMedia::new()]).await,
             Err(InvocationError::Io(e)) if e.kind() == io::ErrorKind::InvalidInput)
@@ -722,7 +738,48 @@ mod safety_tests {
         assert!(
             matches!(download.next().await, Err(InvocationError::Io(e)) if e.kind() == io::ErrorKind::InvalidInput)
         );
+        assert!(
+            matches!(download.next().await, Err(InvocationError::Io(e)) if e.kind() == io::ErrorKind::InvalidInput)
+        );
         client.stop().await.unwrap();
+        let mut download = DownloadIter {
+            client,
+            variant: DownloadIterVariant::Request(tl::functions::upload::GetFile {
+                precise: false,
+                cdn_supported: false,
+                location: location(),
+                offset: 0,
+                limit: MAX_CHUNK_SIZE,
+            }),
+            done: false,
+            size: None,
+            dc_id: None,
+        };
+        for _ in 0..2 {
+            assert!(download.next().await.is_err());
+            assert!(matches!(&download.variant, DownloadIterVariant::Request(r) if r.offset == 0));
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_next_preserves_the_download_request() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 1);
+        let client = Client::new(pool.handle);
+        let mut download = DownloadIter {
+            client,
+            variant: DownloadIterVariant::Request(tl::functions::upload::GetFile {
+                precise: false,
+                cdn_supported: false,
+                location: location(),
+                offset: 4096,
+                limit: MAX_CHUNK_SIZE,
+            }),
+            done: false,
+            size: None,
+            dc_id: None,
+        };
+        tokio::select! { biased; _ = download.next() => panic!("unstarted runner cannot answer"), _ = std::future::ready(()) => {} }
+        assert!(matches!(&download.variant, DownloadIterVariant::Request(r) if r.offset == 4096));
     }
 
     fn location() -> tl::enums::InputFileLocation {

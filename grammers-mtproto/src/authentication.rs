@@ -658,6 +658,8 @@ pub fn create_key(
             time_offset,
             first_salt,
         })
+    } else if dh_gen.nonce_number == 2 {
+        Err(Error::DhGenRetry)
     } else {
         Err(Error::DhGenFail)
     }
@@ -767,6 +769,106 @@ mod tests {
                 )
                 .is_err()
             );
+        }
+    }
+
+    #[test]
+    fn validated_dh_retry_keeps_its_distinct_error() {
+        let key = AuthKey::from_bytes([0; 256]);
+        let response = tl::enums::SetClientDhParamsAnswer::DhGenRetry(tl::types::DhGenRetry {
+            nonce: [0; 16],
+            server_nonce: [0; 16],
+            new_nonce_hash2: key.calc_new_nonce_hash(&[0; 32], 2),
+        });
+        assert!(matches!(
+            create_key(
+                Step3 {
+                    nonce: [0; 16],
+                    server_nonce: [0; 16],
+                    new_nonce: [0; 32],
+                    gab: BigUint::from(0u8),
+                    time_offset: 0
+                },
+                response
+            ),
+            Err(Error::DhGenRetry)
+        ));
+    }
+
+    #[test]
+    fn authenticated_dh_fixture_reaches_each_validation_gate() {
+        let prime = hex::from_hex(
+            "c71caeb9c6b1c9048e6c522f70f13f73980d40238e3e21c14934d037563d930f48198a0aa7c14058229493d22530f4dbfa336f6e0ac925139543aed44cce7c3720fd51f69458705ac68cd4fe6b6b13abdc9746512969328454f18faf8c595f642477fe96bb2a941d5bcd1d4ac8cc49880708fa9b378e3c4f3a9060bee67cf9a4a4a695811051907e162753b56b0f6b410dba74d8a84b2a14b3144e0ef1284754fd17ed950d5965b4b9dd46582db1178d169c6bc465b0d6ff9ca3928fef5b9ae4e418fc15e83ebea0f87fa9ff5eed70050ded2849f47bf959d956850ce929851f0d8115f635b105ee2e4e15d04b2454bf6f4fadf034b10403119cd8e3b92fcc5b",
+        );
+        for case in 0..11 {
+            let mut inner = tl::types::ServerDhInnerData {
+                nonce: [0; 16],
+                server_nonce: [0; 16],
+                g: 3,
+                dh_prime: prime.clone(),
+                g_a: (BigUint::from_bytes_be(&prime) >> 1u32).to_bytes_be(),
+                server_time: 100,
+            };
+            let mut now = 100;
+            match case {
+                3 => inner.nonce[0] = 1,
+                4 => inner.server_nonce[0] = 1,
+                5 => inner.g_a = vec![1; 257],
+                6 => {
+                    inner.server_time = i32::MAX;
+                    now = i32::MIN;
+                }
+                7 => inner.g_a = vec![0],
+                8 => inner.g_a = prime.clone(),
+                9 => {
+                    inner.g_a = ((BigUint::from(1u8) << 1984u32) - BigUint::from(1u8)).to_bytes_be()
+                }
+                10 => {
+                    inner.g_a = (BigUint::from_bytes_be(&prime) - (BigUint::from(1u8) << 1984u32)
+                        + BigUint::from(1u8))
+                    .to_bytes_be()
+                }
+                _ => {}
+            }
+            let inner = tl::enums::ServerDhInnerData::Data(inner).to_bytes();
+            let mut answer = Sha1::digest(&inner).to_vec();
+            if case == 2 {
+                answer[0] ^= 1;
+            }
+            answer.extend(inner);
+            answer.resize(
+                answer.len().next_multiple_of(16) + if case == 1 { 16 } else { 0 },
+                0,
+            );
+            let (key, iv) = grammers_crypto::generate_key_data_from_nonce(&[0; 16], &[0; 32]);
+            grammers_crypto::aes::ige_encrypt(&mut answer, &key, &iv);
+            let result = do_step3(
+                Step2 {
+                    nonce: [0; 16],
+                    server_nonce: [0; 16],
+                    new_nonce: [0; 32],
+                },
+                tl::types::ServerDhParamsOk {
+                    nonce: [0; 16],
+                    server_nonce: [0; 16],
+                    encrypted_answer: answer,
+                }
+                .into(),
+                &[3; 272],
+                now,
+            );
+            match case {
+                0 => assert!(result.is_ok(), "valid fixture"),
+                1 | 5 | 6 => assert!(
+                    matches!(result, Err(Error::InvalidDhParameters)),
+                    "case {case}"
+                ),
+                2 => assert!(matches!(result, Err(Error::InvalidAnswerHash { .. }))),
+                3 => assert!(matches!(result, Err(Error::InvalidNonce { .. }))),
+                4 => assert!(matches!(result, Err(Error::InvalidServerNonce { .. }))),
+                7..=10 => assert!(matches!(result, Err(Error::GParameterOutOfRange { .. }))),
+                _ => unreachable!(),
+            }
         }
     }
 

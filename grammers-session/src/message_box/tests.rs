@@ -36,7 +36,7 @@ fn checked_saved_state_and_difference_reject_invalid_counters_without_mutation()
     };
     let mut invalid = state.clone();
     invalid.pts = 0;
-    assert!(MessageBoxes::try_load(invalid).is_err());
+    assert!(MessageBoxes::try_load(invalid).unwrap().is_empty());
     let mut invalid = state.clone();
     invalid.channels.push(ChannelState { id: 10, pts: -1 });
     assert!(MessageBoxes::try_load(invalid).is_err());
@@ -73,7 +73,8 @@ fn saved_state_deduplicates_channels_and_recovers_missing_common_pts() {
             ChannelState { id: 12, pts: -1 },
         ],
     });
-    assert_eq!(boxes.get_difference().unwrap().pts, 0);
+    assert!(boxes.get_difference().is_none());
+    assert_eq!(boxes.session_state().qts, 0);
     let saved = boxes.session_state();
     assert_eq!(saved.channels.len(), 1);
     assert_eq!(saved.channels[0].pts, 3);
@@ -605,19 +606,116 @@ fn test_process_socket_updates_flow_common_already_applied() {
 #[test]
 fn test_process_socket_updates_flow_common_difference_ok() {
     reset_time();
-    let mut message_boxes = MessageBoxes::new();
-
-    message_boxes.set_state(state(12, 34, 56, 78));
-    message_boxes.try_begin_get_diff(super::Key::Common);
-
-    assert_eq!(
-        message_boxes.get_difference(),
-        Some(get_difference(12, 56, 78))
+    let mut boxes = MessageBoxes::new();
+    boxes.set_state(state(12, 34, 100, 78));
+    boxes.try_begin_get_diff(super::Key::Common);
+    let live = tl::enums::Update::Config;
+    let socket = UpdatesLike::Updates(
+        tl::types::Updates {
+            updates: vec![update(101), live.clone()],
+            users: vec![],
+            chats: vec![],
+            date: 99,
+            seq: 99,
+        }
+        .into(),
     );
-    assert_eq!(
-        message_boxes.process_updates(updates(NO_DATE, NO_SEQ, 57)),
-        updates_ok(12, 34, 57)
+    let delivered = boxes.process_updates(socket).unwrap().0;
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].0, live);
+    assert_eq!((delivered[0].1.date, delivered[0].1.seq), (12, 34));
+    assert_eq!(boxes.get_difference(), Some(get_difference(12, 100, 78)));
+    let (delivered, _, _) = boxes
+        .try_apply_difference(
+            tl::types::updates::Difference {
+                new_messages: vec![],
+                new_encrypted_messages: vec![],
+                other_updates: vec![update(101)],
+                chats: vec![],
+                users: vec![],
+                state: state(13, 35, 101, 78).into(),
+            }
+            .into(),
+        )
+        .unwrap();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].0, update(101));
+    assert!(
+        boxes
+            .process_updates(updates(NO_DATE, NO_SEQ, 101))
+            .unwrap()
+            .0
+            .is_empty()
     );
+}
+
+#[test]
+fn live_qts_without_primary_state_does_not_create_orphan_secondary() {
+    let mut boxes = MessageBoxes::new();
+    for qts in [1, 3] {
+        let update = tl::enums::Update::BotStopped(tl::types::UpdateBotStopped {
+            stopped: true,
+            user_id: 1,
+            date: 1,
+            qts,
+        });
+        assert!(
+            boxes
+                .process_updates(UpdatesLike::Updates(
+                    tl::types::UpdateShort { update, date: 1 }.into()
+                ))
+                .unwrap()
+                .0
+                .is_empty()
+        );
+        assert!(boxes.is_empty());
+        assert!(boxes.get_difference().is_none());
+    }
+}
+
+#[test]
+fn peerless_channel_message_preserves_non_pts_siblings_and_difference_progress() {
+    let peerless = tl::enums::Update::NewChannelMessage(tl::types::UpdateNewChannelMessage {
+        message: tl::types::MessageEmpty {
+            id: 1,
+            peer_id: None,
+        }
+        .into(),
+        pts: 101,
+        pts_count: 1,
+    });
+    let sibling = tl::enums::Update::Config;
+    let mut boxes = MessageBoxes::new();
+    boxes.set_state(state(12, 34, 100, 0));
+    let delivered = boxes
+        .process_updates(UpdatesLike::Updates(
+            tl::types::Updates {
+                updates: vec![peerless.clone(), sibling.clone()],
+                users: vec![],
+                chats: vec![],
+                date: 13,
+                seq: 35,
+            }
+            .into(),
+        ))
+        .unwrap()
+        .0;
+    assert!(delivered.iter().any(|(u, _)| *u == sibling));
+    boxes.try_begin_get_diff(super::Key::Common);
+    boxes
+        .try_apply_difference(
+            tl::types::updates::Difference {
+                new_messages: vec![],
+                new_encrypted_messages: vec![],
+                other_updates: vec![peerless],
+                chats: vec![],
+                users: vec![],
+                state: state(14, 36, 102, 0).into(),
+            }
+            .into(),
+        )
+        .unwrap();
+    assert!(boxes.get_difference().is_none());
 }
 
 #[test]

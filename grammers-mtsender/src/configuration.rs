@@ -207,13 +207,30 @@ impl RetryPolicy for NoRetries {
     }
 }
 
+fn retryable_io(error: &std::io::Error) -> bool {
+    use std::io::ErrorKind::*;
+    matches!(
+        error.kind(),
+        ConnectionRefused
+            | ConnectionReset
+            | ConnectionAborted
+            | NotConnected
+            | BrokenPipe
+            | TimedOut
+            | UnexpectedEof
+            | NetworkDown
+            | NetworkUnreachable
+            | HostUnreachable
+    )
+}
+
 impl RetryPolicy for AutoSleep {
     fn should_retry(&self, ctx: &RetryContext) -> ControlFlow<(), Duration> {
         match ctx.error.root_cause() {
             InvocationError::Read {
                 error,
                 may_have_been_sent: false,
-            } if ctx.fail_count <= self.tries && error.io_error().is_some() => self
+            } if ctx.fail_count <= self.tries && error.io_error().is_some_and(retryable_io) => self
                 .io_errors_as_flood_of
                 .map_or(ControlFlow::Break(()), ControlFlow::Continue),
             InvocationError::Rpc(RpcError {
@@ -223,7 +240,7 @@ impl RetryPolicy for AutoSleep {
             }) if ctx.fail_count <= self.tries && *seconds as u64 <= self.threshold.as_secs() => {
                 ControlFlow::Continue(Duration::from_secs(*seconds as _))
             }
-            InvocationError::Io(_) if ctx.fail_count <= self.tries => {
+            InvocationError::Io(error) if ctx.fail_count <= self.tries && retryable_io(error) => {
                 if let Some(duration) = self.io_errors_as_flood_of {
                     ControlFlow::Continue(duration)
                 } else {
@@ -288,6 +305,34 @@ impl<P: RetryPolicy> RetryPolicy for RetryBudget<P> {
 #[cfg(test)]
 mod retry_budget_tests {
     use super::*;
+
+    #[test]
+    fn auto_sleep_retries_only_definite_connection_errors() {
+        use std::io::{Error, ErrorKind};
+        let policy = AutoSleep::default();
+        for kind in [
+            ErrorKind::InvalidInput,
+            ErrorKind::InvalidData,
+            ErrorKind::PermissionDenied,
+            ErrorKind::WouldBlock,
+            ErrorKind::Unsupported,
+            ErrorKind::ConnectionRefused,
+        ] {
+            let expected = if kind == ErrorKind::ConnectionRefused {
+                ControlFlow::Continue(Duration::from_secs(1))
+            } else {
+                ControlFlow::Break(())
+            };
+            let mut ctx = context(Duration::ZERO);
+            ctx.error = InvocationError::Io(Error::from(kind));
+            assert_eq!(policy.should_retry(&ctx), expected);
+            ctx.error = InvocationError::Read {
+                error: std::sync::Arc::new(crate::ReadError::Io(Error::from(kind))),
+                may_have_been_sent: false,
+            };
+            assert_eq!(policy.should_retry(&ctx), expected);
+        }
+    }
 
     struct Fixed(Option<Duration>);
     impl RetryPolicy for Fixed {

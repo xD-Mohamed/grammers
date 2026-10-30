@@ -1,9 +1,12 @@
 {
   "base": "7774ed666317d981e1dfea0d12311cbd38acb43e",
-  "branch": "duo/1cb9a1ed/impl",
-  "source_diff_sha256": "6d3482d97b52404805d320681137b2040005687f1d9f63a05dc5926806648f61",
   "build": "cargo test --locked --release -p grammers-mtsender --test loopback --no-run",
   "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "optimization": "default release; no target-cpu override",
-  "network": "localhost only"
+  "network": "localhost only",
+  "legacy_diff_sha256_unreproducible": "6d3482d97b52404805d320681137b2040005687f1d9f63a05dc5926806648f61",
+  "reviewed_commit": "8f109a67458acf35f278451ee6d32c0acaab80e3",
+  "reviewed_source_diff_command": "git diff --binary 7774ed666317d981e1dfea0d12311cbd38acb43e 8f109a67458acf35f278451ee6d32c0acaab80e3 -- Cargo.lock ':(glob)**/Cargo.toml' ':(glob)**/*.rs'",
+  "reviewed_source_diff_sha256": "6d3482d97b52404805d320681137b2040005687f1d9f63a05dc5926806648f61",
+  "provenance_limit": "Original hash command was not recorded. The replacement identifies reviewed source, not independently verified byte-for-byte reproduction of the historical executable."
 }

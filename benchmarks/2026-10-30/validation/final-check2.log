@@ -1,4 +1,4 @@
-    Checking grammers-mtsender v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-mtsender)
-    Checking grammers-client v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-client)
-    Checking grammers v0.1.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers)
+    Checking grammers-mtsender v0.10.0 (<worktree>/grammers-mtsender)
+    Checking grammers-client v0.10.0 (<worktree>/grammers-client)
+    Checking grammers v0.1.0 (<worktree>/grammers)
     Finished `dev` profile [unoptimized] target(s) in 7.87s

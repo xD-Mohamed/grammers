@@ -50,7 +50,7 @@ ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 15.66s
 
-	Command being timed: "/tmp/grammers-064ae123/baseline-loopback --exact loopback_session_footprint --ignored --nocapture --test-threads=1"
+	Command being timed: "<artifacts>/baseline-loopback --exact loopback_session_footprint --ignored --nocapture --test-threads=1"
 	User time (seconds): 10.96
 	System time (seconds): 4.78
 	Percent of CPU this job got: 100%
