@@ -118,8 +118,11 @@ pub fn parse_html_message(message: &str) -> (String, Vec<tl::enums::MessageEntit
                             .map(|a| a.value.to_string())
                             .unwrap_or_else(|| "".to_string());
 
-                        if let Some(user_id) = url.strip_prefix(MENTION_URL_PREFIX) {
-                            let user_id = user_id.parse::<i64>().unwrap();
+                        if let Some(user_id) = url
+                            .strip_prefix(MENTION_URL_PREFIX)
+                            .and_then(|id| id.parse::<i64>().ok())
+                            .filter(|id| *id > 0)
+                        {
                             entities.push(
                                 tl::types::MessageEntityMentionName {
                                     offset,
@@ -536,6 +539,19 @@ fn parse_timestamp(s: &str) -> Option<Timestamp> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_mentions_remain_text_links() {
+        for id in ["", "abc", "0", "-1", "9223372036854775808"] {
+            let (text, entities) =
+                parse_html_message(&format!("<a href=\"tg://user?id={id}\">name</a>"));
+            assert_eq!(text, "name");
+            assert!(matches!(
+                &entities[..],
+                [tl::enums::MessageEntity::TextUrl(_)]
+            ));
+        }
+    }
 
     #[test]
     fn parse_leading() {

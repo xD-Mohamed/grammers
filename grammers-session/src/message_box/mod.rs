@@ -58,7 +58,7 @@ fn next_updates_deadline() -> Instant {
 
 fn update_sort_key(update: &tl::enums::Update) -> i32 {
     match PtsInfo::from_update(update) {
-        Some(info) => info.pts - info.count,
+        Some(info) => info.pts.saturating_sub(info.count),
         None => NO_PTS,
     }
 }
@@ -117,15 +117,15 @@ impl MessageBoxes {
         let mut getting_diff_for = Vec::with_capacity(2 + state.channels.len());
         let deadline = next_updates_deadline();
 
-        if state.pts != NO_PTS {
+        if state.pts > NO_PTS || state.qts > NO_PTS {
             entries.push(LiveEntry {
                 key: Key::Common,
-                pts: state.pts,
+                pts: state.pts.max(NO_PTS),
                 deadline,
                 possible_gap: None,
             });
         }
-        if state.qts != NO_PTS {
+        if state.qts > NO_PTS {
             entries.push(LiveEntry {
                 key: Key::Secondary,
                 pts: state.qts,
@@ -133,13 +133,29 @@ impl MessageBoxes {
                 possible_gap: None,
             });
         }
-        entries.extend(state.channels.iter().map(|c| LiveEntry {
-            key: Key::Channel(c.id),
-            pts: c.pts,
-            deadline,
-            possible_gap: None,
-        }));
+        entries.extend(
+            state
+                .channels
+                .iter()
+                .filter(|c| c.id > 0 && c.pts > NO_PTS)
+                .map(|c| LiveEntry {
+                    key: Key::Channel(c.id),
+                    pts: c.pts,
+                    deadline,
+                    possible_gap: None,
+                }),
+        );
         entries.sort_by_key(|entry| entry.key);
+        // Repeated saved channel IDs violate binary-search and catch-up
+        // invariants. Keep the older position so recovery cannot skip updates.
+        entries.dedup_by(|later, earlier| {
+            if later.key == earlier.key {
+                earlier.pts = earlier.pts.min(later.pts);
+                true
+            } else {
+                false
+            }
+        });
 
         getting_diff_for.extend(entries.iter().map(|entry| entry.key));
 
@@ -150,6 +166,24 @@ impl MessageBoxes {
             getting_diff_for,
             next_deadline: deadline,
         }
+    }
+
+    /// Load saved update state without issuing recovery requests from invalid
+    /// counters. In particular, a known QTS requires a known common PTS.
+    pub fn try_load(state: UpdatesState) -> Result<Self, Gap> {
+        if state.pts < 0
+            || state.qts < 0
+            || state.seq < 0
+            || state.date < 0
+            || (state.qts > 0 && state.pts == 0)
+            || state
+                .channels
+                .iter()
+                .any(|channel| channel.id <= 0 || channel.pts < 0)
+        {
+            return Err(Gap);
+        }
+        Ok(Self::load(state))
     }
 
     fn entry(&self, key: Key) -> Option<&LiveEntry> {
@@ -297,6 +331,7 @@ impl MessageBoxes {
         self.reset_deadline(
             key,
             timeout
+                .filter(|t| *t >= 0)
                 .map(|t| Instant::now() + Duration::from_secs(t as _))
                 .unwrap_or_else(next_updates_deadline),
         );
@@ -430,7 +465,7 @@ impl MessageBoxes {
         // > For all the other [not `updates` or `updatesCombined`] `Updates` type constructors
         // > there is no need to check `seq` or change a local state.
         if seq_start != NO_SEQ {
-            match (self.seq + 1).cmp(&seq_start) {
+            match (i64::from(self.seq) + 1).cmp(&i64::from(seq_start)) {
                 // Apply
                 Ordering::Equal => {}
                 // Ignore
@@ -450,6 +485,11 @@ impl MessageBoxes {
                     return Err(Gap);
                 }
             }
+        }
+
+        if updates.iter().any(|update| !PtsInfo::valid_update(update)) {
+            self.try_begin_get_diff(Key::Common);
+            return Err(Gap);
         }
 
         // Telegram can send updates out of order (e.g. `ReadChannelInbox` first
@@ -490,6 +530,10 @@ impl MessageBoxes {
                     continue;
                 }
             };
+            if info.count < 0 || info.pts < info.count {
+                self.try_begin_get_diff(info.key);
+                return Err(Gap);
+            }
 
             if self.getting_diff_for.contains(&info.key) {
                 debug!(
@@ -513,7 +557,7 @@ impl MessageBoxes {
                     possible_gap: None,
                 },
                 |entry| {
-                    match (entry.pts + info.count).cmp(&info.pts) {
+                    match (i64::from(entry.pts) + i64::from(info.count)).cmp(&i64::from(info.pts)) {
                         // Apply
                         Ordering::Equal => {
                             entry.pts = info.pts;
@@ -552,12 +596,15 @@ impl MessageBoxes {
                     };
 
                     if let Some(mut gap) = entry.possible_gap.take() {
-                        gap.updates.sort_by_key(|u| -update_sort_key(u));
+                        gap.updates
+                            .sort_by_key(|u| std::cmp::Reverse(update_sort_key(u)));
                         while let Some(gap_update) = gap.updates.pop() {
                             let gap_info = PtsInfo::from_update(&gap_update)
                                 .expect("only updates with pts info may be stored as gaps");
 
-                            match (entry.pts + gap_info.count).cmp(&gap_info.pts) {
+                            match (i64::from(entry.pts) + i64::from(gap_info.count))
+                                .cmp(&i64::from(gap_info.pts))
+                            {
                                 Ordering::Equal => {
                                     entry.pts = gap_info.pts;
                                     // possible gap can only be resolve if new update closed
@@ -690,6 +737,38 @@ impl MessageBoxes {
         }
 
         result
+    }
+
+    /// Checked account-difference path for untrusted server responses. An
+    /// invalid response leaves state unchanged and reports `Gap`.
+    pub fn try_apply_difference(
+        &mut self,
+        difference: tl::enums::updates::Difference,
+    ) -> Result<UpdateAndPeers, Gap> {
+        if !self.getting_diff_for.contains(&Key::Common)
+            && !self.getting_diff_for.contains(&Key::Secondary)
+        {
+            return Err(Gap);
+        }
+        let valid_state = |state: &tl::enums::updates::State| {
+            let tl::enums::updates::State::State(state) = state;
+            state.pts >= 0 && state.qts >= 0 && state.date >= 0 && state.seq >= 0
+        };
+        let valid = match &difference {
+            tl::enums::updates::Difference::Empty(d) => d.date >= 0 && d.seq >= 0,
+            tl::enums::updates::Difference::TooLong(d) => d.pts >= 0,
+            tl::enums::updates::Difference::Difference(d) => {
+                valid_state(&d.state) && d.other_updates.iter().all(PtsInfo::valid_update)
+            }
+            tl::enums::updates::Difference::Slice(d) => {
+                valid_state(&d.intermediate_state)
+                    && d.other_updates.iter().all(PtsInfo::valid_update)
+            }
+        };
+        if !valid {
+            return Err(Gap);
+        }
+        Ok(self.apply_difference(difference))
     }
 
     fn apply_difference_type(
@@ -869,7 +948,41 @@ impl MessageBoxes {
 
         self.reset_timeout(key, timeout);
 
+        // A channel with a long backlog yields to every other pending channel
+        // after each page. Keep its entry active so gap tracking is unchanged.
+        if !r#final && let Some(index) = self.getting_diff_for.iter().position(|k| *k == key) {
+            self.getting_diff_for.remove(index);
+            self.getting_diff_for.push(key);
+        }
+
         (result_updates, users, chats)
+    }
+
+    /// Validate externally supplied channel differences before mutating state.
+    /// `Err(Gap)` leaves the state unchanged so the caller can report the
+    /// protocol failure. Legacy [`Self::apply_channel_difference`] is retained.
+    pub fn try_apply_channel_difference(
+        &mut self,
+        difference: tl::enums::updates::ChannelDifference,
+    ) -> Result<UpdateAndPeers, Gap> {
+        let (_, channel_id) = self.channel_in_diff().ok_or(Gap)?;
+        let valid = match &difference {
+            tl::enums::updates::ChannelDifference::Empty(d) => d.pts >= NO_PTS,
+            tl::enums::updates::ChannelDifference::Difference(d) => {
+                d.pts >= NO_PTS && d.other_updates.iter().all(PtsInfo::valid_update)
+            }
+            tl::enums::updates::ChannelDifference::TooLong(d) => match &d.dialog {
+                tl::enums::Dialog::Dialog(dialog) => {
+                    dialog.pts.is_some_and(|pts| pts >= NO_PTS)
+                        && matches!(&dialog.peer, tl::enums::Peer::Channel(peer) if peer.channel_id == channel_id)
+                }
+                _ => false,
+            },
+        };
+        if !valid {
+            return Err(Gap);
+        }
+        Ok(self.apply_channel_difference(difference))
     }
 
     pub fn end_channel_difference(&mut self, reason: PrematureEndReason) {

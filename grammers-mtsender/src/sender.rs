@@ -162,6 +162,8 @@ pub struct Sender<T: Transport, M: Mtp> {
     addr: ServerAddr,
     requests: Vec<Request>,
     ping_timer: Pin<Box<Sleep>>,
+    next_ping: Instant,
+    liveness: Option<(Duration, Instant)>,
 
     // Transport-level buffers and positions
     read_buffer: Vec<u8>,
@@ -171,6 +173,7 @@ pub struct Sender<T: Transport, M: Mtp> {
 }
 
 struct Request {
+    protocol_retries: u8,
     body: Bytes,
     state: RequestState,
     // Fields drop in declaration order, including when a connection is dropped.
@@ -220,13 +223,16 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     /// It will simply open a new socket connection to the provided address.
     pub async fn connect(transport: T, mtp: M, addr: ServerAddr) -> Result<Self, io::Error> {
         let stream = NetStream::connect(&addr).await?;
+        let next_ping = Instant::now() + PING_DELAY;
         Ok(Self {
             stream,
             transport,
             mtp,
             addr,
             requests: vec![],
-            ping_timer: Box::pin(sleep_until(Instant::now() + PING_DELAY)),
+            ping_timer: Box::pin(sleep_until(next_ping)),
+            next_ping,
+            liveness: None,
 
             read_buffer: vec![0; INITIAL_READ_BUFFER_SIZE],
             read_tail: 0,
@@ -244,6 +250,12 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     /// This method is useful if one wants to explicitly handle on-close errors.
     pub async fn disconnect(&mut self) -> io::Result<()> {
         self.stream.disconnect().await
+    }
+
+    /// Set an optional deadline for receiving another valid packet.
+    /// This does not change individual invocation deadlines or replay policy.
+    pub fn set_liveness_timeout(&mut self, timeout: Option<Duration>) {
+        self.liveness = timeout.map(|limit| (limit, Instant::now()));
     }
 
     /// Serializes the given request, enqueues it to the internal buffer,
@@ -285,7 +297,14 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         result: Option<oneshot::Sender<Result<Vec<u8>, InvocationError>>>,
         permit: Option<crate::InvocationPermit>,
     ) {
-        assert!(body.len() >= 4);
+        if !self.mtp.request_is_valid(&body) {
+            drop(permit);
+            if let Some(tx) = result {
+                let _ = tx.send(Err(io::Error::new(io::ErrorKind::InvalidInput,
+                    "request must contain a constructor, be word-aligned and fit the MTProto packet limit").into()));
+            }
+            return;
+        }
         let req_id = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
         debug!(
             "enqueueing request {} to be serialized",
@@ -293,6 +312,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         );
 
         self.requests.push(Request {
+            protocol_retries: 0,
             body,
             state: RequestState::NotSerialized,
             result,
@@ -305,12 +325,19 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         mut rx: oneshot::Receiver<Result<Vec<u8>, InvocationError>>,
     ) -> Result<Vec<u8>, InvocationError> {
         loop {
-            self.step().await?;
             match rx.try_recv() {
                 Ok(x) => break x,
-                Err(TryRecvError::Empty) => continue,
+                Err(TryRecvError::Empty) => {
+                    if let Err(error) = self.step().await {
+                        // on_error sends the invocation's delivery certainty
+                        // before step returns its shared connection error.
+                        return rx.try_recv().unwrap_or_else(|_| Err(error.into()));
+                    }
+                }
                 Err(TryRecvError::Closed) => {
-                    panic!("request channel dropped before receiving a result")
+                    break Err(InvocationError::Dropped(
+                        "request channel closed before response",
+                    ));
                 }
             }
         }
@@ -323,9 +350,17 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     /// If an error is returned, the connection should be treated
     /// as dead and the sender instance recreated.
     pub async fn step(&mut self) -> Result<Vec<UpdatesLike>, ReadError> {
+        if self
+            .liveness
+            .is_some_and(|(limit, since)| since.elapsed() >= limit)
+        {
+            return Err(self.on_error(ReadError::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "no valid packet received before liveness deadline",
+            ))));
+        }
         if let Err(error) = self.prepare_read_buffer() {
-            self.on_error(&error);
-            return Err(error);
+            return Err(self.on_error(error));
         }
         self.try_fill_write();
         let write_len = self.write_buffer.len() - self.write_head;
@@ -335,6 +370,23 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         );
 
         let (mut reader, mut writer) = self.stream.split();
+        let protocol_deadline = (write_len == 0)
+            .then(|| self.mtp.service_deadline())
+            .flatten()
+            .map(Instant::from_std);
+        let deadline = [
+            protocol_deadline,
+            self.liveness.map(|(limit, since)| since + limit),
+            self.mtp.supports_keepalive().then_some(self.next_ping),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        if let Some(deadline) = deadline
+            && self.ping_timer.deadline() != deadline
+        {
+            self.ping_timer.as_mut().reset(deadline);
+        }
 
         let res = tokio::select! {
             n = reader.read(&mut self.read_buffer[self.read_tail..]) => {
@@ -346,18 +398,20 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                     Ok(Vec::new())
                 })
             }
-            _ = self.ping_timer.as_mut() => {
-                self.on_ping_timeout();
+            _ = self.ping_timer.as_mut(), if deadline.is_some() => {
+                if protocol_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    self.mtp.on_service_timeout();
+                }
+                if self.mtp.supports_keepalive() && Instant::now() >= self.next_ping {
+                    self.on_ping_timeout();
+                }
                 Ok(Vec::new())
             }
         };
 
         match res {
             Ok(ok) => Ok(ok),
-            Err(err) => {
-                self.on_error(&err);
-                Err(err)
-            }
+            Err(err) => Err(self.on_error(err)),
         }
     }
 
@@ -460,7 +514,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                         .mtp
                         .deserialize(&mut self.read_buffer[next_offset..][offset.data_range])?;
 
-                    self.process_mtp_buffer(result, &mut updates);
+                    self.process_mtp_buffer(result, &mut updates)?;
+                    if let Some((_, since)) = &mut self.liveness {
+                        *since = Instant::now();
+                    }
                     next_offset += offset.next_offset;
                 }
                 Err(transport::Error::MissingBytes) => break,
@@ -513,6 +570,13 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
     /// Handle a ping timeout, meaning we need to enqueue a new ping request.
     fn on_ping_timeout(&mut self) {
+        self.next_ping = Instant::now() + PING_DELAY;
+        self.ping_timer.as_mut().reset(self.next_ping);
+        // Keep one outstanding ping; a silent peer cannot accumulate one
+        // permanent request record per interval. Its pong retires this entry.
+        if self.requests.iter().any(|request| request.result.is_none()) {
+            return;
+        }
         let ping_id = generate_random_id();
         debug!("enqueueing keepalive ping {}", ping_id);
         self.enqueue_request(
@@ -525,22 +589,31 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             None,
             None,
         );
-        self.ping_timer.as_mut().reset(Instant::now() + PING_DELAY);
     }
 
     /// Handle errors that occured while performing I/O.
-    fn on_error(&mut self, error: &ReadError) {
+    fn on_error(&mut self, error: ReadError) -> ReadError {
         warn!(
             "marking all {} request(s) as failed: {}",
             self.requests.len(),
             &error
         );
 
+        let error = std::sync::Arc::new(error);
         self.requests.drain(..).for_each(|r| {
             if r.result.is_some() {
-                r.complete(Err(InvocationError::from(error.clone())));
+                let may_have_been_sent = match r.state {
+                    RequestState::NotSerialized => false,
+                    RequestState::Serialized(_) => self.write_head != 0,
+                    RequestState::Sent(_) => true,
+                };
+                r.complete(Err(InvocationError::Read {
+                    error: std::sync::Arc::clone(&error),
+                    may_have_been_sent,
+                }));
             }
         });
+        ReadError::Shared(error)
     }
 
     /// Process the result of deserializing an MTP buffer.
@@ -548,7 +621,25 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         &mut self,
         mut results: Vec<Deserialization>,
         updates: &mut Vec<UpdatesLike>,
-    ) {
+    ) -> Result<(), ReadError> {
+        for result in &results {
+            let (id, container) = match result {
+                Deserialization::RpcResult(r) => (r.msg_id, false),
+                Deserialization::RpcError(r) => (r.msg_id, false),
+                Deserialization::BadMessage(r) => (r.msg_id, true),
+                Deserialization::Failure(r) => (r.msg_id, false),
+                _ => continue,
+            };
+            if self.requests.iter().any(|r| {
+                matches!(&r.state, RequestState::Serialized(pair)
+                if pair.msg_id == id || (container && pair.container_msg_id == id))
+            }) {
+                return Err(mtp::DeserializeError::InvalidEnvelope {
+                    reason: "response for an unsent request",
+                }
+                .into());
+            }
+        }
         for result in results.drain(..) {
             match result {
                 Deserialization::OwnUpdate { msg_id, update } => {
@@ -562,6 +653,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             }
         }
         self.mtp.recycle_deserialization(results);
+        Ok(())
     }
 
     fn process_own_update(
@@ -603,7 +695,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     fn process_result(&mut self, result: RpcResult) {
         if let Some(request) = self.pop_request(result.msg_id) {
             let x = result.body;
-            assert!(x.len() >= 4);
+            if x.len() < 4 {
+                request.complete(Err(mtp::DeserializeError::MessageBufferTooSmall.into()));
+                return;
+            }
             let res_id = u32::from_le_bytes([x[0], x[1], x[2], x[3]]);
             debug!(
                 res_id = format_args!("{:x}", res_id),
@@ -643,11 +738,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 RequestState::Serialized(pair)
                     if pair.msg_id == bad_msg.msg_id || pair.container_msg_id == bad_msg.msg_id =>
                 {
-                    panic!(
-                        "bad msg for unsent request {:?}: {}",
-                        bad_msg.msg_id,
-                        bad_msg.description()
-                    );
+                    // Leave partially written metadata alive until the packet
+                    // completes or the connection is torn down.
+                    warn!("ignoring bad message for an unsent request");
                 }
                 RequestState::Sent(pair)
                     if pair.msg_id == bad_msg.msg_id || pair.container_msg_id == bad_msg.msg_id =>
@@ -659,7 +752,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                         .is_some_and(|tx| tx.is_closed())
                     {
                         self.requests.swap_remove(i);
-                    } else if bad_msg.retryable() {
+                    } else if bad_msg.retryable() && self.requests[i].protocol_retries < 3 {
                         info!(
                             request = ?pair.msg_id,
                             "{}; re-sending request",
@@ -668,6 +761,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
                         // TODO check if actually retryable first!
                         self.requests[i].state = RequestState::NotSerialized;
+                        self.requests[i].protocol_retries += 1;
                     } else {
                         if bad_msg.fatal() {
                             error!(
@@ -683,9 +777,11 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                             );
                         }
                         let req = self.requests.swap_remove(i);
-                        req.complete(Err(InvocationError::Dropped(
-                            "response was non-retryable bad msg",
-                        )));
+                        let retries = req.protocol_retries;
+                        req.complete(Err(InvocationError::BadMessage {
+                            code: bad_msg.code,
+                            retries,
+                        }));
                     }
                 }
                 _ => {}
@@ -717,7 +813,8 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         for i in 0..self.requests.len() {
             match &self.requests[i].state {
                 RequestState::Serialized(pair) if pair.msg_id == msg_id => {
-                    panic!("got response {msg_id:?} for unsent request {pair:?}");
+                    warn!("ignoring response for an unsent request");
+                    return None;
                 }
                 RequestState::Sent(pair) if pair.msg_id == msg_id => {
                     return Some(self.requests.swap_remove(i));
@@ -731,6 +828,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 }
 
 impl<T: Transport> Sender<T, mtp::Encrypted> {
+    /// Configure inbound resource limits before initialization.
+    pub fn set_decode_limits(&mut self, limits: mtp::DecodeLimits) {
+        self.mtp.set_decode_limits(limits);
+    }
     /// Configure API update suppression before sending initConnection.
     /// Protocol messages and RPC replies are unaffected.
     pub fn set_receive_updates(&mut self, enabled: bool) {
@@ -780,11 +881,11 @@ pub async fn generate_auth_key<T: Transport>(
     } = authentication::create_key(data, response)?;
     info!("authorization key generated successfully");
 
-    sender
-        .ping_timer
-        .as_mut()
-        .reset(Instant::now() + PING_DELAY);
+    let next_ping = Instant::now() + PING_DELAY;
+    sender.ping_timer.as_mut().reset(next_ping);
     Ok(Sender {
+        liveness: None,
+        next_ping,
         stream: sender.stream,
         transport: sender.transport,
         mtp: mtp::Encrypted::build()
@@ -862,6 +963,7 @@ mod optimization_tests {
 
     fn saved_request(body: Vec<u8>, msg_id: MsgId) -> Request {
         Request {
+            protocol_retries: 0,
             body: body.into(),
             state: RequestState::Sent(MsgIdPair::new(msg_id)),
             permit: None,
@@ -1158,19 +1260,21 @@ mod optimization_tests {
         assert_eq!(tracker.stage(), crate::InvocationStage::Sent);
         assert_eq!(sender.requests.len(), 1);
         updates.clear();
-        sender.process_mtp_buffer(
-            vec![
-                Deserialization::OwnUpdate {
-                    msg_id,
-                    update: bytes.clone(),
-                },
-                Deserialization::RpcResult(RpcResult {
-                    msg_id,
-                    body: bytes,
-                }),
-            ],
-            &mut updates,
-        );
+        sender
+            .process_mtp_buffer(
+                vec![
+                    Deserialization::OwnUpdate {
+                        msg_id,
+                        update: bytes.clone(),
+                    },
+                    Deserialization::RpcResult(RpcResult {
+                        msg_id,
+                        body: bytes,
+                    }),
+                ],
+                &mut updates,
+            )
+            .unwrap();
         assert!(
             matches!(updates.as_slice(), [UpdatesLike::ShortSentMessage { request, .. }]
             if request.message == "retained request")
@@ -1345,10 +1449,12 @@ mod optimization_tests {
                         msg_id,
                         error: mtp::DeserializeError::DecompressionFailed,
                     }),
-                    2 => sender.on_error(&ReadError::Io(io::Error::new(
-                        io::ErrorKind::ConnectionReset,
-                        "fixture",
-                    ))),
+                    2 => {
+                        sender.on_error(ReadError::Io(io::Error::new(
+                            io::ErrorKind::ConnectionReset,
+                            "fixture",
+                        )));
+                    }
                     _ => sender.process_bad_message(BadMessage { msg_id, code: 32 }),
                 }
                 assert!(sender.requests.is_empty());
@@ -1388,7 +1494,7 @@ mod optimization_tests {
 
     #[tokio::test(start_paused = true)]
     async fn cancelled_steps_keep_one_ping_timer_and_do_not_postpone_keepalive() {
-        let (mut sender, _peer) = pair().await;
+        let (mut sender, _peer) = encrypted_pair().await;
         let timer = sender.ping_timer.as_ref().get_ref() as *const Sleep;
         let deadline = sender.ping_timer.deadline();
         for _ in 0..64 {
@@ -1448,13 +1554,219 @@ mod optimization_tests {
         });
     }
 
+    async fn encrypted_pair() -> (
+        Sender<transport::Full, mtp::Encrypted>,
+        tokio::net::TcpStream,
+    ) {
+        pair_with(mtp::Encrypted::build().finish([0; 256])).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn plain_handshake_never_enqueues_keepalives() {
+        let (mut sender, _peer) = pair().await;
+        tokio::time::advance(PING_DELAY * 3).await;
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), sender.step())
+                .await
+                .is_err()
+        );
+        assert!(sender.requests.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn service_deadline_uses_the_retained_timer_across_step_cancellation() {
+        struct ServiceClock {
+            due: Instant,
+            fired: bool,
+        }
+        impl Mtp for ServiceClock {
+            fn push(&mut self, _: &mut DequeBuffer<u8>, _: &[u8]) -> Option<MsgId> {
+                None
+            }
+            fn finalize(&mut self, _: &mut DequeBuffer<u8>) -> Option<MsgId> {
+                None
+            }
+            fn deserialize(
+                &mut self,
+                _: &mut [u8],
+            ) -> Result<Vec<Deserialization>, mtp::DeserializeError> {
+                Ok(vec![])
+            }
+            fn supports_keepalive(&self) -> bool {
+                false
+            }
+            fn service_deadline(&self) -> Option<std::time::Instant> {
+                (!self.fired).then_some(self.due.into_std())
+            }
+            fn on_service_timeout(&mut self) {
+                self.fired = true;
+            }
+        }
+        let due = Instant::now() + Duration::from_secs(10);
+        let (mut sender, _peer) = pair_with(ServiceClock { due, fired: false }).await;
+        let timer = sender.ping_timer.as_ref().get_ref() as *const Sleep;
+        for _ in 0..20 {
+            tokio::select! {
+                biased;
+                _ = sender.step() => panic!("timer fired before its deadline"),
+                _ = std::future::ready(()) => {},
+            }
+        }
+        assert_eq!(sender.ping_timer.deadline(), due);
+        tokio::time::advance(Duration::from_secs(10)).await;
+        sender.step().await.unwrap();
+        assert!(sender.mtp.fired);
+        assert_eq!(sender.ping_timer.as_ref().get_ref() as *const Sleep, timer);
+    }
+
+    #[tokio::test]
+    async fn keepalive_backlog_is_bounded_and_pong_allows_the_next_ping() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        sender.on_ping_timeout();
+        sender.on_ping_timeout();
+        assert_eq!(sender.requests.len(), 1);
+        sender.try_fill_write();
+        sender.on_net_write(sender.write_buffer.len()).unwrap();
+        let RequestState::Sent(pair) = &sender.requests[0].state else {
+            panic!("unsent ping");
+        };
+        sender.process_result(RpcResult {
+            msg_id: pair.msg_id,
+            body: true.to_bytes(),
+        });
+        assert!(sender.requests.is_empty());
+        sender.on_ping_timeout();
+        assert_eq!(sender.requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn execute_then_drop_response_reports_uncertain_legacy_invocation() {
+        use tokio::io::AsyncReadExt;
+        let (mut sender, mut peer) = pair().await;
+        let executed = async move {
+            let length = peer.read_u32_le().await.unwrap() as usize;
+            let mut packet = vec![0; length - 4];
+            peer.read_exact(&mut packet).await.unwrap();
+            // The whole query has reached the peer; deliberately lose its reply.
+            drop(peer);
+        };
+        let request = tl::functions::Ping { ping_id: 42 };
+        let (response, ()) = tokio::join!(sender.invoke(&request), executed);
+        assert!(matches!(
+            response,
+            Err(InvocationError::Read {
+                may_have_been_sent: true,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn silent_connection_obeys_liveness_deadline() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        sender.set_liveness_timeout(Some(Duration::from_secs(5)));
+        tokio::time::advance(Duration::from_secs(5)).await;
+        let error = sender.step().await.unwrap_err();
+        assert_eq!(error.io_error().unwrap().kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn connection_failures_preserve_delivery_certainty_and_error_source() {
+        use crate::{AutoSleep, RetryContext, RetryPolicy};
+        use std::{num::NonZeroU32, ops::ControlFlow};
+        for written in [None, Some(0), Some(1), Some(usize::MAX)] {
+            let (mut sender, _peer) = encrypted_pair().await;
+            let tracker = crate::InvocationTracker::default();
+            let (tx, rx) = oneshot::channel();
+            sender.enqueue_tracked_body(Bytes::from_static(&[1; 4]), tx, tracker.try_acquire());
+            if let Some(n) = written {
+                sender.try_fill_write();
+                if n > 0 {
+                    sender
+                        .on_net_write(n.min(sender.write_buffer.len()))
+                        .unwrap();
+                }
+            }
+            let failure = sender.on_error(ReadError::Io(io::Error::from_raw_os_error(104)));
+            let error = rx.await.unwrap().unwrap_err();
+            assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+            let InvocationError::Read {
+                error: original,
+                may_have_been_sent,
+            } = &error
+            else {
+                panic!("{error:?}");
+            };
+            assert_eq!(*may_have_been_sent, written.is_some_and(|n| n > 0));
+            assert_eq!(original.io_error().unwrap().raw_os_error(), Some(104));
+            let ReadError::Shared(shared) = failure else {
+                panic!("missing shared source");
+            };
+            assert!(std::sync::Arc::ptr_eq(original, &shared));
+            let retry = AutoSleep::default().should_retry(&RetryContext {
+                error,
+                fail_count: NonZeroU32::MIN,
+                slept_so_far: Duration::ZERO,
+            });
+            assert_eq!(retry.is_break(), written.is_some_and(|n| n > 0));
+            if written.is_none() {
+                assert!(matches!(retry, ControlFlow::Continue(_)));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn protocol_rejections_have_a_finite_retry_budget() {
+        let (mut sender, _peer) = pair().await;
+        let (tx, rx) = oneshot::channel();
+        sender.enqueue_body(Bytes::from_static(&[1; 4]), tx);
+        for attempt in 0..4 {
+            sender.try_fill_write();
+            sender.on_net_write(sender.write_buffer.len()).unwrap();
+            let RequestState::Sent(pair) = &sender.requests[0].state else {
+                panic!("not sent");
+            };
+            sender.process_bad_message(BadMessage {
+                msg_id: pair.msg_id,
+                code: 48,
+            });
+            assert_eq!(sender.requests.is_empty(), attempt == 3);
+        }
+        assert!(matches!(
+            rx.await.unwrap(),
+            Err(InvocationError::BadMessage {
+                code: 48,
+                retries: 3
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn invalid_raw_enqueues_release_permits_before_returning_errors() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        for body in [vec![], vec![0; 3], vec![0; 5], vec![0; 1_044_376]] {
+            let tracker = crate::InvocationTracker::default();
+            let (tx, rx) = oneshot::channel();
+            sender.enqueue_tracked_body(body.into(), tx, tracker.try_acquire());
+            assert!(
+                matches!(sender.step_until_receive(rx).await, Err(InvocationError::Io(error)) if error.kind() == io::ErrorKind::InvalidInput)
+            );
+            assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+            assert!(sender.requests.is_empty());
+        }
+    }
+
     async fn pair() -> (Sender<transport::Full, mtp::Plain>, tokio::net::TcpStream) {
+        pair_with(mtp::Plain::new()).await
+    }
+
+    async fn pair_with<M: Mtp>(mtp: M) -> (Sender<transport::Full, M>, tokio::net::TcpStream) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = ServerAddr::Tcp {
             address: listener.local_addr().unwrap(),
         };
         let (sender, peer) = tokio::join!(
-            Sender::connect(transport::Full::new(), mtp::Plain::new(), addr),
+            Sender::connect(transport::Full::new(), mtp, addr),
             listener.accept()
         );
         (sender.unwrap(), peer.unwrap().0)

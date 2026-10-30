@@ -1,0 +1,49 @@
+
+running 1 test
+test loopback_rpc_cost ... Plain round 0: sampled RPC latency p50/p95/p99 211.4/401.6/494.9 us (4172 samples)
+Plain reply (1592 B) round 0: 66613 RPC/s; client thread 14.90 us user + 0.00 us kernel, 0 cycles per RPC
+Plain round 1: sampled RPC latency p50/p95/p99 224.9/428.4/591.5 us (3942 samples)
+Plain reply (1592 B) round 1: 2.00 allocations, 1754 bytes allocated per RPC
+Plain round 2: sampled RPC latency p50/p95/p99 202.1/388.0/447.9 us (4339 samples)
+Plain reply (1592 B) round 2: 69322 RPC/s; client thread 14.38 us user + 0.00 us kernel, 0 cycles per RPC
+Plain round 3: sampled RPC latency p50/p95/p99 211.5/390.6/475.0 us (4152 samples)
+Plain reply (1592 B) round 3: 2.00 allocations, 1752 bytes allocated per RPC
+Plain round 4: sampled RPC latency p50/p95/p99 204.1/387.2/475.7 us (4263 samples)
+Plain reply (1592 B) round 4: 68089 RPC/s; client thread 14.59 us user + 0.00 us kernel, 0 cycles per RPC
+Gzip round 0: sampled RPC latency p50/p95/p99 190.8/374.4/437.0 us (4576 samples)
+Gzip reply (528 B) round 0: 73080 RPC/s; client thread 13.66 us user + 0.00 us kernel, 0 cycles per RPC
+Gzip round 1: sampled RPC latency p50/p95/p99 199.5/394.1/520.3 us (4287 samples)
+Gzip reply (528 B) round 1: 2.00 allocations, 1751 bytes allocated per RPC
+Gzip round 2: sampled RPC latency p50/p95/p99 209.0/427.4/581.4 us (4131 samples)
+Gzip reply (528 B) round 2: 66004 RPC/s; client thread 14.98 us user + 0.00 us kernel, 0 cycles per RPC
+Gzip round 3: sampled RPC latency p50/p95/p99 193.9/382.8/457.4 us (4450 samples)
+Gzip reply (528 B) round 3: 2.00 allocations, 1750 bytes allocated per RPC
+Gzip round 4: sampled RPC latency p50/p95/p99 196.4/389.2/497.9 us (4423 samples)
+Gzip reply (528 B) round 4: 70660 RPC/s; client thread 14.08 us user + 0.00 us kernel, 0 cycles per RPC
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 45.11s
+
+	Command being timed: "/tmp/grammers-064ae123/candidate-final-loopback --exact loopback_rpc_cost --ignored --nocapture --test-threads=1"
+	User time (seconds): 38.30
+	System time (seconds): 54.18
+	Percent of CPU this job got: 205%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:45.11
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 11316
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 344762
+	Voluntary context switches: 1066010
+	Involuntary context switches: 6974
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 24
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -12,3 +12,6 @@ testbed.rs
 # scraped docs
 *.json
 !docs/telegram-methods.json
+# Synthetic local benchmark measurements and executable identities.
+!benchmarks/2026-10-30/*.json
+!benchmarks/2026-10-30/first-candidate/summary.json

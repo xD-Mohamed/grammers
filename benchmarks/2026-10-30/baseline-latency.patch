@@ -1,0 +1,42 @@
+diff --git a/grammers-mtsender/tests/loopback.rs b/grammers-mtsender/tests/loopback.rs
+index 687256e..c49a6c7 100644
+--- a/grammers-mtsender/tests/loopback.rs
++++ b/grammers-mtsender/tests/loopback.rs
+@@ -779,20 +856,36 @@ fn loopback_rpc_cost() {
+                             // Each caller cycles through its own pools.
+                             let mine: Vec<_> = (caller..SESSIONS).step_by(CALLERS).collect();
+                             let mut turn = 0;
++                            // Sample 1/64 calls; reserve outside the measured call path.
++                            let mut latencies = Vec::with_capacity(65536);
+                             while Instant::now() < deadline {
++                                let started = (turn % 64 == 0).then(Instant::now);
+                                 call(&clients[mine[turn % mine.len()]], &body).await;
++                                if let Some(started) = started {
++                                    latencies.push(started.elapsed().as_nanos() as u64);
++                                }
+                                 turn += 1;
+                                 completed.fetch_add(1, Relaxed);
+                             }
++                            latencies
+                         })
+                     })
+                     .collect();
++                let mut latencies = Vec::new();
+                 for caller in callers {
+-                    caller.await.unwrap();
++                    latencies.extend(caller.await.unwrap());
+                 }
+                 let spent = thread_cpu();
+                 TRACK.store(false, Relaxed);
+                 let rpcs = completed.load(Relaxed) as f64;
++                latencies.sort_unstable();
++                println!(
++                    "{payload:?} round {round}: sampled RPC latency p50/p95/p99 {:.1}/{:.1}/{:.1} us ({} samples)",
++                    latencies[latencies.len() / 2] as f64 / 1000.0,
++                    latencies[latencies.len() * 95 / 100] as f64 / 1000.0,
++                    latencies[latencies.len() * 99 / 100] as f64 / 1000.0,
++                    latencies.len(),
++                );
+                 if track {
+                     println!(
+                         "{payload:?} reply ({reply_len} B) round {round}: {:.2} allocations, {:.0} bytes allocated per RPC",

@@ -116,6 +116,11 @@ impl BadMessage {
 /// The error type for the deserialization of server messages.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeserializeError {
+    /// Authenticated data violates an envelope or service-message invariant.
+    InvalidEnvelope { reason: &'static str },
+
+    /// A configurable per-packet decoding resource limit was reached.
+    ResourceLimit { resource: &'static str },
     /// The server's Authorization Key did not match our expectations.
     BadAuthKey { got: i64, expected: i64 },
 
@@ -150,6 +155,8 @@ impl std::error::Error for DeserializeError {}
 impl fmt::Display for DeserializeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
+            Self::InvalidEnvelope { reason } => write!(f, "invalid MTProto envelope: {reason}"),
+            Self::ResourceLimit { resource } => write!(f, "MTProto resource limit: {resource}"),
             Self::BadAuthKey { got, expected } => {
                 write!(f, "bad server auth key (got {got}, expected {expected})")
             }
@@ -189,24 +196,64 @@ impl From<crypto::Error> for DeserializeError {
     }
 }
 
+/// Resource policies for a single authenticated packet, independent of the
+/// outbound packet limit. These are local safeguards, not Telegram guarantees.
+#[derive(Clone, Copy, Debug)]
+pub struct DecodeLimits {
+    /// Maximum output bytes for one gzip member (default 64 MiB).
+    pub gzip_output: usize,
+    /// Cumulative gzip output bytes across the packet (default 128 MiB).
+    pub expanded_bytes: usize,
+    /// Maximum nested wrappers, including RPC-result gzip (default 32).
+    pub depth: usize,
+    /// Maximum processed envelopes and wrappers (default 4096).
+    pub work: usize,
+}
+
+impl Default for DecodeLimits {
+    fn default() -> Self {
+        Self {
+            gzip_output: 64 * 1024 * 1024,
+            expanded_bytes: 128 * 1024 * 1024,
+            depth: 32,
+            work: 4096,
+        }
+    }
+}
+
 /// The trait used by the [Mobile Transport Protocol] to serialize outgoing
 /// messages and deserialize incoming ones into proper responses.
 ///
 /// [Mobile Transport Protocol]: https://core.telegram.org/mtproto/description
 pub trait Mtp {
+    /// Validate raw request length before queueing. Custom protocols can
+    /// override this conservative MTProto limit without changing `push`.
+    fn request_is_valid(&self, request: &[u8]) -> bool {
+        Encrypted::request_fits(request, true)
+    }
+
+    /// Whether keepalive messages are legal in the current protocol phase.
+    fn supports_keepalive(&self) -> bool {
+        true
+    }
+
+    /// Deadline when an idle protocol needs another opportunity to finalize.
+    fn service_deadline(&self) -> Option<std::time::Instant> {
+        None
+    }
+
+    /// Notify the protocol that its service deadline fired. Explicit notification
+    /// supports runtimes with virtual time without making the protocol depend on one.
+    fn on_service_timeout(&mut self) {}
+
     /// Serializes one request to the input buffer.
     /// The same buffer should be used until `finalize` is called.
     ///
     /// Returns the message ID assigned the request if it was serialized, or `None` if the buffer
     /// is full and cannot hold more requests.
     ///
-    /// # Panics
-    ///
-    /// The method panics if the body length is not padded to 4 bytes.
-    /// The serialization of requests will always be correctly padded.
-    ///
-    /// The method also panics if the body length exceeds roughly 1MB.
-    /// Such large requests would essentially kill the connection otherwise.
+    /// Validate caller-supplied bodies with [`Self::request_is_valid`] first;
+    /// built-in implementations reject invalid bodies by returning `None`.
     fn push(&mut self, buffer: &mut DequeBuffer<u8>, request: &[u8]) -> Option<MsgId>;
 
     /// Finalizes the buffer of requests.

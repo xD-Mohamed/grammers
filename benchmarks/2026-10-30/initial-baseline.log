@@ -1,0 +1,96 @@
+
+running 2 tests
+test loopback_rpc_cost ... Plain round 0: sampled RPC latency p50/p95/p99 233.5/444.2/764.3 us (3809 samples)
+Plain reply (1592 B) round 0: 60830 RPC/s; client thread 15.82 us user + 0.00 us kernel, 0 cycles per RPC
+Plain round 1: sampled RPC latency p50/p95/p99 232.0/463.4/807.6 us (3807 samples)
+Plain reply (1592 B) round 1: 2.00 allocations, 1755 bytes allocated per RPC
+Plain round 2: sampled RPC latency p50/p95/p99 228.8/461.4/899.7 us (3758 samples)
+Plain reply (1592 B) round 2: 59994 RPC/s; client thread 16.01 us user + 0.00 us kernel, 0 cycles per RPC
+Plain round 3: sampled RPC latency p50/p95/p99 240.1/489.7/797.7 us (3648 samples)
+Plain reply (1592 B) round 3: 2.00 allocations, 1756 bytes allocated per RPC
+Plain round 4: sampled RPC latency p50/p95/p99 231.4/431.6/630.3 us (3940 samples)
+Plain reply (1592 B) round 4: 62895 RPC/s; client thread 15.49 us user + 0.00 us kernel, 0 cycles per RPC
+Gzip round 0: sampled RPC latency p50/p95/p99 211.2/448.9/832.2 us (3901 samples)
+Gzip reply (528 B) round 0: 62294 RPC/s; client thread 15.53 us user + 0.00 us kernel, 0 cycles per RPC
+Gzip round 1: sampled RPC latency p50/p95/p99 210.5/439.7/678.6 us (3966 samples)
+Gzip reply (528 B) round 1: 2.00 allocations, 1754 bytes allocated per RPC
+Gzip round 2: sampled RPC latency p50/p95/p99 193.2/387.1/513.4 us (4384 samples)
+Gzip reply (528 B) round 2: 70051 RPC/s; client thread 14.12 us user + 0.00 us kernel, 0 cycles per RPC
+Gzip round 3: sampled RPC latency p50/p95/p99 208.5/437.4/752.8 us (4019 samples)
+Gzip reply (528 B) round 3: 2.00 allocations, 1753 bytes allocated per RPC
+Gzip round 4: sampled RPC latency p50/p95/p99 222.5/539.2/1308.2 us (3649 samples)
+Gzip reply (528 B) round 4: 58249 RPC/s; client thread 16.25 us user + 0.00 us kernel, 0 cycles per RPC
+ok
+test loopback_session_footprint ... 400 sessions, one connection each, gzip-packed replies
+pool created, not connected: 2103 B/session live client heap
+       896 B x   1.00/session =     896 B
+       280 B x   1.00/session =     280 B
+       256 B x   1.00/session =     256 B
+        72 B x   2.00/session =     144 B
+       144 B x   1.00/session =     144 B
+        96 B x   1.00/session =      96 B
+        88 B x   1.00/session =      88 B
+        48 B x   1.00/session =      48 B
+        40 B x   1.00/session =      40 B
+        32 B x   1.00/session =      32 B
+         8 B x   3.00/session =      24 B
+        24 B x   1.00/session =      24 B
+        16 B x   1.00/session =      16 B
+      4096 B x   0.00/session =      10 B
+connected after one RPC: 7911 B/session live client heap
+      1792 B x   1.00/session =    1792 B
+      1096 B x   1.00/session =    1096 B
+      1024 B x   1.00/session =    1024 B
+       896 B x   1.00/session =     896 B
+       256 B x   2.00/session =     512 B
+       416 B x   1.00/session =     416 B
+       320 B x   1.00/session =     320 B
+       288 B x   1.00/session =     288 B
+       280 B x   1.00/session =     280 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+       144 B x   1.00/session =     144 B
+after nine RPCs per session: 7911 B/session live client heap
+      1792 B x   1.00/session =    1792 B
+      1096 B x   1.00/session =    1096 B
+      1024 B x   1.00/session =    1024 B
+       896 B x   1.00/session =     896 B
+       256 B x   2.00/session =     512 B
+       416 B x   1.00/session =     416 B
+       320 B x   1.00/session =     320 B
+       288 B x   1.00/session =     288 B
+       280 B x   1.00/session =     280 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+       144 B x   1.00/session =     144 B
+ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 63.22s
+
+	Command being timed: "timeout 90 /tmp/grammers-064ae123/baseline-loopback --ignored --nocapture --test-threads=1"
+	User time (seconds): 48.70
+	System time (seconds): 61.96
+	Percent of CPU this job got: 175%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:03.22
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 12884
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 5
+	Minor (reclaiming a frame) page faults: 1422850
+	Voluntary context switches: 845018
+	Involuntary context switches: 7280
+	Swaps: 0
+	File system inputs: 440
+	File system outputs: 16
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

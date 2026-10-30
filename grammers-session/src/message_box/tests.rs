@@ -25,6 +25,148 @@ thread_local! {
     static NOW: RefCell<Instant> = const { RefCell::new(Instant(Duration::ZERO)) };
 }
 
+#[test]
+fn checked_saved_state_and_difference_reject_invalid_counters_without_mutation() {
+    let state = UpdatesState {
+        pts: 10,
+        qts: 7,
+        date: 1,
+        seq: 2,
+        channels: vec![],
+    };
+    let mut invalid = state.clone();
+    invalid.pts = 0;
+    assert!(MessageBoxes::try_load(invalid).is_err());
+    let mut invalid = state.clone();
+    invalid.channels.push(ChannelState { id: 10, pts: -1 });
+    assert!(MessageBoxes::try_load(invalid).is_err());
+    let mut boxes = MessageBoxes::try_load(state).unwrap();
+    let before = boxes.get_difference().unwrap();
+    assert!(
+        boxes
+            .try_apply_difference(tl::types::updates::DifferenceEmpty { date: -1, seq: 2 }.into())
+            .is_err()
+    );
+    let after = boxes.get_difference().unwrap();
+    assert_eq!(
+        (before.pts, before.date, before.qts),
+        (after.pts, after.date, after.qts)
+    );
+    assert!(
+        MessageBoxes::new()
+            .try_apply_difference(tl::types::updates::DifferenceEmpty { date: 1, seq: 2 }.into())
+            .is_err()
+    );
+}
+
+#[test]
+fn saved_state_deduplicates_channels_and_recovers_missing_common_pts() {
+    let boxes = MessageBoxes::load(UpdatesState {
+        pts: 0,
+        qts: 7,
+        date: 1,
+        seq: i32::MAX,
+        channels: vec![
+            ChannelState { id: 10, pts: 5 },
+            ChannelState { id: 10, pts: 3 },
+            ChannelState { id: -1, pts: 5 },
+            ChannelState { id: 12, pts: -1 },
+        ],
+    });
+    assert_eq!(boxes.get_difference().unwrap().pts, 0);
+    let saved = boxes.session_state();
+    assert_eq!(saved.channels.len(), 1);
+    assert_eq!(saved.channels[0].pts, 3);
+}
+
+#[test]
+fn channel_catch_up_rotates_after_nonfinal_pages() {
+    let mut boxes = MessageBoxes::load(UpdatesState {
+        pts: 0,
+        qts: 0,
+        date: 1,
+        seq: 0,
+        channels: vec![
+            ChannelState { id: 10, pts: 5 },
+            ChannelState { id: 20, pts: 7 },
+        ],
+    });
+    let channel = |boxes: &MessageBoxes| match boxes.get_channel_difference().unwrap().channel {
+        tl::enums::InputChannel::Channel(c) => c.channel_id,
+        _ => unreachable!(),
+    };
+    assert_eq!(channel(&boxes), 10);
+    boxes
+        .try_apply_channel_difference(
+            tl::types::updates::ChannelDifferenceEmpty {
+                r#final: false,
+                pts: 6,
+                timeout: Some(-1),
+            }
+            .into(),
+        )
+        .unwrap();
+    assert_eq!(channel(&boxes), 20);
+    boxes
+        .try_apply_channel_difference(
+            tl::types::updates::ChannelDifferenceEmpty {
+                r#final: false,
+                pts: 8,
+                timeout: None,
+            }
+            .into(),
+        )
+        .unwrap();
+    assert_eq!(channel(&boxes), 10);
+    assert!(
+        MessageBoxes::new()
+            .try_apply_channel_difference(
+                tl::types::updates::ChannelDifferenceEmpty {
+                    r#final: true,
+                    pts: 1,
+                    timeout: None,
+                }
+                .into()
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn extreme_update_counters_do_not_overflow() {
+    let mut boxes = MessageBoxes::load(UpdatesState {
+        pts: i32::MAX,
+        qts: 0,
+        date: 1,
+        seq: i32::MAX,
+        channels: vec![],
+    });
+    assert!(
+        boxes
+            .process_updates(updates(1, i32::MAX, i32::MAX))
+            .is_ok()
+    );
+    let mut boxes = MessageBoxes::new();
+    let malformed = UpdatesLike::Updates(
+        tl::types::Updates {
+            updates: vec![
+                tl::types::UpdateDeleteMessages {
+                    messages: vec![],
+                    pts: i32::MIN,
+                    pts_count: 1,
+                }
+                .into(),
+            ],
+            users: vec![],
+            chats: vec![],
+            date: 1,
+            seq: 0,
+        }
+        .into(),
+    );
+    assert!(boxes.process_updates(malformed).is_err());
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Instant(Duration);
 

@@ -39,6 +39,9 @@ impl Plain {
 }
 
 impl Mtp for Plain {
+    fn supports_keepalive(&self) -> bool {
+        false
+    }
     /// Wraps a request's data into a plain message (also known as
     /// [unencrypted messages]), and returns its serialized contents.
     ///
@@ -48,7 +51,7 @@ impl Mtp for Plain {
     ///
     /// [unencrypted messages]: https://core.telegram.org/mtproto/description#unencrypted-message
     fn push(&mut self, buffer: &mut DequeBuffer<u8>, request: &[u8]) -> Option<MsgId> {
-        if !buffer.is_empty() {
+        if !buffer.is_empty() || !self.request_is_valid(request) {
             return None;
         }
 
@@ -104,7 +107,7 @@ impl Mtp for Plain {
         if len <= 0 {
             return Err(DeserializeError::NegativeMessageLength { got: len });
         }
-        if (20 + len) as usize > payload.len() {
+        if len as usize > payload.len() - 20 || len % 4 != 0 {
             return Err(DeserializeError::TooLongMessageLength {
                 got: len as usize,
                 max_length: payload.len() - 20,

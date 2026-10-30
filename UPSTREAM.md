@@ -2,6 +2,15 @@
 
 Canonical upstream: https://codeberg.org/Lonami/grammers
 
+Review intake (2026-10-30): inspected canonical upstream through
+`1e31e73cd9797790905bbea82cd75adcbe6f1242`. The current implementation adapts
+encrypted-packet accounting from `ad7b4725f7ad62a93ddd251035405b628e1bed1e`
+and direct sender validation from `1e31e73`, preserving deferred ACKs and
+independent inbound limits. This is not an upstream merge: layer 230 and the
+integration ancestor below remain unchanged. See
+[the implementation/review ledger](OPTIMIZATION-2026-10.md) for scope,
+compatibility, measurements and publication gates.
+
 Current upstream integration (2026-10-18): merged all three pending commits
 through `633d7fe` from `upstream/master`; the TL schema remains layer 230.
 This adds `InputAudio`, `InputVideo`, typed media lifetime controls, and upstream

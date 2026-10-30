@@ -38,9 +38,9 @@ use std::fmt;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use grammers_crypto::hex;
-use grammers_crypto::{AuthKey, factorize, rsa};
+use grammers_crypto::{AuthKey, rsa, try_factorize};
 use grammers_tl_types::{self as tl, Cursor, Deserializable, Serializable};
-use num_bigint::{BigUint, ToBigUint};
+use num_bigint::BigUint;
 use sha1::{Digest, Sha1};
 
 // NOTE! Turning this on will leak the key generation process to stdout!
@@ -50,6 +50,11 @@ const TRACE_AUTH_GEN: bool = false;
 /// The error type for Authorization Key generation process.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
+    /// PQ is not a product of two distinct 32-bit primes, or factoring exceeded its budget.
+    InvalidPq,
+
+    /// The DH prime, generator, encoded lengths, or server time are invalid.
+    InvalidDhParameters,
     /// The server's nonce did not match ours.
     InvalidNonce {
         /// The unexpected nonce that we got.
@@ -132,6 +137,8 @@ impl std::error::Error for Error {}
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidPq => write!(f, "invalid pq or factorization work limit exceeded"),
+            Self::InvalidDhParameters => write!(f, "invalid Diffie-Hellman parameters"),
             Self::InvalidNonce { got, expected } => {
                 write!(f, "invalid nonce: got {got:?}, expected {expected:?}")
             }
@@ -264,7 +271,10 @@ fn do_step2(
         u64::from_be_bytes(buffer)
     };
 
-    let (p, q) = factorize(pq);
+    let (p, q) = try_factorize(pq).ok_or(Error::InvalidPq)?;
+    if p >= q || q > u64::from(u32::MAX) {
+        return Err(Error::InvalidPq);
+    }
     let new_nonce = {
         let mut buffer = [0; 32];
         buffer.copy_from_slice(&random_bytes[..32]);
@@ -415,6 +425,9 @@ fn do_step3(
     check_nonce(&server_dh_params.nonce, &nonce)?;
     check_server_nonce(&server_dh_params.server_nonce, &server_nonce)?;
 
+    if !(32..=1024).contains(&server_dh_params.encrypted_answer.len()) {
+        return Err(Error::InvalidDhParameters);
+    }
     if server_dh_params.encrypted_answer.len() % 16 != 0 {
         return Err(Error::EncryptedResponseNotPadded {
             len: server_dh_params.encrypted_answer.len(),
@@ -441,6 +454,9 @@ fn do_step3(
         Ok(tl::enums::ServerDhInnerData::Data(x)) => x,
         Err(error) => return Err(Error::InvalidDhInnerData { error }),
     };
+    if plain_text_answer.len() - 20 - plain_text_cursor.pos() >= 16 {
+        return Err(Error::InvalidDhParameters);
+    }
 
     let expected_answer_hash = {
         let mut hasher = Sha1::new();
@@ -458,12 +474,26 @@ fn do_step3(
     check_nonce(&server_dh_inner.nonce, &nonce)?;
     check_server_nonce(&server_dh_inner.server_nonce, &server_nonce)?;
 
-    // Safe to unwrap because the numbers are valid
+    // Validate before unsigned subtraction, conversion or modular arithmetic.
+    if !grammers_crypto::two_factor_auth::check_p_and_g(
+        &server_dh_inner.dh_prime,
+        &server_dh_inner.g,
+    ) || server_dh_inner.g_a.len() > 256
+    {
+        return Err(Error::InvalidDhParameters);
+    }
     let dh_prime = BigUint::from_bytes_be(&server_dh_inner.dh_prime);
-    let g = server_dh_inner.g.to_biguint().unwrap();
+    let g = BigUint::from(server_dh_inner.g as u32);
     let g_a = BigUint::from_bytes_be(&server_dh_inner.g_a);
 
-    let time_offset = server_dh_inner.server_time - now;
+    let time_offset = server_dh_inner
+        .server_time
+        .checked_sub(now)
+        .ok_or(Error::InvalidDhParameters)?;
+
+    let one = BigUint::from(1u8);
+    let safety_range = &one << (2048 - 64);
+    check_g_in_range(&g_a, &safety_range, &(&dh_prime - &safety_range))?;
 
     let b = BigUint::from_bytes_be(&random_bytes[..256]);
     let g_b = g.modpow(&b, &dh_prime);
@@ -482,13 +512,10 @@ fn do_step3(
     // checking that g_a and g_b are between 2^{2048-64} and
     // dh_prime - 2^{2048-64} as well.
     // (https://core.telegram.org/mtproto/auth_key#dh-key-exchange-complete)
-    let one = BigUint::from_bytes_be(&[1]);
     check_g_in_range(&g, &one, &(&dh_prime - &one))?;
     check_g_in_range(&g_a, &one, &(&dh_prime - &one))?;
     check_g_in_range(&g_b, &one, &(&dh_prime - &one))?;
 
-    let safety_range = one << (2048 - 64);
-    check_g_in_range(&g_a, &safety_range, &(&dh_prime - &safety_range))?;
     check_g_in_range(&g_b, &safety_range, &(&dh_prime - &safety_range))?;
 
     // Prepare client DH Inner Data
@@ -704,6 +731,89 @@ fn key_for_fingerprint(fingerprint: i64) -> Option<rsa::Key> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_pq_and_short_dh_answers_return_errors() {
+        for pq in [0, 1, 2, 3, 9, 27, u64::MAX] {
+            let result = do_step2(
+                Step1 { nonce: [0; 16] },
+                tl::types::ResPq {
+                    nonce: [0; 16],
+                    server_nonce: [0; 16],
+                    pq: pq.to_be_bytes().to_vec(),
+                    server_public_key_fingerprints: vec![],
+                }
+                .into(),
+                &[0; 256],
+            );
+            assert!(matches!(result, Err(Error::InvalidPq)));
+        }
+        for len in [0, 1, 16, 31, 33, 1040] {
+            assert!(
+                do_step3(
+                    Step2 {
+                        nonce: [0; 16],
+                        server_nonce: [0; 16],
+                        new_nonce: [0; 32],
+                    },
+                    tl::types::ServerDhParamsOk {
+                        nonce: [0; 16],
+                        server_nonce: [0; 16],
+                        encrypted_answer: vec![0; len],
+                    }
+                    .into(),
+                    &[0; 272],
+                    0
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn hashed_invalid_dh_parameters_are_checked_before_arithmetic() {
+        for (g, prime) in [
+            (-1, vec![0; 256]),
+            (8, vec![255; 256]),
+            (4, vec![]),
+            (3, vec![1]),
+            (4, vec![0; 256]),
+            (4, vec![255; 257]),
+        ] {
+            let inner = tl::enums::ServerDhInnerData::Data(tl::types::ServerDhInnerData {
+                nonce: [0; 16],
+                server_nonce: [0; 16],
+                g,
+                dh_prime: prime,
+                g_a: vec![0],
+                server_time: i32::MAX,
+            })
+            .to_bytes();
+            let mut encrypted_answer = Sha1::digest(&inner).to_vec();
+            encrypted_answer.extend(inner);
+            encrypted_answer.resize(encrypted_answer.len().next_multiple_of(16), 0);
+            let (key, iv) = grammers_crypto::generate_key_data_from_nonce(&[0; 16], &[0; 32]);
+            grammers_crypto::aes::ige_encrypt(&mut encrypted_answer, &key, &iv);
+            assert!(matches!(
+                do_step3(
+                    Step2 {
+                        nonce: [0; 16],
+                        server_nonce: [0; 16],
+                        new_nonce: [0; 32],
+                    },
+                    tl::types::ServerDhParamsOk {
+                        nonce: [0; 16],
+                        server_nonce: [0; 16],
+                        encrypted_answer
+                    }
+                    .into(),
+                    &[0; 272],
+                    i32::MIN
+                ),
+                Err(Error::InvalidDhParameters)
+            ));
+        }
+    }
 
     #[test]
     fn emulate_successful_auth_key_gen_flow() -> Result<(), Error> {

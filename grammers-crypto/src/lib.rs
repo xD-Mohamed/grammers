@@ -25,7 +25,7 @@ use std::fmt;
 
 pub use auth_key::AuthKey;
 pub use deque_buffer::DequeBuffer;
-pub use factorize::factorize;
+pub use factorize::{factorize, try_factorize};
 pub use obfuscated::ObfuscatedCipher;
 
 /// The error type for [`decrypt_data_v2`].

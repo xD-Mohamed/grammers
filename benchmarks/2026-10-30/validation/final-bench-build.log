@@ -1,0 +1,3 @@
+   Compiling grammers-mtsender v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-mtsender)
+    Finished `release` profile [optimized] target(s) in 16.03s
+  Executable tests/loopback.rs (target/release/deps/loopback-7c74d1b04acbeef9)

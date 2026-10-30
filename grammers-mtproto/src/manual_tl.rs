@@ -57,7 +57,9 @@ impl<'a> MessageView<'a> {
         let seq_no = i32::deserialize(buf)?;
         let len = i32::deserialize(buf)?;
         let len = usize::try_from(len).map_err(|_| tl::deserialize::Error::UnexpectedEof)?;
-        if len >= MessageContainer::MAXIMUM_SIZE {
+        // Inbound/decompressed bodies have their own enclosing byte budget.
+        // The outbound packet cap would reject legitimate 1 MiB file replies.
+        if len < 4 || !len.is_multiple_of(4) {
             return Err(tl::deserialize::Error::UnexpectedEof);
         }
         Ok(Self {
@@ -173,7 +175,15 @@ pub(crate) struct MessageContainer {
 impl MessageContainer {
     /// Validate all inner envelopes before handling any, just like the owned
     /// decoder, then walk them without allocating a Vec of copied messages.
+    #[cfg(test)]
     pub fn borrowed_messages(bytes: &[u8]) -> Result<MessageIter<'_>, tl::deserialize::Error> {
+        Self::borrowed_messages_validated(bytes, None)
+    }
+
+    pub fn borrowed_messages_validated(
+        bytes: &[u8],
+        parent: Option<(i64, i32)>,
+    ) -> Result<MessageIter<'_>, tl::deserialize::Error> {
         let mut cursor = Cursor::from_slice(bytes);
         let constructor = u32::deserialize(&mut cursor)?;
         if constructor != Self::CONSTRUCTOR_ID {
@@ -182,12 +192,24 @@ impl MessageContainer {
         let count = usize::try_from(i32::deserialize(&mut cursor)?)
             .map_err(|_| tl::deserialize::Error::UnexpectedEof)?;
         let data = &bytes[cursor.pos()..];
-        if count > data.len() / Message::SIZE_OVERHEAD {
+        if count > 1024 || count > data.len() / Message::SIZE_OVERHEAD {
             return Err(tl::deserialize::Error::UnexpectedEof);
         }
         let mut check = Cursor::from_slice(data);
         for _ in 0..count {
-            MessageView::deserialize(&mut check)?;
+            let inner = MessageView::deserialize(&mut check)?;
+            if parent.is_some_and(|(id, seq)| {
+                inner.msg_id <= 0
+                    || inner.msg_id % 2 != 1
+                    || inner.msg_id >= id
+                    || inner.seq_no < 0
+                    || inner.seq_no > seq
+            }) {
+                return Err(tl::deserialize::Error::UnexpectedEof);
+            }
+        }
+        if check.pos() != data.len() {
+            return Err(tl::deserialize::Error::UnexpectedEof);
         }
         Ok(MessageIter {
             cursor: Cursor::from_slice(data),
@@ -201,7 +223,10 @@ impl MessageContainer {
     /// Maximum size in bytes for the inner payload of the container.
     /// Telegram will close the connection if the payload is bigger.
     /// The overhead of the container itself is subtracted.
-    pub const MAXIMUM_SIZE: usize = 1_044_456 - Self::SIZE_OVERHEAD;
+    // Complete encrypted payload ceiling observed by upstream ad7b4725.
+    // Reserve external header, salt/session, worst-case padding (27 bytes),
+    // and an outer message/container header. Round down to a whole TL word.
+    pub const MAXIMUM_SIZE: usize = (0xff000 - 24 - 16 - 27 - 16 - Self::SIZE_OVERHEAD) & !3;
 
     /// Maximum amount of messages that can't be sent inside a single
     /// container, inclusive. Beyond this limit Telegram will respond
@@ -302,7 +327,7 @@ impl GzipScratch {
         }
     }
 
-    fn decode(&mut self, packed: &[u8]) -> Result<Vec<u8>, mtp::DeserializeError> {
+    fn decode(&mut self, packed: &[u8], limit: usize) -> Result<Vec<u8>, mtp::DeserializeError> {
         let mut input = std::mem::take(self.decoder.get_mut());
         input.set_position(0);
         input.get_mut().clear();
@@ -314,10 +339,24 @@ impl GzipScratch {
         let hint = packed
             .last_chunk::<4>()
             .map_or(0, |bytes| u32::from_le_bytes(*bytes) as usize);
-        let mut output = Vec::with_capacity(hint.min(GZIP_SCRATCH_LIMIT));
-        self.decoder
+        let mut output = Vec::with_capacity(hint.min(GZIP_SCRATCH_LIMIT).min(limit));
+        Read::by_ref(&mut self.decoder)
+            .take(limit as u64)
             .read_to_end(&mut output)
             .map_err(|_| mtp::DeserializeError::DecompressionFailed)?;
+        // Probe through the footer even when output exactly fills the budget.
+        // This checks CRC/ISIZE without doubling a full output Vec for one byte.
+        let mut excess = [0];
+        if self
+            .decoder
+            .read(&mut excess)
+            .map_err(|_| mtp::DeserializeError::DecompressionFailed)?
+            != 0
+        {
+            return Err(mtp::DeserializeError::ResourceLimit {
+                resource: "gzip output",
+            });
+        }
         // A single-member decoder stops at its footer. Preserve write_all's
         // rejection of trailing data instead of silently accepting a prefix.
         if self.decoder.get_ref().position() != packed.len() as u64 {
@@ -352,29 +391,49 @@ impl GzipPacked {
     }
 
     /// Decode the TL envelope by borrowing compressed bytes from its input.
+    #[cfg(test)]
     pub fn decompress_from_bytes(bytes: &[u8]) -> Result<Vec<u8>, mtp::DeserializeError> {
+        Self::decompress_from_bytes_limited(bytes, mtp::DecodeLimits::default().gzip_output)
+    }
+
+    pub fn decompress_from_bytes_limited(
+        bytes: &[u8],
+        limit: usize,
+    ) -> Result<Vec<u8>, mtp::DeserializeError> {
         let mut cursor = Cursor::from_slice(bytes);
         let constructor = u32::deserialize(&mut cursor)?;
         if constructor != Self::CONSTRUCTOR_ID {
             return Err(tl::deserialize::Error::UnexpectedConstructor { id: constructor }.into());
         }
-        Self::decompress_payload(cursor.read_bytes()?)
+        let packed = cursor.read_bytes()?;
+        if cursor.pos() != bytes.len() {
+            return Err(mtp::DeserializeError::DecompressionFailed);
+        }
+        Self::decompress_payload_limited(packed, limit)
     }
 
+    #[cfg(test)]
     fn decompress_payload(packed: &[u8]) -> Result<Vec<u8>, mtp::DeserializeError> {
+        Self::decompress_payload_limited(packed, mtp::DecodeLimits::default().gzip_output)
+    }
+
+    fn decompress_payload_limited(
+        packed: &[u8],
+        limit: usize,
+    ) -> Result<Vec<u8>, mtp::DeserializeError> {
         GZIP_SCRATCH
             .try_with(|slot| {
                 // Release the RefCell borrow before decoding. A nested call can
                 // use its own scratch without poisoning or borrowing this decoder.
                 let mut scratch = slot.borrow_mut().take().unwrap_or_else(GzipScratch::new);
-                let result = scratch.decode(packed);
+                let result = scratch.decode(packed, limit);
                 if scratch.retainable() {
                     scratch.decoder.get_mut().get_mut().clear();
                     slot.borrow_mut().get_or_insert(scratch);
                 }
                 result
             })
-            .unwrap_or_else(|_| GzipScratch::new().decode(packed))
+            .unwrap_or_else(|_| GzipScratch::new().decode(packed, limit))
     }
 }
 
@@ -454,8 +513,82 @@ mod optimization_tests {
     }
 
     #[test]
+    fn gzip_limits_check_exact_limit_crc_trailing_data_and_recover() {
+        let data = vec![0; 1024 * 1024];
+        let packed = GzipPacked::new(&data).packed_data;
+        assert_eq!(
+            GzipPacked::decompress_payload_limited(&packed, data.len()).unwrap(),
+            data
+        );
+        assert!(matches!(
+            GzipPacked::decompress_payload_limited(&packed, data.len() - 1),
+            Err(mtp::DeserializeError::ResourceLimit { .. })
+        ));
+        let mut corrupt = packed.clone();
+        let footer = corrupt.len() - 8;
+        corrupt[footer] ^= 1;
+        assert!(GzipPacked::decompress_payload_limited(&corrupt, data.len()).is_err());
+        let mut trailing = packed.clone();
+        trailing.push(0);
+        assert!(GzipPacked::decompress_payload_limited(&trailing, data.len()).is_err());
+        assert_eq!(
+            GzipPacked::decompress_payload_limited(&packed, data.len()).unwrap(),
+            data
+        );
+    }
+
+    #[test]
+    #[ignore = "isolated release gzip budget/peak RSS measurement; run explicitly"]
+    fn benchmark_gzip_resource_limit() {
+        let limit = mtp::DecodeLimits::default().gzip_output;
+        let packed = GzipPacked::new(&vec![0; limit]).packed_data;
+        let start = std::time::Instant::now();
+        let output = GzipPacked::decompress_payload_limited(&packed, limit).unwrap();
+        assert_eq!(output.len(), limit);
+        println!(
+            "gzip limit: {} compressed bytes -> {} bytes in {:?}; measure process peak RSS externally",
+            packed.len(),
+            output.len(),
+            start.elapsed()
+        );
+        drop(output);
+        assert!(GzipPacked::decompress_payload_limited(&packed, limit - 1).is_err());
+    }
+
+    #[test]
+    fn inbound_file_reply_is_independent_of_outbound_limit() {
+        let mut result = tl::types::upload::File::CONSTRUCTOR_ID.to_bytes();
+        tl::types::storage::FileUnknown::CONSTRUCTOR_ID.serialize(&mut result);
+        0i32.serialize(&mut result);
+        vec![0u8; 1024 * 1024].serialize(&mut result);
+        let mut body = RpcResult::CONSTRUCTOR_ID.to_bytes();
+        4i64.serialize(&mut body);
+        body.extend(result);
+        assert_eq!(body.len(), 1_048_604);
+        let wire = message_wire(99, &body);
+        let message = Message::from_bytes(&wire).unwrap();
+        let rpc = RpcResult::from_owned(message.body).unwrap();
+        assert!(tl::enums::upload::File::from_bytes(&rpc.result).is_ok());
+    }
+
+    #[test]
+    fn container_count_and_trailing_envelopes_are_rejected() {
+        for count in [-1i32, 1025, i32::MAX] {
+            let mut wire = MessageContainer::CONSTRUCTOR_ID.to_bytes();
+            count.serialize(&mut wire);
+            wire.resize(32 * 1025, 0);
+            assert!(MessageContainer::borrowed_messages(&wire).is_err());
+        }
+        let mut empty = MessageContainer::CONSTRUCTOR_ID.to_bytes();
+        0i32.serialize(&mut empty);
+        assert!(MessageContainer::borrowed_messages(&empty).is_ok());
+        empty.extend([0; 4]);
+        assert!(MessageContainer::borrowed_messages(&empty).is_err());
+    }
+
+    #[test]
     fn borrowed_envelope_preserves_fields_and_points_into_input() {
-        for size in [0, 4, 512, 8192] {
+        for size in [4, 512, 8192] {
             let wire = message_wire(99, &vec![7; size]);
             let owned = Message::from_bytes(&wire).unwrap();
             let mut cursor = Cursor::from_slice(&wire);

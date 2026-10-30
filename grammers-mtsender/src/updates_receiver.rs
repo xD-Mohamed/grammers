@@ -32,6 +32,8 @@ pub struct UpdatesReceiver {
     updates: mpsc::Receiver<UpdatesLike>,
     buffer: VecDeque<UpdateAndPeers>,
     should_get_state: bool,
+    home_failure_generation: u64,
+    prefer_channel: bool,
 }
 
 async fn prepare_channel_difference(
@@ -97,7 +99,12 @@ impl UpdatesReceiver {
             .into());
         }
         let message_box = if configuration.catch_up {
-            MessageBoxes::load(session.updates_state().await?)
+            MessageBoxes::try_load(session.updates_state().await?).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "invalid saved update state",
+                )
+            })?
         } else {
             // If the user doesn't want to bother with catching up on previous update, start with
             // pristine state instead.
@@ -114,6 +121,8 @@ impl UpdatesReceiver {
             updates,
             buffer: VecDeque::new(),
             should_get_state,
+            home_failure_generation: 0,
+            prefer_channel: false,
         })
     }
 
@@ -154,6 +163,16 @@ impl UpdatesReceiver {
         }
 
         loop {
+            let generation = self.handle.home_failure_generation();
+            if generation != self.home_failure_generation {
+                self.home_failure_generation = generation;
+                self.process_socket_updates(UpdatesLike::ConnectionClosed)
+                    .await;
+            }
+            // Catch-up must not indefinitely starve live updates or closure.
+            if let Ok(update) = self.updates.try_recv() {
+                self.process_socket_updates(update).await;
+            }
             let (deadline, get_diff, get_channel_diff) = {
                 if let Some(update) = self.buffer.pop_front() {
                     return Ok(update);
@@ -171,14 +190,25 @@ impl UpdatesReceiver {
                 )
             };
 
-            if let Some(request) = get_diff {
+            if let Some(request) =
+                get_diff.filter(|_| get_channel_diff.is_none() || !self.prefer_channel)
+            {
+                self.prefer_channel = true;
                 let response = self.invoke(&request).await?;
-                let (updates, users, chats) = self.message_box.apply_difference(response);
+                let (updates, users, chats) = self
+                    .message_box
+                    .try_apply_difference(response)
+                    .map_err(
+                        |_| grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
+                            reason: "invalid account difference or missing pending state",
+                        },
+                    )?;
                 self.extend_update_queue(updates, users, chats);
                 continue;
             }
 
             if let Some(request) = get_channel_diff {
+                self.prefer_channel = false;
                 let maybe_response = self.invoke(&request).await;
 
                 let response = match maybe_response {
@@ -226,12 +256,23 @@ impl UpdatesReceiver {
                     Err(e) => return Err(e),
                 };
 
-                let (updates, users, chats) = self.message_box.apply_channel_difference(response);
+                let (updates, users, chats) = self
+                    .message_box
+                    .try_apply_channel_difference(response)
+                    .map_err(
+                        |_| grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
+                            reason: "invalid channel difference or missing pending state",
+                        },
+                    )?;
                 self.extend_update_queue(updates, users, chats);
                 continue;
             }
 
-            match timeout_at(deadline.into(), self.updates.recv()).await {
+            let received = tokio::select! {
+                result = timeout_at(deadline.into(), self.updates.recv()) => result,
+                _ = self.handle.wait_home_failure(self.home_failure_generation) => continue,
+            };
+            match received {
                 Ok(Some(updates)) => self.process_socket_updates(updates).await,
                 Ok(None) => break Err(InvocationError::Dropped("updates channel was closed")),
                 Err(_) => {}

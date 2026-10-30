@@ -58,8 +58,11 @@ pub fn parse_markdown_message(message: &str) -> (String, Vec<tl::enums::MessageE
 
         // [text link](https://example.com) or [user mention](tg://user?id=12345678)
         Event::Start(Tag::Link { dest_url, .. }) => {
-            if let Some(user_id) = dest_url.strip_prefix(MENTION_URL_PREFIX) {
-                let user_id = user_id.parse::<i64>().unwrap();
+            if let Some(user_id) = dest_url
+                .strip_prefix(MENTION_URL_PREFIX)
+                .and_then(|id| id.parse::<i64>().ok())
+                .filter(|id| *id > 0)
+            {
                 entities.push(
                     tl::types::MessageEntityMentionName {
                         offset,
@@ -229,6 +232,18 @@ pub fn generate_markdown_message(message: &str, entities: &[tl::enums::MessageEn
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn malformed_mentions_remain_text_links() {
+        for id in ["", "abc", "0", "-1", "9223372036854775808"] {
+            let (text, entities) = parse_markdown_message(&format!("[name](tg://user?id={id})"));
+            assert_eq!(text, "name");
+            assert!(matches!(
+                &entities[..],
+                [tl::enums::MessageEntity::TextUrl(_)]
+            ));
+        }
+    }
 
     #[test]
     fn parse_leading() {

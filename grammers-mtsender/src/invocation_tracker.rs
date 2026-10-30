@@ -62,6 +62,7 @@ impl InvocationTracker {
                 InvocationPermit {
                     tracker: Some(Arc::clone(&self.0)),
                     capacity: None,
+                    bytes: None,
                 }
             })
     }
@@ -81,6 +82,7 @@ impl InvocationTracker {
 pub struct InvocationPermit {
     tracker: Option<Arc<TrackerState>>,
     capacity: Option<OwnedSemaphorePermit>,
+    bytes: Option<OwnedSemaphorePermit>,
 }
 
 impl InvocationPermit {
@@ -88,8 +90,19 @@ impl InvocationPermit {
         let mut permit = permit.unwrap_or(Self {
             tracker: None,
             capacity: None,
+            bytes: None,
         });
         permit.capacity = Some(capacity);
+        permit
+    }
+
+    pub(crate) fn with_bytes(permit: Option<Self>, bytes: OwnedSemaphorePermit) -> Self {
+        let mut permit = permit.unwrap_or(Self {
+            tracker: None,
+            capacity: None,
+            bytes: None,
+        });
+        permit.bytes = Some(bytes);
         permit
     }
 

@@ -7,14 +7,15 @@
 // except according to those terms.
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use std::{borrow::Cow, mem};
+use std::{borrow::Cow, collections::VecDeque, mem};
 
 use grammers_crypto::{AuthKey, DequeBuffer, decrypt_data_v2, encrypt_data_v2};
 use grammers_tl_types::{self as tl, Cursor, Deserializable, Identifiable, Serializable};
 use tracing::info;
 
 use super::{
-    Deserialization, DeserializationFailure, DeserializeError, Mtp, RpcResult, RpcResultError,
+    DecodeLimits, Deserialization, DeserializationFailure, DeserializeError, Mtp, RpcResult,
+    RpcResultError,
 };
 use crate::utils::StackBuffer;
 use crate::{MsgId, manual_tl};
@@ -48,10 +49,53 @@ static UPDATE_IDS: [u32; 9] = [
     tl::types::messages::ChatInviteJoinResultOk::CONSTRUCTOR_ID,
 ];
 
+struct DecodeBudget {
+    authenticated: bool,
+    limits: DecodeLimits,
+    remaining: usize,
+    work: usize,
+}
+
+impl DecodeBudget {
+    fn new(limits: DecodeLimits) -> Self {
+        Self {
+            authenticated: false,
+            limits,
+            remaining: limits.expanded_bytes,
+            work: limits.work,
+        }
+    }
+
+    fn visit(&mut self, depth: usize) -> Result<(), DeserializeError> {
+        if depth > self.limits.depth || self.work == 0 {
+            return Err(DeserializeError::ResourceLimit {
+                resource: "wrapper depth or message work",
+            });
+        }
+        self.work -= 1;
+        Ok(())
+    }
+
+    fn decompress(&mut self, bytes: &[u8], depth: usize) -> Result<Vec<u8>, DeserializeError> {
+        if depth > self.limits.depth {
+            return Err(DeserializeError::ResourceLimit {
+                resource: "wrapper depth",
+            });
+        }
+        let limit = self.limits.gzip_output.min(self.remaining);
+        let result = manual_tl::GzipPacked::decompress_from_bytes_limited(bytes, limit);
+        // Charge failed CRC/footer validation too: it may consume the full
+        // budget before failing, and sibling RPCs share this same budget.
+        self.remaining -= result.as_ref().map_or(limit, Vec::len);
+        result
+    }
+}
+
 /// A builder to configure [`Mtp`] instances.
 ///
 /// Use the [`Encrypted::build`] method to create builder instances.
 pub struct Builder {
+    decode_limits: DecodeLimits,
     time_offset: i32,
     first_salt: i64,
     compression_threshold: Option<usize>,
@@ -65,6 +109,9 @@ pub struct Builder {
 ///
 /// [Mobile Transport Protocol]: https://core.telegram.org/mtproto
 pub struct Encrypted {
+    // Allocated on use, bounded to 1024 server envelopes per session.
+    received_ids: VecDeque<i64>,
+    decode_limits: DecodeLimits,
     /// The Authorization Key to use to encrypt payload.
     auth_key: AuthKey,
 
@@ -82,6 +129,7 @@ pub struct Encrypted {
 
     /// Internal request for salts which should not be propagated.
     salt_request_msg_id: Option<MsgId>,
+    salt_request_failures: u8,
 
     /// The secure, random identifier for this instance.
     session_id: i64,
@@ -104,6 +152,7 @@ pub struct Encrypted {
     /// When the oldest entry of `pending_ack` was queued. Only tracked while
     /// acknowledgements are batched.
     pending_ack_since: Option<Instant>,
+    ack_flush_due: bool,
 
     /// Pending acknowledgements needed before they are attached to an
     /// outgoing message. 1 attaches them to every message.
@@ -124,6 +173,11 @@ pub struct Encrypted {
 }
 
 impl Builder {
+    /// Set per-packet decompression and processing limits.
+    pub fn decode_limits(mut self, limits: DecodeLimits) -> Self {
+        self.decode_limits = limits;
+        self
+    }
     /// Whether unsolicited API updates should be returned to the caller.
     /// Disabled mode also wraps API requests with invokeWithoutUpdates.
     pub fn receive_updates(mut self, enabled: bool) -> Self {
@@ -159,6 +213,8 @@ impl Builder {
     /// the configuration changes applied.
     pub fn finish(self, auth_key: [u8; 256]) -> Encrypted {
         Encrypted {
+            received_ids: VecDeque::new(),
+            decode_limits: self.decode_limits,
             auth_key: AuthKey::from_bytes(auth_key),
             time_offset: self.time_offset,
             salts: vec![tl::types::FutureSalt {
@@ -168,6 +224,7 @@ impl Builder {
             }],
             start_salt_time: None,
             salt_request_msg_id: None,
+            salt_request_failures: 0,
             session_id: {
                 let mut buffer = [0u8; 8];
                 getrandom::fill(&mut buffer).expect("failed to generate a secure session_id");
@@ -177,6 +234,7 @@ impl Builder {
             last_msg_id: 0,
             pending_ack: vec![],
             pending_ack_since: None,
+            ack_flush_due: false,
             ack_batch: self.ack_batch,
             compression_threshold: self.compression_threshold,
             receive_updates: self.receive_updates,
@@ -229,6 +287,11 @@ impl Encrypted {
         self.receive_updates = enabled;
     }
 
+    /// Change per-packet decoding resource limits.
+    pub fn set_decode_limits(&mut self, limits: DecodeLimits) {
+        self.decode_limits = limits;
+    }
+
     /// Collect up to `count` acknowledgements before attaching them to an
     /// outgoing message, instead of wrapping every message in a container with
     /// one. An acknowledgement never waits more than ten seconds for its batch
@@ -240,6 +303,7 @@ impl Encrypted {
     /// Start building a new encrypted MTP.
     pub fn build() -> Builder {
         Builder {
+            decode_limits: DecodeLimits::default(),
             time_offset: 0,
             compression_threshold: crate::DEFAULT_COMPRESSION_THRESHOLD,
             receive_updates: true,
@@ -305,6 +369,15 @@ impl Encrypted {
         msg_id
     }
 
+    fn message_fits(&self, buffer: &DequeBuffer<u8>, body_len: usize) -> bool {
+        self.msg_count < manual_tl::MessageContainer::MAXIMUM_LENGTH
+            && buffer
+                .len()
+                .checked_add(manual_tl::Message::SIZE_OVERHEAD)
+                .and_then(|n| n.checked_add(body_len))
+                .is_some_and(|n| n <= manual_tl::MessageContainer::MAXIMUM_SIZE)
+    }
+
     fn serialize_msg_header(
         &mut self,
         buffer: &mut DequeBuffer<u8>,
@@ -321,38 +394,55 @@ impl Encrypted {
         MsgId(msg_id)
     }
 
-    fn queue_ack(&mut self, msg_id: i64) {
-        if self.ack_batch > 1 && self.pending_ack.is_empty() {
+    fn queue_ack(&mut self, msg_id: i64) -> Result<(), DeserializeError> {
+        // A peer that keeps sending while our socket is write-blocked must not
+        // retain unbounded ACK metadata. Allow eight full protocol ACK batches.
+        if self.pending_ack.len() >= 65_536 {
+            return Err(DeserializeError::ResourceLimit {
+                resource: "pending acknowledgements",
+            });
+        }
+        if self.pending_ack.is_empty() {
             self.pending_ack_since = Some(Instant::now());
         }
         self.pending_ack.push(msg_id);
+        Ok(())
     }
 
     /// Whether the pending acknowledgements go out with the next message.
     fn ack_due(&self) -> bool {
         let count = self.pending_ack.len();
         count != 0
-            && (count >= self.ack_batch
+            && (self.ack_flush_due
+                || count >= self.ack_batch
                 || self
                     .pending_ack_since
                     .is_none_or(|since| since.elapsed() >= ACK_MAX_DELAY))
     }
 
     fn serialize_pending_ack(&mut self, buffer: &mut DequeBuffer<u8>) {
-        let count = self.pending_ack.len();
-        if count == 0 {
+        // Telegram permits at most 8192 IDs in each acknowledgement. Only
+        // consume IDs after capacity has been reserved, retaining the oldest
+        // deadline when a full packet defers some or all acknowledgements.
+        let available = manual_tl::MessageContainer::MAXIMUM_SIZE
+            .saturating_sub(buffer.len() + manual_tl::Message::SIZE_OVERHEAD + 12)
+            / 8;
+        let count = self.pending_ack.len().min(8192).min(available);
+        if count == 0 || !self.message_fits(buffer, 12 + count * 8) {
             return;
         }
-        self.pending_ack_since = None;
-        let ack = tl::enums::MsgsAck::Ack(tl::types::MsgsAck {
-            msg_ids: mem::take(&mut self.pending_ack),
-        });
         // Constructor + vector constructor + count + the i64 message IDs.
         self.serialize_msg_header(buffer, 12 + count * 8, false);
-        ack.serialize(buffer);
-        let tl::enums::MsgsAck::Ack(ack) = ack;
-        self.pending_ack = ack.msg_ids;
-        self.pending_ack.clear();
+        tl::types::MsgsAck::CONSTRUCTOR_ID.serialize(buffer);
+        0x1cb5_c415u32.serialize(buffer);
+        (count as i32).serialize(buffer);
+        for id in self.pending_ack.drain(..count) {
+            id.serialize(buffer);
+        }
+        if self.pending_ack.is_empty() {
+            self.pending_ack_since = None;
+            self.ack_flush_due = false;
+        }
     }
 
     fn get_current_salt(&self) -> i64 {
@@ -363,6 +453,7 @@ impl Encrypted {
         if self.salts.len() == 1
             && self.salt_request_msg_id.is_none()
             && self.get_current_salt() != 0
+            && self.message_fits(buffer, 8)
         {
             // If salts are requested in a container leading to bad_msg,
             // the bad_msg_id will refer to the container, not the salts request.
@@ -417,12 +508,83 @@ impl Encrypted {
         self.msg_count = 0;
     }
 
+    // Called only after crypto has authenticated the entire plaintext.
+    fn process_plaintext(
+        &mut self,
+        plaintext: &[u8],
+    ) -> Result<Vec<Deserialization>, DeserializeError> {
+        let mut buffer = Cursor::from_slice(plaintext);
+
+        let _salt = i64::deserialize(&mut buffer)?;
+        let session_id = i64::deserialize(&mut buffer)?;
+        if session_id != self.session_id {
+            return Err(DeserializeError::InvalidEnvelope {
+                reason: "wrong session id",
+            });
+        }
+
+        let message = manual_tl::MessageView::deserialize(&mut buffer)?;
+        if !(12..=1024).contains(&(plaintext.len() - buffer.pos())) {
+            return Err(DeserializeError::InvalidEnvelope {
+                reason: "invalid encrypted padding",
+            });
+        }
+        let mut budget = DecodeBudget::new(self.decode_limits);
+        budget.authenticated = true;
+        if let Err(error) = self.process_bounded(message, &mut budget, 0, false) {
+            self.deserialization.clear();
+            return Err(error);
+        }
+
+        // For simplicity, and to avoid passing too much stuff around (RPC results, updates),
+        // the processing result is stored in self. After processing is done, that temporary
+        // state is cleaned and returned with `mem::take`.
+        Ok(mem::take(&mut self.deserialization))
+    }
+    #[cfg(test)]
     fn process_message(
         &mut self,
         message: manual_tl::MessageView<'_>,
     ) -> Result<(), DeserializeError> {
+        let mut budget = DecodeBudget::new(self.decode_limits);
+        self.process_bounded(message, &mut budget, 0, false)
+    }
+
+    fn process_bounded(
+        &mut self,
+        mut message: manual_tl::MessageView<'_>,
+        budget: &mut DecodeBudget,
+        mut depth: usize,
+        in_container: bool,
+    ) -> Result<(), DeserializeError> {
+        let msg_id = message.msg_id;
+        if budget.authenticated {
+            if !in_container {
+                Self::validate_header(&message)?;
+            }
+            if (self.received_ids.back().is_some_and(|last| *last >= msg_id)
+                && self.received_ids.binary_search(&msg_id).is_ok())
+                || (self.received_ids.len() == 1024 && self.received_ids[0] > msg_id)
+            {
+                if message.requires_ack() {
+                    self.queue_ack(msg_id)?;
+                }
+                return Ok(());
+            }
+        }
+        // Gzip replaces a body, not its authenticated envelope: acknowledge
+        // once, and release the owned parent before descending to the next body.
+        loop {
+            budget.visit(depth)?;
+            if message.constructor_id()? != manual_tl::GzipPacked::CONSTRUCTOR_ID {
+                break;
+            }
+            depth += 1;
+            let body = budget.decompress(&message.body, depth)?;
+            message.body = Cow::Owned(body);
+        }
         if message.requires_ack() {
-            self.queue_ack(message.msg_id);
+            self.queue_ack(message.msg_id)?;
         }
 
         // Handle all the possible Service Messages:
@@ -432,9 +594,9 @@ impl Encrypted {
         // The order of the `match` here is the same as the order in which the
         // items appear in the documentation (to make it easier to review).
         // TODO verify what needs ack and what doesn't
-        match message.constructor_id()? {
+        let result = match message.constructor_id()? {
             // Response to an RPC query
-            manual_tl::RpcResult::CONSTRUCTOR_ID => self.handle_rpc_result(message),
+            manual_tl::RpcResult::CONSTRUCTOR_ID => self.handle_rpc_result(message, budget, depth),
 
             // Service Messages about Messages
             // Acknowledgment of Receipt
@@ -468,15 +630,43 @@ impl Encrypted {
                 self.handle_new_session_created(message)
             }
             // Containers (Simple Container)
-            manual_tl::MessageContainer::CONSTRUCTOR_ID => self.handle_container(message),
+            manual_tl::MessageContainer::CONSTRUCTOR_ID => {
+                if in_container {
+                    return Err(DeserializeError::InvalidEnvelope {
+                        reason: "nested simple container",
+                    });
+                }
+                self.handle_container(message, budget, depth)
+            }
             // Message Copies
             manual_tl::MessageCopy::CONSTRUCTOR_ID => self.handle_msg_copy(message),
             // Packed Object
-            manual_tl::GzipPacked::CONSTRUCTOR_ID => self.handle_gzip_packed(message),
             // HTTP Wait/Long Poll
             tl::types::HttpWait::CONSTRUCTOR_ID => self.handle_http_wait(message),
             _ => self.handle_update(message),
+        };
+        if result.is_ok() && budget.authenticated {
+            // Evict before inserting, otherwise VecDeque retains 2048 slots
+            // after momentarily reaching 1025 entries.
+            if self.received_ids.len() == 1024 {
+                self.received_ids.pop_front();
+            }
+            if self.received_ids.back().is_none_or(|id| *id < msg_id) {
+                self.received_ids.push_back(msg_id);
+            } else if let Err(index) = self.received_ids.binary_search(&msg_id) {
+                self.received_ids.insert(index, msg_id);
+            }
         }
+        result
+    }
+
+    fn validate_header(message: &manual_tl::MessageView<'_>) -> Result<(), DeserializeError> {
+        if message.msg_id <= 0 || message.msg_id % 2 != 1 || message.seq_no < 0 {
+            return Err(DeserializeError::InvalidEnvelope {
+                reason: "invalid server message header",
+            });
+        }
+        Ok(())
     }
 
     /// **[Response to an RPC query]**
@@ -564,6 +754,8 @@ impl Encrypted {
     fn handle_rpc_result(
         &mut self,
         message: manual_tl::MessageView<'_>,
+        budget: &mut DecodeBudget,
+        mut depth: usize,
     ) -> Result<(), DeserializeError> {
         let (req_msg_id, mut result) = match message.body {
             Cow::Borrowed(body) => {
@@ -578,11 +770,15 @@ impl Encrypted {
         let msg_id = MsgId(req_msg_id);
         // A compressed payload follows the same validation and error dispatch
         // as an ordinary result; gzip is not evidence of RPC success.
-        if matches!(
+        while matches!(
             u32::from_bytes(&result),
             Ok(manual_tl::GzipPacked::CONSTRUCTOR_ID)
         ) {
-            match manual_tl::GzipPacked::decompress_from_bytes(&result) {
+            depth += 1;
+            match budget
+                .visit(depth)
+                .and_then(|()| budget.decompress(&result, depth))
+            {
                 Ok(body) => result = Cow::Owned(body),
                 Err(error) => {
                     self.deserialization
@@ -781,6 +977,12 @@ impl Encrypted {
         {
             // Response to internal request, do not propagate.
             self.salt_request_msg_id = None;
+            self.salt_request_failures = self.salt_request_failures.saturating_add(1);
+            if self.salt_request_failures > 3 {
+                return Err(DeserializeError::ResourceLimit {
+                    resource: "salt request retries",
+                });
+            }
         } else {
             self.deserialization
                 .push(Deserialization::BadMessage(super::BadMessage {
@@ -817,12 +1019,21 @@ impl Encrypted {
             32 => {
                 // Sent `seq_no` was too low. Bump it by some large-ish value.
                 // TODO start with a fresh session rather than guessing
-                self.sequence += 64;
+                self.sequence =
+                    self.sequence
+                        .checked_add(64)
+                        .ok_or(DeserializeError::InvalidEnvelope {
+                            reason: "sequence overflow",
+                        })?;
             }
             33 => {
                 // Sent `seq_no` was too high (this error doesn't seem to occur).
                 // TODO start with a fresh session rather than guessing
-                self.sequence -= 16;
+                self.sequence = self.sequence.checked_sub(16).filter(|n| *n >= 0).ok_or(
+                    DeserializeError::InvalidEnvelope {
+                        reason: "sequence underflow",
+                    },
+                )?;
             }
             _ => {
                 // Just notify about it.
@@ -952,10 +1163,10 @@ impl Encrypted {
         let msg_detailed = tl::enums::MsgDetailedInfo::from_bytes(&message.body)?;
         match msg_detailed {
             tl::enums::MsgDetailedInfo::Info(x) => {
-                self.queue_ack(x.answer_msg_id);
+                self.queue_ack(x.answer_msg_id)?;
             }
             tl::enums::MsgDetailedInfo::MsgNewDetailedInfo(x) => {
-                self.queue_ack(x.answer_msg_id);
+                self.queue_ack(x.answer_msg_id)?;
             }
         }
         Ok(())
@@ -1026,6 +1237,13 @@ impl Encrypted {
     ) -> Result<(), DeserializeError> {
         let tl::enums::FutureSalts::Salts(salts) =
             tl::enums::FutureSalts::from_bytes(&message.body)?;
+        if salts.salts.0.len() > NUM_FUTURE_SALTS as usize
+            || salts.salts.0.iter().any(|s| s.valid_since >= s.valid_until)
+        {
+            return Err(DeserializeError::InvalidEnvelope {
+                reason: "invalid future salts",
+            });
+        }
 
         if self
             .salt_request_msg_id
@@ -1042,8 +1260,10 @@ impl Encrypted {
         }
 
         self.start_salt_time = Some((salts.now, Instant::now()));
+        self.salt_request_failures = 0;
         self.salts = salts.salts.0;
-        self.salts.sort_by_key(|salt| -salt.valid_since);
+        self.salts
+            .sort_by_key(|salt| std::cmp::Reverse(salt.valid_since));
         info!("got {} future salts", self.salts.len());
 
         Ok(())
@@ -1053,7 +1273,9 @@ impl Encrypted {
         &mut self,
         _message: manual_tl::MessageView<'_>,
     ) -> Result<(), DeserializeError> {
-        panic!("no request should trigger a `future_salt` result")
+        Err(DeserializeError::InvalidEnvelope {
+            reason: "unsolicited future_salt",
+        })
     }
 
     /// **[Ping Messages (PING/PONG)]**
@@ -1211,9 +1433,17 @@ impl Encrypted {
     fn handle_container(
         &mut self,
         message: manual_tl::MessageView<'_>,
+        budget: &mut DecodeBudget,
+        depth: usize,
     ) -> Result<(), DeserializeError> {
-        for inner_message in manual_tl::MessageContainer::borrowed_messages(&message.body)? {
-            self.process_message(inner_message?)?;
+        let parent = budget
+            .authenticated
+            .then_some((message.msg_id, message.seq_no));
+        // Prevalidate all envelopes once before any service-message side effect.
+        for inner_message in
+            manual_tl::MessageContainer::borrowed_messages_validated(&message.body, parent)?
+        {
+            self.process_bounded(inner_message?, budget, depth + 1, true)?;
         }
 
         Ok(())
@@ -1243,35 +1473,9 @@ impl Encrypted {
         &self,
         _message: manual_tl::MessageView<'_>,
     ) -> Result<(), DeserializeError> {
-        panic!("msg_copy should not be used")
-    }
-
-    /// **[Packed Object]**
-    ///
-    /// Used to replace any other object (or rather, a serialization thereof)
-    /// with its archived (gzipped) representation:
-    ///
-    /// ```tl
-    /// gzip_packed#3072cfa1 packed_data:string = Object;
-    /// ```
-    ///
-    /// At the present time, it is supported in the body of an RPC response
-    /// (i.e., as result in rpc_result) and generated by the server for a
-    /// limited number of high-level queries. In addition, in the future it
-    /// may be used to transmit non-service messages (i.e. RPC queries) from
-    /// client to server.
-    ///
-    /// [Packed Object]: https://core.telegram.org/mtproto/service_messages#packed-object
-    fn handle_gzip_packed(
-        &mut self,
-        message: manual_tl::MessageView<'_>,
-    ) -> Result<(), DeserializeError> {
-        let body = manual_tl::GzipPacked::decompress_from_bytes(&message.body)?;
-        self.process_message(manual_tl::MessageView {
-            body: Cow::Owned(body),
-            ..message
+        Err(DeserializeError::InvalidEnvelope {
+            reason: "unsupported msg_copy",
         })
-        .map(|_| ())
     }
 
     /// **[HTTP Wait/Long Poll]**
@@ -1373,6 +1577,17 @@ pub const PLAIN_PACKET_HEADER_LEN: usize = 8 + 8;
 pub const MESSAGE_CONTAINER_HEADER_LEN: usize = (8 + 4 + 4) + (4 + 4);
 
 impl Mtp for Encrypted {
+    fn request_is_valid(&self, request: &[u8]) -> bool {
+        Self::request_fits(request, self.receive_updates)
+    }
+
+    fn service_deadline(&self) -> Option<std::time::Instant> {
+        self.pending_ack_since.map(|since| since + ACK_MAX_DELAY)
+    }
+
+    fn on_service_timeout(&mut self) {
+        self.ack_flush_due = !self.pending_ack.is_empty();
+    }
     /// Pushes a request into the internal buffer.
     ///
     /// Multiple requests will be buffered and sent as a single container to reduce roundtrips.
@@ -1388,15 +1603,18 @@ impl Mtp for Encrypted {
             self.start_salt_time.filter(|_| self.salts.len() > 1)
         {
             let salt = &self.salts[self.salts.len() - 2];
-            let now = start_secs + start_instant.elapsed().as_secs() as i32;
-            if now >= salt.valid_since + SALT_USE_DELAY {
+            let now = i64::from(start_secs)
+                + start_instant.elapsed().as_secs().min(i32::MAX as u64) as i64;
+            if now >= i64::from(salt.valid_since) + i64::from(SALT_USE_DELAY) {
                 self.salts.pop();
             }
         }
 
+        let requesting_salt = self.salt_request_msg_id.is_some();
         self.try_request_salts(buffer);
-        if self.salt_request_msg_id.is_some() {
-            // Don't add anything else to the container while we still need new salts.
+        if !requesting_salt && self.salt_request_msg_id.is_some() {
+            // Keep the salt request in its own packet so a bad-message response
+            // identifies it. Later user calls need not wait for its response.
             return None;
         }
 
@@ -1420,11 +1638,9 @@ impl Mtp for Encrypted {
 
         // Requests that are too large would cause Telegram to close the
         // connection but are so uncommon it's not worth returning `Err`.
-        assert!(
-            prefix.len() + request.len() + manual_tl::Message::SIZE_OVERHEAD
-                <= manual_tl::MessageContainer::MAXIMUM_SIZE
-        );
-        assert!(request.len() >= 4 && request.len().is_multiple_of(4));
+        if !Self::request_fits(request, self.receive_updates) {
+            return None;
+        }
 
         // Payload provided by the user is always considered to be
         // content-related, which means we can apply compression.
@@ -1441,8 +1657,7 @@ impl Mtp for Encrypted {
             }
         }
 
-        let new_size = buffer.len() + prefix.len() + body.len() + manual_tl::Message::SIZE_OVERHEAD;
-        if new_size > manual_tl::MessageContainer::MAXIMUM_SIZE {
+        if !self.message_fits(buffer, prefix.len() + body.len()) {
             // No more messages fit in this container.
             return None;
         }
@@ -1455,6 +1670,16 @@ impl Mtp for Encrypted {
     }
 
     fn finalize(&mut self, buffer: &mut DequeBuffer<u8>) -> Option<MsgId> {
+        if self.ack_due()
+            && (self.ack_flush_due
+                || !buffer.is_empty()
+                || self.pending_ack.len() >= 8192
+                || self
+                    .pending_ack_since
+                    .is_some_and(|since| since.elapsed() >= ACK_MAX_DELAY))
+        {
+            self.serialize_pending_ack(buffer);
+        }
         self.finalize_plain(buffer);
         if buffer.is_empty() {
             None
@@ -1473,20 +1698,7 @@ impl Mtp for Encrypted {
 
         let plaintext = decrypt_data_v2(payload, &self.auth_key)?;
 
-        let mut buffer = Cursor::from_slice(plaintext);
-
-        let _salt = i64::deserialize(&mut buffer)?;
-        let session_id = i64::deserialize(&mut buffer)?;
-        if session_id != self.session_id {
-            panic!("wrong session id");
-        }
-
-        self.process_message(manual_tl::MessageView::deserialize(&mut buffer)?)?;
-
-        // For simplicity, and to avoid passing too much stuff around (RPC results, updates),
-        // the processing result is stored in self. After processing is done, that temporary
-        // state is cleaned and returned with `mem::take`.
-        Ok(mem::take(&mut self.deserialization))
+        self.process_plaintext(plaintext)
     }
 
     fn recycle_deserialization(&mut self, mut results: Vec<Deserialization>) {
@@ -1517,6 +1729,166 @@ mod tests {
 
     fn auth_key() -> [u8; 256] {
         [0; 256]
+    }
+
+    fn plaintext(session: i64, id: i64, padding: usize) -> Vec<u8> {
+        let mut data = 0i64.to_bytes();
+        session.serialize(&mut data);
+        manual_tl::Message {
+            msg_id: id,
+            seq_no: 1,
+            body: test_rpc_body(4, &true.to_bytes()),
+        }
+        .serialize(&mut data);
+        data.resize(data.len() + padding, 0);
+        data
+    }
+
+    #[test]
+    fn authenticated_envelope_checks_and_replay_suppression() {
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let session = mtp.session_id;
+        for bytes in [
+            plaintext(session.wrapping_add(1), 3, 16),
+            plaintext(session, 2, 16),
+            plaintext(session, -3, 16),
+            plaintext(session, 3, 4),
+            plaintext(session, 3, 1028),
+        ] {
+            assert!(mtp.process_plaintext(&bytes).is_err());
+        }
+        let first = plaintext(session, 3, 16);
+        assert_eq!(mtp.process_plaintext(&first).unwrap().len(), 1);
+        assert!(mtp.process_plaintext(&first).unwrap().is_empty());
+        assert_eq!(mtp.pending_ack, [3, 3]);
+        for index in 1..1100 {
+            assert_eq!(
+                mtp.process_plaintext(&plaintext(session, index * 4 + 3, 16))
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        assert_eq!(mtp.received_ids.len(), 1024);
+        assert_eq!(mtp.received_ids.capacity(), 1024);
+        assert!(mtp.process_plaintext(&first).unwrap().is_empty());
+    }
+
+    #[test]
+    fn salt_prefetch_does_not_block_user_requests_waiting_for_response() {
+        let mut mtp = Encrypted::build().first_salt(123).finish(auth_key());
+        let mut buffer = DequeBuffer::with_capacity(0, 0);
+        assert!(mtp.push(&mut buffer, REQUEST).is_none());
+        assert!(mtp.salt_request_msg_id.is_some());
+        mtp.finalize(&mut buffer).unwrap();
+        buffer.clear();
+        assert!(mtp.push(&mut buffer, REQUEST).is_some());
+    }
+
+    #[test]
+    fn service_messages_respect_packet_capacity_and_preserve_deferred_acks() {
+        let mut mtp = Encrypted::build()
+            .compression_threshold(None)
+            .finish(auth_key());
+        let mut buffer = DequeBuffer::with_capacity(0, 0);
+        let request = vec![0; 1_044_372];
+        assert!(mtp.push(&mut buffer, &request).is_some());
+        for id in 0..9000 {
+            mtp.queue_ack(id).unwrap();
+        }
+        let oldest = mtp.pending_ack_since;
+        mtp.serialize_pending_ack(&mut buffer);
+        assert_eq!(mtp.pending_ack.len(), 9000);
+        assert_eq!(mtp.pending_ack_since, oldest);
+        mtp.finalize(&mut buffer).unwrap();
+        assert!(buffer.len() <= 0xff000);
+        buffer.clear();
+        mtp.serialize_pending_ack(&mut buffer);
+        assert_eq!(mtp.pending_ack, (8192..9000).collect::<Vec<_>>());
+        assert_eq!(mtp.pending_ack_since, oldest);
+        mtp.finalize(&mut buffer).unwrap();
+        assert!(buffer.len() <= 0xff000);
+        assert!(mtp.pending_ack.is_empty());
+    }
+
+    #[test]
+    fn idle_ack_only_packet_and_gzip_ack_once() {
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let body = manual_tl::GzipPacked::new(&test_rpc_body(4, &true.to_bytes())).to_bytes();
+        mtp.process_message(manual_tl::MessageView {
+            msg_id: 7,
+            seq_no: 1,
+            body: Cow::Owned(body),
+        })
+        .unwrap();
+        assert_eq!(mtp.pending_ack, [7]);
+        mtp.pending_ack_since = Instant::now().checked_sub(ACK_MAX_DELAY);
+        let mut buffer = DequeBuffer::with_capacity(0, 0);
+        assert!(mtp.finalize(&mut buffer).is_some());
+        assert!(mtp.pending_ack.is_empty());
+    }
+
+    #[test]
+    fn explicit_service_deadline_flushes_small_batch_and_backlog_is_bounded() {
+        let mut mtp = Encrypted::build().ack_batch(100).finish(auth_key());
+        mtp.queue_ack(3).unwrap();
+        let mut buffer = DequeBuffer::with_capacity(0, 0);
+        assert!(mtp.finalize(&mut buffer).is_none());
+        mtp.on_service_timeout();
+        assert!(mtp.finalize(&mut buffer).is_some());
+        assert!(mtp.pending_ack.is_empty());
+        mtp.pending_ack.resize(65_536, 7);
+        assert!(matches!(
+            mtp.queue_ack(9),
+            Err(DeserializeError::ResourceLimit { .. })
+        ));
+        assert_eq!(mtp.pending_ack.len(), 65_536);
+    }
+
+    #[test]
+    fn gzip_depth_cumulative_budget_and_hidden_container_nesting() {
+        let mut body = test_rpc_body(4, &true.to_bytes());
+        for _ in 0..33 {
+            body = manual_tl::GzipPacked::new(&body).to_bytes();
+        }
+        let mut mtp = Encrypted::build().finish(auth_key());
+        assert!(matches!(
+            mtp.process_message(manual_tl::MessageView {
+                msg_id: 7,
+                seq_no: 1,
+                body: Cow::Owned(body),
+            }),
+            Err(DeserializeError::ResourceLimit { .. })
+        ));
+        let mut budget = DecodeBudget::new(DecodeLimits {
+            gzip_output: 128,
+            expanded_bytes: 192,
+            ..Default::default()
+        });
+        let body = manual_tl::GzipPacked::new(&[0; 128]).to_bytes();
+        assert_eq!(budget.decompress(&body, 1).unwrap().len(), 128);
+        assert!(budget.decompress(&body, 1).is_err());
+        assert_eq!(budget.remaining, 0);
+
+        let mut container = manual_tl::MessageContainer::CONSTRUCTOR_ID.to_bytes();
+        0i32.serialize(&mut container);
+        let gzip = manual_tl::GzipPacked::new(&container).to_bytes();
+        let mut outer = manual_tl::MessageContainer::CONSTRUCTOR_ID.to_bytes();
+        1i32.serialize(&mut outer);
+        manual_tl::Message {
+            msg_id: 3,
+            seq_no: 0,
+            body: gzip,
+        }
+        .serialize(&mut outer);
+        assert!(matches!(
+            mtp.process_message(manual_tl::MessageView {
+                msg_id: 7,
+                seq_no: 0,
+                body: Cow::Owned(outer),
+            }),
+            Err(DeserializeError::InvalidEnvelope { .. })
+        ));
     }
 
     fn test_rpc_body(id: i64, result: &[u8]) -> Vec<u8> {
@@ -2060,7 +2432,7 @@ mod tests {
                 tl::functions::InvokeWithoutUpdates::<tl::functions::help::GetConfig>::CONSTRUCTOR_ID,
             ] {
                 let wrapped = !receive_updates && constructor == tl::functions::help::GetConfig::CONSTRUCTOR_ID;
-                let limit = 1_044_432 - if wrapped { 4 } else { 0 };
+                let limit = 1_044_372 - if wrapped { 4 } else { 0 };
                 let mut data = vec![0; limit];
                 data[..4].copy_from_slice(&constructor.to_le_bytes());
                 assert!(Encrypted::request_fits(&data, receive_updates));
@@ -2080,7 +2452,7 @@ mod tests {
     #[test]
     fn maximum_compressible_request_preserves_existing_input_limit() {
         for receive_updates in [false, true] {
-            let limit = 1_044_432 - if receive_updates { 0 } else { 4 };
+            let limit = 1_044_372 - if receive_updates { 0 } else { 4 };
             let mut data = vec![0; limit];
             data[..4]
                 .copy_from_slice(&tl::functions::help::GetConfig::CONSTRUCTOR_ID.to_le_bytes());
@@ -2113,21 +2485,23 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
-    fn ensure_large_payload_panics() {
+    fn ensure_large_payload_is_rejected() {
         let mut buffer = DequeBuffer::with_capacity(0, 0);
         let mut mtproto = Encrypted::build().finish(auth_key());
 
-        mtproto.push(&mut buffer, &vec![0; 2 * 1024 * 1024]);
+        assert!(
+            mtproto
+                .push(&mut buffer, &vec![0; 2 * 1024 * 1024])
+                .is_none()
+        );
     }
 
     #[test]
-    #[should_panic]
-    fn ensure_non_padded_payload_panics() {
+    fn ensure_non_padded_payload_is_rejected() {
         let mut buffer = DequeBuffer::with_capacity(0, 0);
         let mut mtproto = Encrypted::build().finish(auth_key());
 
-        mtproto.push(&mut buffer, &[1, 2, 3]);
+        assert!(mtproto.push(&mut buffer, &[1, 2, 3]).is_none());
     }
 
     #[test]

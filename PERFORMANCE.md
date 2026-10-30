@@ -1,5 +1,28 @@
 # Library efficiency and fork changes
 
+## Protocol reliability and concurrent initialization (2026-10-30)
+
+The [implementation and review ledger](OPTIMIZATION-2026-10.md) records the
+retained P0/P1/P2/P3 findings, upstream attribution, compatibility changes,
+validation and remaining independent review. Changes bound handshake/gzip work,
+separate inbound/outbound limits, preserve delivery certainty, schedule service
+traffic with a retained timer, and isolate cold initialization by DC. They add
+optional byte admission and checked update recovery; Tokio remains the runtime.
+
+Three alternating local release A/B pairs measured plain throughput
+68,504 -> 66,743 RPC/s and gzip 70,210 -> 69,374 RPC/s: **2.57%/1.19% slower**.
+Client CPU/RPC rose 2.42%/1.70%; allocations remained 2.00. Plain p50/p95/p99
+medians were 209.3/386.3/507.3 -> 208.2/398.6/494.9 us. These are correctness
+and resource-control costs, not a universal performance improvement.
+
+The 400-session census rose from 2,103 to 2,135 B/pool before connection and
+7,911 to 8,711 B after nine RPCs. Replay history additionally grows on use up
+to 8 KiB/session, beyond the 128 bytes allocated at this census point.
+The 64 MiB gzip-limit fixture passed with 67,680 KiB process peak RSS. These
+are local measurements; no Telegram traffic or consumer deployment ran.
+Full [raw samples and reproduction instructions](benchmarks/2026-10-30/README.md)
+retain the initial baseline, a slower intermediate candidate, and final data.
+
 ## Per-session footprint and AES-IGE (2026-10-23)
 
 `grammers-mtsender/tests/loopback.rs` adds an ignored end-to-end harness: a

@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::{fmt, io};
+use std::{fmt, io, sync::Arc};
 
 use grammers_mtproto::{authentication, mtp, transport};
 use grammers_tl_types as tl;
@@ -14,6 +14,8 @@ use grammers_tl_types as tl;
 /// This error occurs when reading from the network fails.
 #[derive(Debug)]
 pub enum ReadError {
+    /// Original connection error shared with all affected invocations.
+    Shared(Arc<ReadError>),
     /// Standard I/O error.
     Io(io::Error),
     /// Error propagated from the underlying [`transport`].
@@ -22,11 +24,41 @@ pub enum ReadError {
     Deserialize(mtp::DeserializeError),
 }
 
-impl std::error::Error for ReadError {}
+impl std::error::Error for ReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Shared(error) => Some(error.as_ref()),
+            Self::Io(error) => Some(error),
+            Self::Transport(error) => Some(error),
+            Self::Deserialize(error) => Some(error),
+        }
+    }
+}
+
+impl ReadError {
+    /// The original framing error, including an explicit server status.
+    pub fn transport_error(&self) -> Option<&transport::Error> {
+        match self {
+            Self::Shared(error) => error.transport_error(),
+            Self::Transport(error) => Some(error),
+            _ => None,
+        }
+    }
+
+    /// The original I/O error, when the connection failed at the socket layer.
+    pub fn io_error(&self) -> Option<&io::Error> {
+        match self {
+            Self::Shared(error) => error.io_error(),
+            Self::Io(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 impl Clone for ReadError {
     fn clone(&self) -> Self {
         match self {
+            Self::Shared(error) => Self::Shared(Arc::clone(error)),
             Self::Io(e) => Self::Io(
                 e.raw_os_error()
                     .map(io::Error::from_raw_os_error)
@@ -41,6 +73,7 @@ impl Clone for ReadError {
 impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Shared(error) => error.fmt(f),
             Self::Io(err) => write!(f, "read error, IO failed: {err}"),
             Self::Transport(err) => write!(f, "read error, transport-level: {err}"),
             Self::Deserialize(err) => write!(f, "read error, bad response: {err}"),
@@ -194,6 +227,17 @@ impl RpcError {
 /// This error occurs when a Remote Procedure call was unsuccessful.
 #[derive(Debug)]
 pub enum InvocationError {
+    /// A definitive protocol rejection, including an exhausted resend budget.
+    BadMessage { code: i32, retries: u8 },
+    /// One initialization failure shared by all callers waiting for that DC.
+    Shared(Arc<InvocationError>),
+    /// A connection failed. The original error is retained for inspection.
+    /// `may_have_been_sent` includes partially written encrypted packets: no
+    /// automatic replay is safe in that case without application knowledge.
+    Read {
+        error: Arc<ReadError>,
+        may_have_been_sent: bool,
+    },
     /// Error propagated from the session.
     ///
     /// Most commonly, the session is accessed on each request to query the current
@@ -246,13 +290,15 @@ pub enum InvocationError {
 impl std::error::Error for InvocationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Shared(error) => Some(error.as_ref()),
+            Self::Read { error, .. } => Some(error.as_ref()),
             Self::Session(e) => Some(e.as_ref()),
             Self::Rpc(e) => Some(e),
             Self::Io(e) => Some(e),
             Self::Deserialize(e) => Some(e),
             Self::Transport(e) => Some(e),
             Self::Authentication(e) => Some(e),
-            Self::Dropped(_) | Self::InvalidDc => None,
+            Self::Dropped(_) | Self::InvalidDc | Self::BadMessage { .. } => None,
         }
     }
 }
@@ -289,6 +335,18 @@ pub enum InvocationErrorCategory {
 impl fmt::Display for InvocationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::BadMessage { code, retries } => write!(
+                f,
+                "MTProto rejected message with code {code} after {retries} retries"
+            ),
+            Self::Shared(error) => error.fmt(f),
+            Self::Read {
+                error,
+                may_have_been_sent,
+            } => write!(
+                f,
+                "request error (delivery uncertain: {may_have_been_sent}): {error}"
+            ),
             Self::Session(_) => write!(f, "session error"),
             Self::Rpc(err) => write!(f, "request error: {err}"),
             Self::Io(err) => write!(f, "request error: {err}"),
@@ -310,6 +368,10 @@ impl From<Box<dyn std::error::Error + Send + Sync>> for InvocationError {
 impl From<ReadError> for InvocationError {
     fn from(error: ReadError) -> Self {
         match error {
+            ReadError::Shared(error) => Self::Read {
+                error,
+                may_have_been_sent: true,
+            },
             ReadError::Io(error) => Self::from(error),
             ReadError::Transport(error) => Self::from(error),
             ReadError::Deserialize(error) => Self::from(error),
@@ -348,10 +410,36 @@ impl From<authentication::Error> for InvocationError {
 }
 
 impl InvocationError {
+    /// Inspect transport rejection through shared and delivery-aware errors.
+    pub fn transport_error(&self) -> Option<&transport::Error> {
+        match self.root_cause() {
+            Self::Read { error, .. } => error.transport_error(),
+            Self::Transport(error) => Some(error),
+            _ => None,
+        }
+    }
+
+    /// Inspect the original failure after single-flight initialization.
+    pub fn root_cause(&self) -> &Self {
+        match self {
+            Self::Shared(error) => error.root_cause(),
+            _ => self,
+        }
+    }
+
     /// Classify without formatting or discarding the original error.
     pub fn category(&self) -> InvocationErrorCategory {
         use InvocationErrorCategory as C;
         match self {
+            Self::BadMessage { .. } => C::Protocol,
+            Self::Shared(error) => error.category(),
+            Self::Read { error, .. } => {
+                if error.io_error().is_some() {
+                    C::Network
+                } else {
+                    C::Protocol
+                }
+            }
             Self::Session(_) => C::Session,
             Self::Dropped(_) => C::Closed,
             Self::InvalidDc => C::InvalidRequest,
@@ -376,7 +464,7 @@ impl InvocationError {
 
     /// The server's explicit flood/slow mode wait, never an inferred I/O retry.
     pub fn retry_after(&self) -> Option<std::time::Duration> {
-        match self {
+        match self.root_cause() {
             Self::Rpc(e)
                 if matches!(
                     e.name.as_str(),
@@ -416,7 +504,7 @@ impl InvocationError {
     /// ```
     #[inline]
     pub fn is(&self, rpc_error: &str) -> bool {
-        match self {
+        match self.root_cause() {
             Self::Rpc(rpc) => rpc.is(rpc_error),
             _ => false,
         }

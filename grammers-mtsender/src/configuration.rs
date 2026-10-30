@@ -79,10 +79,22 @@ pub struct ConnectionParams {
     /// None preserves unlimited establishment; this is not an ordinary RPC timeout.
     pub connection_timeout: Option<Duration>,
 
+    /// Optional maximum time without a complete valid inbound packet. This
+    /// detects silent established connections; it is not a per-RPC deadline.
+    pub liveness_timeout: Option<Duration>,
+
+    /// Independent inbound decompression/work limits, applied before initialization.
+    pub decode_limits: grammers_mtproto::mtp::DecodeLimits,
+
     /// Maximum queued plus in-flight requests. At capacity admission fails with
     /// [`std::io::ErrorKind::WouldBlock`]. Caller cancellation does not release
     /// capacity held by an already serialized request. `None` is unlimited.
     pub max_pending_requests: Option<NonZeroUsize>,
+
+    /// Maximum sum of admitted request-body bytes, queued or in flight. Shared
+    /// bodies count once per invocation. `None` preserves the unlimited default.
+    /// Cancellation of a sent call does not release its byte reservation.
+    pub max_pending_bytes: Option<NonZeroUsize>,
 
     #[doc(hidden)]
     pub __non_exhaustive: (),
@@ -173,7 +185,10 @@ impl Default for ConnectionParams {
             receive_updates: true,
             ack_batch: 1,
             connection_timeout: None,
+            liveness_timeout: None,
+            decode_limits: Default::default(),
             max_pending_requests: None,
+            max_pending_bytes: None,
             __non_exhaustive: (),
         }
     }
@@ -194,13 +209,19 @@ impl RetryPolicy for NoRetries {
 
 impl RetryPolicy for AutoSleep {
     fn should_retry(&self, ctx: &RetryContext) -> ControlFlow<(), Duration> {
-        match ctx.error {
+        match ctx.error.root_cause() {
+            InvocationError::Read {
+                error,
+                may_have_been_sent: false,
+            } if ctx.fail_count <= self.tries && error.io_error().is_some() => self
+                .io_errors_as_flood_of
+                .map_or(ControlFlow::Break(()), ControlFlow::Continue),
             InvocationError::Rpc(RpcError {
                 code: 420,
                 value: Some(seconds),
                 ..
-            }) if ctx.fail_count <= self.tries && seconds as u64 <= self.threshold.as_secs() => {
-                ControlFlow::Continue(Duration::from_secs(seconds as _))
+            }) if ctx.fail_count <= self.tries && *seconds as u64 <= self.threshold.as_secs() => {
+                ControlFlow::Continue(Duration::from_secs(*seconds as _))
             }
             InvocationError::Io(_) if ctx.fail_count <= self.tries => {
                 if let Some(duration) = self.io_errors_as_flood_of {

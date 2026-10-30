@@ -1,0 +1,9 @@
+{
+  "base": "7774ed666317d981e1dfea0d12311cbd38acb43e",
+  "branch": "duo/1cb9a1ed/impl",
+  "source_diff_sha256": "6d3482d97b52404805d320681137b2040005687f1d9f63a05dc5926806648f61",
+  "build": "cargo test --locked --release -p grammers-mtsender --test loopback --no-run",
+  "toolchain": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "optimization": "default release; no target-cpu override",
+  "network": "localhost only"
+}

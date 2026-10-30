@@ -40,26 +40,85 @@ fn modpow(mut n: u128, mut e: u128, m: u128) -> u128 {
 ///
 /// Pollard's rho algorithm: <https://en.wikipedia.org/wiki/Pollard%27s_rho_algorithm>
 /// Richard Brent: <https://maths-people.anu.edu.au/~brent/pd/rpb051i.pdf>
-#[allow(clippy::many_single_char_names)]
+///
+/// # Panics
+/// Panics if the input is not a semiprime or exceeds the bounded work budget.
+/// Use [`try_factorize`] for untrusted inputs.
 pub fn factorize(pq: u64) -> (u64, u64) {
+    try_factorize(pq).expect("invalid pq or factorization work limit exceeded")
+}
+
+/// Factor a semiprime with bounded work, returning `None` for invalid inputs
+/// or when the work budget is exhausted. Suitable for untrusted handshake data.
+/// Unlike [`factorize`], this function never panics on an invalid number.
+#[allow(clippy::many_single_char_names)]
+pub fn try_factorize(pq: u64) -> Option<(u64, u64)> {
+    // Small divisors also cover tiny composites for which the rho seeds degenerate.
+    for p in [
+        2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89,
+        97,
+    ] {
+        if pq >= p * p && pq.is_multiple_of(p) {
+            let q = pq / p;
+            return is_prime(q).then_some((p, q));
+        }
+    }
+    if pq < 4 || is_prime(pq) {
+        return None;
+    }
     const ATTEMPTS: [u64; 5] = [43, 47, 53, 59, 61];
     for attempt in ATTEMPTS {
         // > Note that this algorithm may not find the factors and will return failure for composite n.
         // > In that case, use a different f(x) and try again [...] We choose f(x) = x*x + c
         // Thus by choosing a different `c` we're changing `f(x)` and can try again.
         // Prime factors are used for the attempts in the hopes they'll be more likely to work.
-        let c = attempt * (pq / 103);
-        let (p, q) = factorize_with_param(pq, c);
-        if p != 1 {
-            return (p, q);
+        let c = (attempt * (pq / 103)).max(1);
+        // Each restart, including the fallback loop, shares this finite budget.
+        if let Some((p, q)) = factorize_with_param(pq, c, 250_000)
+            && p > 1
+            && q > 1
+            && p.checked_mul(q) == Some(pq)
+        {
+            return (is_prime(p) && is_prime(q)).then_some((p, q));
         }
     }
-    panic!("failed to factorize in a fixed amount of attempts")
+    None
 }
 
-fn factorize_with_param(pq: u64, c: u64) -> (u64, u64) {
+// Deterministic Miller-Rabin bases covering all u64 values. Arithmetic is
+// widened before multiplication, including inputs close to u64::MAX.
+fn is_prime(n: u64) -> bool {
+    if n < 2 || n.is_multiple_of(2) {
+        return n == 2;
+    }
+    let s = (n - 1).trailing_zeros();
+    let d = (n - 1) >> s;
+    for a in [2, 325, 9375, 28178, 450775, 9780504, 1795265022] {
+        if a % n == 0 {
+            continue;
+        }
+        let mut x = modpow(a as u128, d as u128, n as u128);
+        if x == 1 || x == u128::from(n - 1) {
+            continue;
+        }
+        let mut witness = true;
+        for _ in 1..s {
+            x = x * x % u128::from(n);
+            if x == u128::from(n - 1) {
+                witness = false;
+                break;
+            }
+        }
+        if witness {
+            return false;
+        }
+    }
+    true
+}
+
+fn factorize_with_param(pq: u64, c: u64, mut work: usize) -> Option<(u64, u64)> {
     if pq.is_multiple_of(2) {
-        return (2, pq / 2);
+        return Some((2, pq / 2));
     }
 
     let pq = pq as u128;
@@ -71,7 +130,7 @@ fn factorize_with_param(pq: u64, c: u64) -> (u64, u64) {
     // c is an input free to change in case the chosen value fails.
     let mut y = 3 * (pq / 7);
     let c = c as u128;
-    let m = 7 * (pq / 13);
+    let m = (7 * (pq / 13)).max(1);
     let mut g = 1u128;
     let mut r = 1u128;
     let mut q = 1u128;
@@ -81,6 +140,7 @@ fn factorize_with_param(pq: u64, c: u64) -> (u64, u64) {
     while g == 1 {
         x = y;
         for _ in 0..r {
+            work = work.checked_sub(1)?;
             y = (modpow(y, 2, pq) + c) % pq;
         }
 
@@ -88,6 +148,7 @@ fn factorize_with_param(pq: u64, c: u64) -> (u64, u64) {
         while k < r && g == 1 {
             ys = y;
             for _ in 0..m.min(r - k) {
+                work = work.checked_sub(1)?;
                 y = (modpow(y, 2, pq) + c) % pq;
                 q = (q * abs_sub(x, y)) % pq;
             }
@@ -101,6 +162,7 @@ fn factorize_with_param(pq: u64, c: u64) -> (u64, u64) {
 
     if g == pq {
         loop {
+            work = work.checked_sub(1)?;
             ys = (modpow(ys, 2, pq) + c) % pq;
             g = gcd(abs_sub(x, ys), pq);
             if g > 1 {
@@ -110,12 +172,61 @@ fn factorize_with_param(pq: u64, c: u64) -> (u64, u64) {
     }
 
     let (p, q) = (g as u64, (pq / g) as u64);
-    (p.min(q), p.max(q))
+    Some((p.min(q), p.max(q)))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_factorization_small_and_invalid() {
+        for n in 0..256 {
+            let expected = (2..=n / 2)
+                .find_map(|p| (n % p == 0 && is_prime(p) && is_prime(n / p)).then_some((p, n / p)));
+            assert_eq!(try_factorize(n), expected, "{n}");
+        }
+        assert_eq!(try_factorize(u64::MAX), None);
+        assert_eq!(try_factorize(18_446_744_073_709_551_557), None);
+        assert_eq!(factorize_with_param(1470626929934143021, 43, 0), None);
+    }
+
+    #[test]
+    fn factorization_has_a_process_deadline() {
+        use std::{
+            process::Command,
+            time::{Duration, Instant},
+        };
+        const CHILD: &str = "GRAMMERS_FACTORIZE_DEADLINE_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            checked_factorization_small_and_invalid();
+            test_factorization_1();
+            test_factorization_2();
+            test_factorization_3();
+            return;
+        }
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "factorize::tests::factorization_has_a_process_deadline",
+            ])
+            .env(CHILD, "1")
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("factorization exceeded process deadline");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 
     #[test]
     fn test_factorization_1() {

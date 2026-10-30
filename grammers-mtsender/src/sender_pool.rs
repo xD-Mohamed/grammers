@@ -82,6 +82,25 @@ struct ConnectionInfo {
     abort_handle: AbortHandle,
 }
 
+struct PendingConnection {
+    dc_id: i32,
+    requests: Vec<Rpc>,
+    abort_handle: AbortHandle,
+}
+
+struct ConnectionSetup {
+    session: Arc<ErasedSession>,
+    state: Arc<PoolState>,
+    api_id: i32,
+    connection_params: Arc<ConnectionParams>,
+}
+
+type SetupResult = (
+    i32,
+    tokio::task::Id,
+    Result<Sender<Transport, mtp::Encrypted>, InvocationError>,
+);
+
 // One small list per pool (usually one DC). Written only on connection changes;
 // the read guard is released before queueing or awaiting a response.
 #[derive(Default)]
@@ -147,7 +166,11 @@ impl fmt::Display for PoolRunError {
 impl std::error::Error for PoolRunError {}
 
 struct PoolState {
+    config_lock: tokio::sync::Mutex<()>,
+    home_failures: AtomicU64,
+    home_failure: tokio::sync::Notify,
     capacity: Option<Arc<Semaphore>>,
+    byte_capacity: Option<Arc<Semaphore>>,
     stopped: AtomicBool,
     active: AtomicUsize,
     dropped: AtomicU64,
@@ -158,7 +181,11 @@ struct PoolState {
 impl Default for PoolState {
     fn default() -> Self {
         Self {
+            config_lock: tokio::sync::Mutex::new(()),
+            home_failures: AtomicU64::new(0),
+            home_failure: tokio::sync::Notify::new(),
             capacity: None,
+            byte_capacity: None,
             stopped: AtomicBool::new(false),
             active: AtomicUsize::new(0),
             dropped: AtomicU64::new(0),
@@ -262,7 +289,9 @@ pub struct SenderPool {
 pub struct SenderPoolRunner {
     session: Arc<ErasedSession>,
     api_id: i32,
-    connection_params: ConnectionParams,
+    connection_params: Arc<ConnectionParams>,
+    pending: Vec<PendingConnection>,
+    setup_pool: JoinSet<SetupResult>,
     request_rx: queue::UnboundedReceiver<Request>,
     updates_tx: Option<mpsc::Sender<UpdatesLike>>,
     connections: Vec<ConnectionInfo>,
@@ -280,6 +309,21 @@ impl Deref for SenderPoolFatHandle {
 }
 
 impl SenderPoolHandle {
+    pub(crate) fn home_failure_generation(&self) -> u64 {
+        self.3.home_failures.load(Ordering::Acquire)
+    }
+
+    pub(crate) async fn wait_home_failure(&self, generation: u64) {
+        loop {
+            let notified = self.3.home_failure.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.home_failure_generation() != generation {
+                return;
+            }
+            notified.await;
+        }
+    }
     /// Observe runtime activity without holding a lock across I/O.
     pub fn status(&self) -> PoolStatus {
         PoolStatus {
@@ -416,6 +460,20 @@ impl SenderPoolHandle {
                 ))
             })?;
             Some(crate::InvocationPermit::with_capacity(permit, capacity))
+        } else {
+            permit
+        };
+        let permit = if let Some(capacity) = &self.3.byte_capacity {
+            let bytes = Arc::clone(capacity)
+                .try_acquire_many_owned(body.len() as u32)
+                .map_err(|_| {
+                    self.3.rejected.fetch_add(1, Ordering::Relaxed);
+                    InvocationError::Io(std::io::Error::new(
+                        std::io::ErrorKind::WouldBlock,
+                        "pending request byte limit reached",
+                    ))
+                })?;
+            Some(crate::InvocationPermit::with_bytes(permit, bytes))
         } else {
             permit
         };
@@ -630,6 +688,9 @@ impl SenderPool {
             ..Default::default()
         }));
         let state = Arc::new(PoolState {
+            byte_capacity: connection_params
+                .max_pending_bytes
+                .map(|n| Arc::new(Semaphore::new(n.get().min(Semaphore::MAX_PERMITS)))),
             // Oversized low-level limits saturate at Tokio's supported maximum.
             // The managed builder reports these as configuration errors.
             capacity: connection_params
@@ -645,7 +706,9 @@ impl SenderPool {
             runner: SenderPoolRunner {
                 session: Arc::clone(&session),
                 api_id,
-                connection_params,
+                connection_params: Arc::new(connection_params),
+                pending: Vec::new(),
+                setup_pool: JoinSet::new(),
                 request_rx,
                 updates_tx: receive_updates.then_some(updates_tx),
                 connections: Vec::new(),
@@ -716,6 +779,13 @@ impl SenderPoolRunner {
             // Retire queued permits before their response channels are dropped.
             while self.request_rx.try_recv().is_ok() {}
             self.connections.clear();
+            self.pending.clear();
+            self.setup_pool.abort_all();
+            while let Some(result) = self.setup_pool.join_next().await {
+                if result.is_err_and(|e| e.is_panic()) {
+                    failure = Some(PoolRunError::TaskPanicked);
+                }
+            }
             if failure.is_some() {
                 self.connection_pool.abort_all();
             }
@@ -729,9 +799,37 @@ impl SenderPoolRunner {
     }
 
     async fn drive(&mut self) -> Result<(), PoolRunError> {
+        let mut work = 0;
         loop {
+            work += 1;
+            if work == 64 {
+                tokio::task::yield_now().await;
+                work = 0;
+            }
             tokio::select! {
                 biased;
+                setup = self.setup_pool.join_next(), if !self.setup_pool.is_empty() => {
+                    match setup {
+                        Some(Ok(result)) => self.finish_setup(result),
+                        Some(Err(e)) if e.is_panic() => {
+                            self.state.emit(PoolEvent::RunnerFailed(PoolRunError::TaskPanicked));
+                            return Err(PoolRunError::TaskPanicked);
+                        },
+                        _ => {},
+                    }
+                }
+                dc_id = poll_fn(|cx| {
+                    for pending in &mut self.pending {
+                        let mut all_closed = true;
+                        for rpc in &mut pending.requests {
+                            if rpc.tx.poll_closed(cx).is_pending() { all_closed = false; }
+                        }
+                        if all_closed { return Poll::Ready(pending.dc_id); }
+                    }
+                    Poll::Pending
+                }), if !self.pending.is_empty() => {
+                    self.cancel_setup(dc_id);
+                }
                 completion = self.connection_pool.join_next(), if !self.connection_pool.is_empty() => {
                     if let Some(Err(error)) = completion.map(|completion| self.record_completion(completion)) {
                         return Err(error);
@@ -797,37 +895,24 @@ impl SenderPoolRunner {
             Request::Invoke {
                 dc_id,
                 body,
-                mut tx,
+                tx,
                 permit,
             } => {
                 if tx.is_closed() {
                     return ControlFlow::Continue(());
                 }
-                let connection = match self
+                let rpc = Rpc { body, tx, permit };
+                if let Some(connection) = self
                     .connections
                     .iter()
-                    .find(|connection| connection.dc_id == dc_id && !connection.rpc_tx.is_closed())
+                    .find(|c| c.dc_id == dc_id && !c.rpc_tx.is_closed())
                 {
-                    Some(connection) => connection,
-                    // Setup is boxed: inline, its handshake state would size
-                    // every idle runner task for the life of the pool.
-                    None => match tokio::select! {
-                        biased;
-                        _ = tx.closed() => return ControlFlow::Continue(()),
-                        _ = wait_for_connection_cancel(Arc::clone(&self.routes), dc_id) => Err(InvocationError::Dropped("connection initialization was cancelled")),
-                        result = Box::pin(self.create_connection(dc_id)) => result,
-                    } {
-                        Ok(x) => x,
-                        Err(e) => {
-                            self.report_setup_failure(dc_id, &e);
-                            drop(permit);
-                            let _ = tx.send(Err(e));
-                            return ControlFlow::Continue(());
-                        }
-                    },
-                };
-                if !tx.is_closed() {
-                    let _ = connection.rpc_tx.send(Rpc { body, tx, permit });
+                    // Only a rejected send returns ownership and permits fallback.
+                    if let Err(error) = connection.rpc_tx.send(rpc) {
+                        self.start_setup(dc_id, error.0);
+                    }
+                } else {
+                    self.start_setup(dc_id, rpc);
                 }
                 ControlFlow::Continue(())
             }
@@ -860,6 +945,7 @@ impl SenderPoolRunner {
                 ControlFlow::Continue(())
             }
             Request::Disconnect { dc_id } => {
+                self.cancel_setup(dc_id);
                 {
                     let mut cache = self.routes.write().unwrap_or_else(|e| e.into_inner());
                     cache.finish_disconnect(dc_id);
@@ -885,15 +971,123 @@ impl SenderPoolRunner {
         }
     }
 
-    async fn create_connection(&mut self, dc_id: i32) -> Result<&ConnectionInfo, InvocationError> {
-        let mut dc_option = match self.session.dc_option(dc_id)? {
-            Some(x) => x,
-            None => return Err(InvocationError::InvalidDc),
-        };
+    fn setup_context(&self) -> ConnectionSetup {
+        ConnectionSetup {
+            session: Arc::clone(&self.session),
+            api_id: self.api_id,
+            state: Arc::clone(&self.state),
+            connection_params: Arc::clone(&self.connection_params),
+        }
+    }
 
+    fn start_setup(&mut self, dc_id: i32, rpc: Rpc) {
+        if let Some(pending) = self.pending.iter_mut().find(|p| p.dc_id == dc_id) {
+            pending.requests.push(rpc);
+            return;
+        }
+        let mut setup = self.setup_context();
+        let routes = Arc::clone(&self.routes);
+        let abort_handle = self.setup_pool.spawn(async move {
+            let result = tokio::select! {
+                biased;
+                _ = wait_for_connection_cancel(routes, dc_id) => Err(InvocationError::Dropped("connection initialization was cancelled")),
+                result = Box::pin(setup.create_connection(dc_id)) => result,
+            };
+            (dc_id, tokio::task::id(), result)
+        });
+        self.pending.push(PendingConnection {
+            dc_id,
+            requests: vec![rpc],
+            abort_handle,
+        });
+    }
+
+    fn cancel_setup(&mut self, dc_id: i32) {
+        if let Some(index) = self.pending.iter().position(|p| p.dc_id == dc_id) {
+            self.pending.swap_remove(index).abort_handle.abort();
+        }
+    }
+
+    fn finish_setup(&mut self, (dc_id, setup_id, result): SetupResult) {
+        let Some(index) = self
+            .pending
+            .iter()
+            .position(|p| p.dc_id == dc_id && p.abort_handle.id() == setup_id)
+        else {
+            return;
+        };
+        let pending = self.pending.swap_remove(index);
+        let sender = match result {
+            Ok(sender) => sender,
+            Err(error) => {
+                self.report_setup_failure(dc_id, &error);
+                if pending.requests.len() == 1 {
+                    let rpc = pending.requests.into_iter().next().unwrap();
+                    drop(rpc.permit);
+                    let _ = rpc.tx.send(Err(error));
+                    return;
+                }
+                let error = Arc::new(error);
+                for rpc in pending.requests {
+                    drop(rpc.permit);
+                    let _ = rpc
+                        .tx
+                        .send(Err(InvocationError::Shared(Arc::clone(&error))));
+                }
+                return;
+            }
+        };
+        let (rpc_tx, rpc_rx) = queue::unbounded_channel();
+        for rpc in pending.requests {
+            if !rpc.tx.is_closed() {
+                let _ = rpc_tx.send(rpc);
+            }
+        }
+        let updates = self.updates_tx.clone();
+        let session = Arc::clone(&self.session);
+        let state = Arc::clone(&self.state);
+        let abort_handle = self.connection_pool.spawn(async move {
+            (
+                dc_id,
+                run_sender(sender, rpc_rx, updates, dc_id, session, state).await,
+            )
+        });
+        self.routes
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .publish(dc_id, &rpc_tx);
+        self.connections.push(ConnectionInfo {
+            dc_id,
+            rpc_tx,
+            abort_handle,
+        });
+        self.state
+            .active
+            .store(self.connections.len(), Ordering::Relaxed);
+        self.state.emit(PoolEvent::Connected { dc_id });
+    }
+
+    #[cfg(test)]
+    async fn update_dc_options(
+        &self,
+        options: &[tl::enums::DcOption],
+    ) -> Result<(), InvocationError> {
+        self.setup_context().update_dc_options(options).await
+    }
+}
+
+impl ConnectionSetup {
+    async fn create_connection(
+        &mut self,
+        dc_id: i32,
+    ) -> Result<Sender<Transport, mtp::Encrypted>, InvocationError> {
+        let dc_option = self
+            .session
+            .dc_option(dc_id)?
+            .ok_or(InvocationError::InvalidDc)?;
         let limit = self.connection_params.connection_timeout;
         let connecting = self.connect_sender(&dc_option);
-        let sender = if let Some(limit) = limit {
+        let (sender, remote_config) = if let Some(limit) = limit {
             tokio::time::timeout(limit, connecting)
                 .await
                 .map_err(|_| {
@@ -905,40 +1099,23 @@ impl SenderPoolRunner {
         } else {
             connecting.await?
         };
-
+        // The initialization deadline covers network work. Storage and another
+        // DC's config merge may take longer and have their own cancellation rules.
+        self.update_config(remote_config).await?;
+        // Concurrent DC setup may refresh endpoints while this handshake runs.
+        // Merge under the same lock as config writes so a stale config cannot
+        // erase a freshly generated key or overwrite refreshed routes.
+        let _guard = self.state.config_lock.lock().await;
+        let mut dc_option = self.session.dc_option(dc_id)?.unwrap_or(dc_option);
         dc_option.auth_key = Some(sender.auth_key());
         self.session.set_dc_option(&dc_option).await?;
-
-        let (rpc_tx, rpc_rx) = queue::unbounded_channel();
-        let updates = self.updates_tx.clone();
-        let session = Arc::clone(&self.session);
-        let state = Arc::clone(&self.state);
-        let abort_handle = self.connection_pool.spawn(async move {
-            (
-                dc_id,
-                run_sender(sender, rpc_rx, updates, dc_id, session, state).await,
-            )
-        });
-        {
-            let mut cache = self.routes.write().unwrap_or_else(|e| e.into_inner());
-            cache.publish(dc_id, &rpc_tx);
-        }
-        self.connections.push(ConnectionInfo {
-            dc_id,
-            rpc_tx,
-            abort_handle,
-        });
-        self.state
-            .active
-            .store(self.connections.len(), Ordering::Relaxed);
-        self.state.emit(PoolEvent::Connected { dc_id });
-        Ok(self.connections.last().unwrap())
+        Ok(sender)
     }
 
     async fn connect_sender(
         &mut self,
         dc_option: &DcOption,
-    ) -> Result<Sender<Transport, mtp::Encrypted>, InvocationError> {
+    ) -> Result<(Sender<Transport, mtp::Encrypted>, tl::types::Config), InvocationError> {
         let transport = Transport::new;
 
         let address = if self.connection_params.use_ipv6 {
@@ -984,20 +1161,27 @@ impl SenderPoolRunner {
 
         sender.set_receive_updates(self.connection_params.receive_updates);
         sender.set_ack_batch(self.connection_params.ack_batch);
+        sender.set_decode_limits(self.connection_params.decode_limits);
+        sender.set_liveness_timeout(self.connection_params.liveness_timeout);
         let enums::Config::Config(remote_config) = match sender.invoke(&init_connection).await {
             Ok(config) => config,
-            Err(InvocationError::Transport(transport::Error::BadStatus { status: 404 })) => {
+            Err(error)
+                if matches!(
+                    error.transport_error(),
+                    Some(transport::Error::BadStatus { status: 404 })
+                ) =>
+            {
                 sender = connect(transport(), addr()).await?;
                 sender.set_receive_updates(self.connection_params.receive_updates);
                 sender.set_ack_batch(self.connection_params.ack_batch);
+                sender.set_decode_limits(self.connection_params.decode_limits);
+                sender.set_liveness_timeout(self.connection_params.liveness_timeout);
                 sender.invoke(&init_connection).await?
             }
             Err(e) => return Err(e),
         };
 
-        self.update_config(remote_config).await?;
-
-        Ok(sender)
+        Ok((sender, remote_config))
     }
 
     async fn update_config(&self, config: tl::types::Config) -> Result<(), InvocationError> {
@@ -1008,6 +1192,7 @@ impl SenderPoolRunner {
         &self,
         options: &[tl::enums::DcOption],
     ) -> Result<(), InvocationError> {
+        let _guard = self.state.config_lock.lock().await;
         for option in options
             .iter()
             .map(|tl::enums::DcOption::Option(o)| o)
@@ -1167,6 +1352,7 @@ fn run_sender(
         let mut updates_closed = false;
 
         loop {
+            tokio::task::consume_budget().await;
             tokio::select! {
                 step = sender.step() => match step {
                     Ok(all_new_updates) => {
@@ -1206,6 +1392,8 @@ fn run_sender(
                         // that failure instead of waiting indefinitely for updates.
                         let home_sender = session.home_dc_id().map_or(true, |home| home == dc_id);
                         if let (true, Some(updates)) = (home_sender, &updates) {
+                            state.home_failures.fetch_add(1, Ordering::Release);
+                            state.home_failure.notify_waiters();
                             let _ = forward_update(updates, &state, UpdatesLike::ConnectionClosed);
                         }
                         break Err(err)
@@ -1502,6 +1690,108 @@ mod optimization_tests {
     }
 
     #[tokio::test]
+    async fn byte_admission_is_released_with_sdk_request_not_waiter() {
+        let mut pool = SenderPool::with_configuration(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+            ConnectionParams {
+                max_pending_bytes: std::num::NonZeroUsize::new(8),
+                ..Default::default()
+            },
+        );
+        let first = pool
+            .handle
+            .start_invoke_shared(4, Bytes::from_static(&[1; 8]), None)
+            .unwrap();
+        let request = pool.runner.request_rx.recv().await.unwrap();
+        drop(first);
+        assert!(
+            matches!(pool.handle.start_invoke_shared(4, Bytes::from_static(&[1; 4]), None),
+            Err(InvocationError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock)
+        );
+        drop(request);
+        assert!(
+            pool.handle
+                .start_invoke_shared(4, Bytes::from_static(&[1; 8]), None)
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn full_update_queue_does_not_hide_home_failure_notification() {
+        let pool = SenderPool::new(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+        );
+        let handle = &pool.handle.thin;
+        let state = &pool.runner.state;
+        let tx = pool.runner.updates_tx.as_ref().unwrap();
+        while tx.try_send(UpdatesLike::ConnectionClosed).is_ok() {}
+        let old = handle.home_failure_generation();
+        state.home_failures.fetch_add(1, Ordering::Release);
+        state.home_failure.notify_waiters();
+        assert!(forward_update(tx, state, UpdatesLike::ConnectionClosed).is_err());
+        tokio::time::timeout(Duration::from_secs(1), handle.wait_home_failure(old))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn same_dc_initialization_is_shared_and_other_dcs_remain_responsive() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        let std::net::SocketAddr::V4(ipv4) = address else {
+            unreachable!()
+        };
+        session
+            .set_dc_option(&DcOption {
+                id: 4,
+                ipv4,
+                ipv6: SocketAddrV6::new(Ipv6Addr::LOCALHOST, address.port(), 0, 0),
+                auth_key: Some([0; 256]),
+            })
+            .await
+            .unwrap();
+        let mut pool = SenderPool::with_configuration(session, 1, ConnectionParams::default());
+        let first = pool
+            .handle
+            .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None)
+            .unwrap();
+        let second = pool
+            .handle
+            .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None)
+            .unwrap();
+        for _ in 0..2 {
+            let request = pool.runner.request_rx.recv().await.unwrap();
+            assert!(pool.runner.process_request(request).await.is_continue());
+        }
+        assert_eq!(pool.runner.pending.len(), 1);
+        assert_eq!(pool.runner.pending[0].requests.len(), 2);
+        let runner = tokio::spawn(pool.runner.run_checked());
+        let (peer, _) = listener.accept().await.unwrap();
+        let other = pool
+            .handle
+            .start_invoke_shared(999, Bytes::from_static(&[1; 4]), None)
+            .unwrap();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), other)
+                .await
+                .unwrap(),
+            Err(InvocationError::InvalidDc)
+        ));
+        drop(peer);
+        let first = first.await.unwrap_err();
+        let second = second.await.unwrap_err();
+        let (InvocationError::Shared(a), InvocationError::Shared(b)) = (first, second) else {
+            panic!("failure not shared");
+        };
+        assert!(Arc::ptr_eq(&a, &b));
+        pool.handle.quit();
+        runner.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn parked_pool_rejects_requests_before_activation() {
         let pool = SenderPool::parked(
             erase(Arc::new(
@@ -1657,6 +1947,74 @@ mod optimization_tests {
         )
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejected_cached_key_starts_a_fresh_plain_handshake() {
+        use tl::Identifiable;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let std::net::SocketAddr::V4(address) = listener.local_addr().unwrap() else {
+            unreachable!()
+        };
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        session
+            .set_dc_option(&DcOption {
+                id: 4,
+                ipv4: address,
+                ipv6: SocketAddrV6::new(Ipv6Addr::LOCALHOST, address.port(), 0, 0),
+                auth_key: Some([0; 256]),
+            })
+            .await
+            .unwrap();
+        let pool = SenderPool::with_configuration(
+            session,
+            1,
+            ConnectionParams {
+                receive_updates: false,
+                connection_timeout: Some(Duration::from_secs(5)),
+                ..ConnectionParams::default()
+            },
+        );
+        let handle = pool.handle.thin;
+        let runner = tokio::spawn(pool.runner.run());
+        let tracker = crate::InvocationTracker::default();
+        let call = handle
+            .start_raw_invoke_shared_in_dc_tracked(
+                4,
+                Bytes::from_static(&[1; 4]),
+                tracker.try_acquire().unwrap(),
+            )
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let (mut first, _) = listener.accept().await.unwrap();
+            assert_eq!(first.read_u8().await.unwrap(), 0xef);
+            let mut rejection = vec![1]; // abridged one-word status packet
+            rejection.extend((-404i32).to_le_bytes());
+            first.write_all(&rejection).await.unwrap();
+            // Keep the first socket alive with unread request bytes, avoiding
+            // a TCP reset that could race the definitive status response.
+            let (mut fresh, _) = listener.accept().await.unwrap();
+            assert_eq!(fresh.read_u8().await.unwrap(), 0xef);
+            let words = fresh.read_u8().await.unwrap();
+            assert!(words < 127);
+            let mut body = vec![0; usize::from(words) * 4];
+            fresh.read_exact(&mut body).await.unwrap();
+            assert_eq!(&body[..8], &[0; 8]); // unencrypted auth_key_id
+            assert_eq!(
+                &body[20..24],
+                &tl::functions::ReqPqMulti::CONSTRUCTOR_ID.to_le_bytes()
+            );
+        })
+        .await
+        .unwrap();
+        drop(call);
+        handle.quit();
+        tokio::time::timeout(Duration::from_secs(2), runner)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
     }
 
     #[tokio::test]
@@ -2223,7 +2581,7 @@ mod optimization_tests {
                     tl::functions::InvokeWithoutUpdates::<tl::functions::help::GetConfig>::CONSTRUCTOR_ID,
                 ] {
                     let wrapped = !receive_updates && constructor == tl::functions::help::GetConfig::CONSTRUCTOR_ID;
-                    let limit = 1_044_432 - if wrapped { 4 } else { 0 };
+                    let limit = 1_044_372 - if wrapped { 4 } else { 0 };
                     let mut body = vec![0; limit];
                     body[..4].copy_from_slice(&constructor.to_le_bytes());
                     let tracker = crate::InvocationTracker::default();

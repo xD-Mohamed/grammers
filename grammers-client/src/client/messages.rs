@@ -752,6 +752,13 @@ impl Client {
         peer: C,
         mut medias: Vec<InputMedia>,
     ) -> Result<Vec<Option<Message>>, InvocationError> {
+        if medias.is_empty() || medias.iter().any(|media| media.media.is_none()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "album must contain media in every item",
+            )
+            .into());
+        }
         let peer = peer.into();
         let random_ids = generate_random_ids(medias.len());
 
@@ -775,9 +782,13 @@ impl Client {
                     .await?;
                 media.media = Some(
                     Media::from_raw(uploaded)
-                        .unwrap()
-                        .to_raw_input_media()
-                        .unwrap(),
+                        .and_then(|media| media.to_raw_input_media())
+                        .ok_or_else(|| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "uploadMedia returned unsupported album media",
+                            )
+                        })?,
                 );
             }
         }

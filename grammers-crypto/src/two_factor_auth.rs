@@ -91,7 +91,7 @@ pub fn calculate_2fa(
 
 /// Validation for parameters required for Two-Factor authentication.
 pub fn check_p_and_g(p: &[u8], g: &i32) -> bool {
-    if !check_p_len(p) {
+    if !check_p_len(p) || p[0] & 0x80 == 0 || !(2..=7).contains(g) {
         return false;
     }
 
@@ -101,12 +101,7 @@ pub fn check_p_and_g(p: &[u8], g: &i32) -> bool {
 fn check_p_prime_and_subgroup(p: &[u8], g: &i32) -> bool {
     let p = &BigUint::from_bytes_be(p);
 
-    // `safe_prime::check` returns an error when operating-system randomness is unavailable.
-    if !safe_prime::check(p).unwrap() {
-        return false;
-    }
-
-    match g {
+    let valid_subgroup = match g {
         2 => p % 8u8 == BigUint::from(7u8),
         3 => p % 3u8 == BigUint::from(2u8),
         4 => true,
@@ -124,8 +119,11 @@ fn check_p_prime_and_subgroup(p: &[u8], g: &i32) -> bool {
                 || mod_value == BigUint::from(5u8)
                 || mod_value == BigUint::from(6u8)
         }
-        _ => panic!("Unexpected g parameter"),
-    }
+        _ => false,
+    };
+    // Reject invalid generators before the expensive check; unavailable OS
+    // randomness is a validation failure, never permission to skip primality.
+    valid_subgroup && safe_prime::check(p).unwrap_or(false)
 }
 
 fn check_p_len(p: &[u8]) -> bool {

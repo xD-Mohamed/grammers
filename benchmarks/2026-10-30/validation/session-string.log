@@ -1,0 +1,79 @@
+   Compiling sha2 v0.10.9
+   Compiling grammers-session v0.10.0 (/var/lib/helos/workspaces/duo/1cb9a1ed-90ad-467c-9f5d-ab302a4b40ee/impl/grammers-session)
+    Finished `release` profile [optimized] target(s) in 32.86s
+     Running unittests src/lib.rs (target/release/deps/grammers_session-456360e1c1a96cec)
+
+running 34 tests
+test message_box::tests::channel_catch_up_rotates_after_nonfinal_pages ... ok
+test message_box::tests::checked_saved_state_and_difference_reject_invalid_counters_without_mutation ... ok
+test message_box::tests::extreme_update_counters_do_not_overflow ... ok
+test message_box::tests::saved_state_deduplicates_channels_and_recovers_missing_common_pts ... ok
+test message_box::tests::test_common_and_channel_difference_do_not_duplicate_message ... ok
+test message_box::tests::test_complete_login_flow ... ok
+test message_box::tests::test_connect_flow_empty ... ok
+test message_box::tests::test_connect_flow_with_data ... ok
+test message_box::tests::test_iter_dialogs_flow ... ok
+test message_box::tests::test_next_raw_update_flow_channel_ban ... ok
+test message_box::tests::test_next_raw_update_flow_channel_issues ... ok
+test message_box::tests::test_next_raw_update_flow_channel_timeout ... ok
+test message_box::tests::test_next_raw_update_flow_common_timeout ... ok
+test message_box::tests::test_next_raw_update_flow_empty ... ok
+test message_box::tests::test_next_raw_update_flow_no_new_get_diff_if_already_fetching ... ok
+test message_box::tests::test_process_socket_update_for_new_channel_dispatches_first_update ... ok
+test message_box::tests::test_process_socket_updates_flow_already_processed ... ok
+test message_box::tests::test_process_socket_updates_flow_common_already_applied ... ok
+test message_box::tests::test_process_socket_updates_flow_common_difference_ok ... ok
+test message_box::tests::test_process_socket_updates_flow_common_ok ... ok
+test message_box::tests::test_process_socket_updates_flow_common_pts_gap ... ok
+test message_box::tests::test_process_socket_updates_flow_common_pts_possible_gap_resolves ... ok
+test message_box::tests::test_process_socket_updates_flow_common_seq_gap ... ok
+test message_box::tests::test_process_socket_updates_trickle_causes_gap ... ok
+test peer::cache_merge_tests::channel_refresh_keeps_missing_hash_and_replaces_kind ... ok
+test peer::cache_merge_tests::new_user_information_replaces_cached_values_without_erasing_missing_fields ... ok
+test storages::erased::tests::benchmark_memory_and_erased_cache_peers ... ignored, local session-storage microbenchmark; run explicitly in release mode
+test storages::erased::tests::erased_cache_peers_forwards_empty_input_and_original_error ... ok
+test storages::erased::tests::erased_cache_peers_preserves_bulk_override_and_input_order ... ok
+test storages::erased::tests::memory_cache_peers_matches_ordered_individual_updates ... ok
+test storages::memory::tests::cache_peers_empty_input_succeeds_with_poisoned_storage ... ok
+test storages::memory::tests::compact_dc_options_round_trip_session_data ... ok
+test storages::memory::tests::self_user_lookup_recognizes_bulk_cached_identity ... ok
+test storages::memory::tests::self_user_lookup_uses_cached_identity_and_tracks_flag_changes ... ok
+
+test result: ok. 33 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deps.rs (target/release/deps/deps-6d52442d6365b3c8)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/import.rs (target/release/deps/import-36742d4c50906f33)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/native.rs (target/release/deps/native-49b395b898ae7c39)
+
+running 7 tests
+test diagnostics_never_expose_input_keys_or_encoded_credentials ... ok
+test export_rejects_missing_inconsistent_and_failing_storage ... ok
+test native_preserves_ipv6_import_placeholder_without_making_it_routable ... ok
+test native_preserves_test_routes_and_missing_unused_endpoint ... ok
+test native_roundtrip_preserves_only_home_route_and_exact_endpoints ... ok
+test parser_rejects_malformed_headers_routes_and_keys_even_with_valid_checksum ... ok
+test parser_rejects_noncanonical_encoding_corruption_and_unbounded_input ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests grammers_session
+
+running 3 tests
+test grammers-session/src/peer.rs - peer::PeerId (line 17) ... ok
+test grammers-session/src/peer.rs - peer::PeerId::to_ambient_ref (line 289) ... ok
+test grammers-session/src/types.rs - types::DcOption::id (line 26) ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.24s; merged doctests compilation took 0.23s

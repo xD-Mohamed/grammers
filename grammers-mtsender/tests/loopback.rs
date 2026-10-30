@@ -24,7 +24,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::io::Write;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::Relaxed};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -323,6 +323,7 @@ impl ServerKey {
 enum Payload {
     Plain,
     Gzip,
+    LargeFile,
 }
 
 /// Serialize TL `bytes`.
@@ -406,6 +407,13 @@ fn user(id: i64, photo: bool) -> tl::enums::User {
 
 /// A medium reply: a vector of 12 objects, half with a small thumbnail.
 fn reply(payload: Payload) -> Vec<u8> {
+    if payload == Payload::LargeFile {
+        let mut reply = tl::types::upload::File::CONSTRUCTOR_ID.to_bytes();
+        tl::types::storage::FileUnknown::CONSTRUCTOR_ID.serialize(&mut reply);
+        0i32.serialize(&mut reply);
+        tl_bytes(&vec![0; 1024 * 1024], &mut reply);
+        return reply;
+    }
     let users: Vec<tl::enums::User> = (0..12).map(|i| user(1_000 + i, i % 2 == 0)).collect();
     let plain = users.to_bytes();
     match payload {
@@ -419,6 +427,7 @@ fn reply(payload: Payload) -> Vec<u8> {
             tl_bytes(&packed, &mut out);
             out
         }
+        Payload::LargeFile => unreachable!(),
     }
 }
 
@@ -697,6 +706,74 @@ fn client_runtime() -> tokio::runtime::Runtime {
 }
 
 #[test]
+fn maximum_download_reply_survives_real_encryption_and_transport() {
+    let address = start_responder(Payload::LargeFile, 1);
+    client_runtime().block_on(async {
+        let client = open_client(address);
+        let size = tokio::time::timeout(Duration::from_secs(5), call(&client, &request_body()))
+            .await
+            .unwrap();
+        assert_eq!(size, 1_048_592);
+        client.raw.quit();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !client.raw.status().stopped {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    });
+}
+
+#[test]
+fn silent_dc_does_not_block_a_healthy_cold_dc() {
+    let address = start_responder(Payload::Plain, 1);
+    client_runtime().block_on(async {
+        let client = open_client(address);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let SocketAddr::V4(ipv4) = listener.local_addr().unwrap() else {
+            unreachable!()
+        };
+        client
+            ._fat
+            .session
+            .set_dc_option(&grammers_session::types::DcOption {
+                id: 4,
+                ipv4,
+                ipv6: SocketAddrV6::new(Ipv6Addr::LOCALHOST, ipv4.port(), 0, 0),
+                auth_key: Some(auth_key()),
+            })
+            .await
+            .unwrap();
+        let tracker = InvocationTracker::default();
+        let blocked = client
+            .raw
+            .start_raw_invoke_shared_in_dc_tracked(
+                4,
+                request_body(),
+                tracker.try_acquire().unwrap(),
+            )
+            .unwrap();
+        let _peer = listener.accept().await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), call(&client, &request_body()))
+                .await
+                .unwrap()
+                > 0
+        );
+        drop(blocked);
+        client.raw.quit();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !client.raw.status().stopped {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    });
+}
+
+#[test]
 #[ignore = "local loopback heap census; run explicitly with --ignored --nocapture"]
 fn loopback_session_footprint() {
     const SESSIONS: usize = 400;
@@ -779,20 +856,36 @@ fn loopback_rpc_cost() {
                             // Each caller cycles through its own pools.
                             let mine: Vec<_> = (caller..SESSIONS).step_by(CALLERS).collect();
                             let mut turn = 0;
+                            // Sample 1/64 calls; reserve outside the measured call path.
+                            let mut latencies = Vec::with_capacity(65536);
                             while Instant::now() < deadline {
+                                let started = (turn % 64 == 0).then(Instant::now);
                                 call(&clients[mine[turn % mine.len()]], &body).await;
+                                if let Some(started) = started {
+                                    latencies.push(started.elapsed().as_nanos() as u64);
+                                }
                                 turn += 1;
                                 completed.fetch_add(1, Relaxed);
                             }
+                            latencies
                         })
                     })
                     .collect();
+                let mut latencies = Vec::new();
                 for caller in callers {
-                    caller.await.unwrap();
+                    latencies.extend(caller.await.unwrap());
                 }
                 let spent = thread_cpu();
                 TRACK.store(false, Relaxed);
                 let rpcs = completed.load(Relaxed) as f64;
+                latencies.sort_unstable();
+                println!(
+                    "{payload:?} round {round}: sampled RPC latency p50/p95/p99 {:.1}/{:.1}/{:.1} us ({} samples)",
+                    latencies[latencies.len() / 2] as f64 / 1000.0,
+                    latencies[latencies.len() * 95 / 100] as f64 / 1000.0,
+                    latencies[latencies.len() * 99 / 100] as f64 / 1000.0,
+                    latencies.len(),
+                );
                 if track {
                     println!(
                         "{payload:?} reply ({reply_len} B) round {round}: {:.2} allocations, {:.0} bytes allocated per RPC",

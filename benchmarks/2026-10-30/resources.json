@@ -1,0 +1,36 @@
+{
+  "baseline": [
+    {
+      "user_seconds": 38.02,
+      "system_seconds": 55.57,
+      "maximum_rss_kib": 11312.0
+    },
+    {
+      "user_seconds": 38.15,
+      "system_seconds": 55.61,
+      "maximum_rss_kib": 11312.0
+    },
+    {
+      "user_seconds": 37.78,
+      "system_seconds": 55.66,
+      "maximum_rss_kib": 11312.0
+    }
+  ],
+  "candidate": [
+    {
+      "user_seconds": 37.37,
+      "system_seconds": 55.31,
+      "maximum_rss_kib": 11316.0
+    },
+    {
+      "user_seconds": 37.76,
+      "system_seconds": 54.71,
+      "maximum_rss_kib": 11312.0
+    },
+    {
+      "user_seconds": 38.3,
+      "system_seconds": 54.18,
+      "maximum_rss_kib": 11316.0
+    }
+  ]
+}

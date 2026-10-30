@@ -435,11 +435,16 @@ impl ClientBuilder {
                 .max_pending_requests
                 .is_some_and(|n| n.get() > tokio::sync::Semaphore::MAX_PERMITS)
             || self.params.updates_channel_capacity.get() > tokio::sync::Semaphore::MAX_PERMITS
+            || self
+                .params
+                .max_pending_bytes
+                .is_some_and(|n| n.get() > tokio::sync::Semaphore::MAX_PERMITS)
         {
             return Err(ClientBuildError::InvalidCapacity);
         }
         if self.shutdown_timeout.is_zero()
             || self.params.connection_timeout.is_some_and(|t| t.is_zero())
+            || self.params.liveness_timeout.is_some_and(|t| t.is_zero())
         {
             return Err(ClientBuildError::InvalidTimeout);
         }

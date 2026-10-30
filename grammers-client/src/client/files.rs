@@ -215,7 +215,18 @@ impl DownloadIter {
     /// any value you want.
     pub fn skip_chunks(mut self, n: i32) -> Self {
         if let DownloadIterVariant::Request(request) = &mut self.variant {
-            request.offset += request.limit as i64 * (n as i64);
+            if let Some(offset) = request
+                .offset
+                .checked_add(i64::from(request.limit) * i64::from(n))
+                .filter(|offset| *offset >= 0)
+            {
+                request.offset = offset;
+            } else {
+                self.variant = DownloadIterVariant::PreFailed(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "download offset overflow or negative offset",
+                ));
+            }
         }
         self
     }
@@ -256,9 +267,12 @@ impl DownloadIter {
         self.dc_id = Some(route.load(Ordering::Relaxed));
         match response {
             Ok(File::File(f)) => {
-                let reached_known_size = self
-                    .size
-                    .is_some_and(|size| request.offset as usize + f.bytes.len() >= size);
+                let reached_known_size = self.size.is_some_and(|size| {
+                    u64::try_from(request.offset)
+                        .ok()
+                        .and_then(|offset| offset.checked_add(f.bytes.len() as u64))
+                        .is_some_and(|end| end >= size as u64)
+                });
                 if reached_known_size || f.bytes.len() < request.limit as usize {
                     self.done = true;
                     if f.bytes.is_empty() {
@@ -485,7 +499,7 @@ impl Client {
         };
 
         let big_file = size > BIG_FILE_SIZE;
-        let parts = PartStream::new(stream, size);
+        let parts = PartStream::new(stream, size)?;
         let total_parts = parts.total_parts();
 
         if big_file {
@@ -585,12 +599,21 @@ impl Client {
         let path = path.as_ref();
 
         let mut file = fs::File::open(path).await?;
-        let size = file.seek(SeekFrom::End(0)).await? as usize;
+        let size = usize::try_from(file.seek(SeekFrom::End(0)).await?).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "file size exceeds addressable memory",
+            )
+        })?;
         file.seek(SeekFrom::Start(0)).await?;
 
-        // File name will only be `None` for `..` path, and directories cannot be uploaded as
-        // files, so it's fine to unwrap.
-        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "upload path has no file name")
+            })?
+            .to_string_lossy()
+            .to_string();
 
         self.upload_stream(&mut file, size, name).await
     }
@@ -607,15 +630,17 @@ struct PartStream<'a, S: AsyncRead + Unpin> {
 }
 
 impl<'a, S: AsyncRead + Unpin> PartStream<'a, S> {
-    fn new(stream: &'a mut S, size: usize) -> Self {
-        let total_parts = size.div_ceil(MAX_CHUNK_SIZE as usize) as i32;
-        Self {
+    fn new(stream: &'a mut S, size: usize) -> io::Result<Self> {
+        let total_parts = i32::try_from(size.div_ceil(MAX_CHUNK_SIZE as usize)).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "upload has too many parts")
+        })?;
+        Ok(Self {
             inner: AsyncMutex::new(PartStreamInner {
                 stream,
                 current_part: 0,
             }),
             total_parts,
-        }
+        })
     }
 
     fn total_parts(&self) -> i32 {
@@ -662,6 +687,43 @@ mod safety_tests {
     use super::*;
     use grammers_mtsender::SenderPool;
     use grammers_session::storages::MemorySession;
+
+    #[tokio::test]
+    async fn invalid_media_inputs_fail_without_starting_network_work() {
+        let client = Client::builder(1).build().await.unwrap();
+        let peer = grammers_session::types::PeerRef {
+            id: grammers_session::types::PeerId::self_user(),
+            auth: Default::default(),
+        };
+        assert!(matches!(client.send_album(peer, vec![]).await,
+            Err(InvocationError::Io(e)) if e.kind() == io::ErrorKind::InvalidInput));
+        assert!(
+            matches!(client.send_album(peer, vec![crate::media::InputMedia::new()]).await,
+            Err(InvocationError::Io(e)) if e.kind() == io::ErrorKind::InvalidInput)
+        );
+        if usize::BITS == 64 {
+            let mut empty = &[][..];
+            assert!(PartStream::new(&mut empty, usize::MAX).is_err());
+        }
+        let mut download = DownloadIter {
+            client: client.clone(),
+            variant: DownloadIterVariant::Request(tl::functions::upload::GetFile {
+                precise: false,
+                cdn_supported: false,
+                location: location(),
+                offset: i64::MAX - 1,
+                limit: MAX_CHUNK_SIZE,
+            }),
+            done: false,
+            size: None,
+            dc_id: None,
+        }
+        .skip_chunks(1);
+        assert!(
+            matches!(download.next().await, Err(InvocationError::Io(e)) if e.kind() == io::ErrorKind::InvalidInput)
+        );
+        client.stop().await.unwrap();
+    }
 
     fn location() -> tl::enums::InputFileLocation {
         tl::types::InputDocumentFileLocation {

@@ -477,20 +477,33 @@ fn message_channel_id(message: &tl::enums::Message) -> Option<i64> {
 }
 
 impl PtsInfo {
+    pub(super) fn valid_update(update: &tl::enums::Update) -> bool {
+        use tl::enums::Update::*;
+        let valid_peer = match update {
+            NewMessage(u) => !matches!(message_peer(&u.message), Some(tl::enums::Peer::Channel(_))),
+            EditMessage(u) => {
+                !matches!(message_peer(&u.message), Some(tl::enums::Peer::Channel(_)))
+            }
+            ReadHistoryInbox(u) => !matches!(u.peer, tl::enums::Peer::Channel(_)),
+            ReadHistoryOutbox(u) => !matches!(u.peer, tl::enums::Peer::Channel(_)),
+            PinnedMessages(u) => !matches!(u.peer, tl::enums::Peer::Channel(_)),
+            NewChannelMessage(u) => message_channel_id(&u.message).is_some(),
+            EditChannelMessage(u) => message_channel_id(&u.message).is_some(),
+            _ => true,
+        };
+        valid_peer
+            && Self::from_update(update)
+                .is_none_or(|info| info.count >= 0 && info.pts >= info.count)
+    }
+
     pub(super) fn from_update(update: &tl::enums::Update) -> Option<Self> {
         use tl::enums::Update::*;
         match update {
-            NewMessage(u) => {
-                assert!(!matches!(
-                    message_peer(&u.message),
-                    Some(tl::enums::Peer::Channel(_))
-                ));
-                Some(Self {
-                    key: Key::Common,
-                    pts: u.pts,
-                    count: u.pts_count,
-                })
-            }
+            NewMessage(u) => Some(Self {
+                key: Key::Common,
+                pts: u.pts,
+                count: u.pts_count,
+            }),
             MessageId(_) => None,
             DeleteMessages(u) => Some(Self {
                 key: Key::Common,
@@ -518,22 +531,16 @@ impl PtsInfo {
             ServiceNotification(_) => None,
             Privacy(_) => None,
             UserPhone(_) => None,
-            ReadHistoryInbox(u) => {
-                assert!(!matches!(u.peer, tl::enums::Peer::Channel(_)));
-                Some(Self {
-                    key: Key::Common,
-                    pts: u.pts,
-                    count: u.pts_count,
-                })
-            }
-            ReadHistoryOutbox(u) => {
-                assert!(!matches!(u.peer, tl::enums::Peer::Channel(_)));
-                Some(Self {
-                    key: Key::Common,
-                    pts: u.pts,
-                    count: u.pts_count,
-                })
-            }
+            ReadHistoryInbox(u) => Some(Self {
+                key: Key::Common,
+                pts: u.pts,
+                count: u.pts_count,
+            }),
+            ReadHistoryOutbox(u) => Some(Self {
+                key: Key::Common,
+                pts: u.pts,
+                count: u.pts_count,
+            }),
             WebPage(u) => Some(Self {
                 key: Key::Common,
                 pts: u.pts,
@@ -584,17 +591,11 @@ impl PtsInfo {
                 count: u.pts_count,
             }),
             BotCallbackQuery(_) => None,
-            EditMessage(u) => {
-                assert!(!matches!(
-                    message_peer(&u.message),
-                    Some(tl::enums::Peer::Channel(_))
-                ));
-                Some(Self {
-                    key: Key::Common,
-                    pts: u.pts,
-                    count: u.pts_count,
-                })
-            }
+            EditMessage(u) => Some(Self {
+                key: Key::Common,
+                pts: u.pts,
+                count: u.pts_count,
+            }),
             InlineBotCallbackQuery(_) => None,
             ReadChannelOutbox(_) => None,
             DraftMessage(_) => None,
@@ -645,14 +646,11 @@ impl PtsInfo {
             ReadChannelDiscussionOutbox(_) => None,
             PeerBlocked(_) => None,
             ChannelUserTyping(_) => None,
-            PinnedMessages(u) => {
-                assert!(!matches!(u.peer, tl::enums::Peer::Channel(_)));
-                Some(Self {
-                    key: Key::Common,
-                    pts: u.pts,
-                    count: u.pts_count,
-                })
-            }
+            PinnedMessages(u) => Some(Self {
+                key: Key::Common,
+                pts: u.pts,
+                count: u.pts_count,
+            }),
             PinnedChannelMessages(u) => Some(Self {
                 key: Key::Channel(u.channel_id),
                 pts: u.pts,
