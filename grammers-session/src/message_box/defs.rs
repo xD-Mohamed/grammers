@@ -76,6 +76,10 @@ pub(super) struct LiveEntry {
     pub(super) recovery_pending: bool,
     /// Consecutive deferrals before abandoning an unavailable channel's backlog.
     pub(super) recovery_deferrals: u8,
+    /// Consecutive differences ended early by a temporary rejection from Telegram.
+    pub(super) recovery_failures: u8,
+    /// Another difference is not requested before this, even if a gap has appeared.
+    pub(super) retry_not_before: Option<Instant>,
 
     /// If the entry has a gap and may soon trigger the need to get difference.
     pub(super) possible_gap: Option<PossibleGap>,

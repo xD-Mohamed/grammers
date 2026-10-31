@@ -445,11 +445,7 @@ fn write_impl_from<W: Write>(
         name = rustifier::definitions::variant_name(def),
         data = if def.params.is_empty() { "" } else { "(x)" },
         ok = if infallible { "" } else { "Ok(" },
-        deref = if metadata.is_recursive_def(def) {
-            "*"
-        } else {
-            ""
-        },
+        deref = if metadata.is_boxed_def(def) { "*" } else { "" },
         value = if def.params.is_empty() {
             type_name.as_ref()
         } else {

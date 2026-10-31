@@ -1,0 +1,67 @@
+
+running 1 test
+test loopback_session_footprint ... 400 sessions, one connection each, gzip-packed replies
+pool created, not connected: 2143 B/session live client heap
+       256 B x   2.00/session =     512 B
+       512 B x   1.00/session =     511 B
+       280 B x   1.00/session =     280 B
+       168 B x   1.00/session =     168 B
+        72 B x   2.00/session =     144 B
+       144 B x   1.00/session =     144 B
+        96 B x   1.00/session =      96 B
+        88 B x   1.00/session =      88 B
+        48 B x   1.00/session =      48 B
+        40 B x   1.00/session =      40 B
+        32 B x   1.00/session =      32 B
+         8 B x   3.00/session =      24 B
+        24 B x   1.00/session =      24 B
+        16 B x   1.00/session =      16 B
+connected after one RPC: 7911 B/session live client heap
+      1280 B x   1.00/session =    1280 B
+      1096 B x   1.00/session =    1096 B
+      1024 B x   1.00/session =    1024 B
+       512 B x   2.00/session =    1023 B
+       256 B x   3.00/session =     768 B
+       384 B x   1.00/session =     384 B
+       352 B x   1.00/session =     352 B
+       280 B x   1.00/session =     280 B
+       224 B x   1.00/session =     224 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       168 B x   1.00/session =     168 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+after nine RPCs per session: 7983 B/session live client heap
+      1280 B x   1.00/session =    1280 B
+      1096 B x   1.00/session =    1096 B
+      1024 B x   1.00/session =    1024 B
+       512 B x   2.00/session =    1023 B
+       256 B x   3.00/session =     768 B
+       384 B x   1.00/session =     384 B
+       352 B x   1.00/session =     352 B
+        96 B x   3.00/session =     288 B
+       280 B x   1.00/session =     280 B
+       224 B x   1.00/session =     224 B
+        88 B x   2.00/session =     176 B
+       168 B x   1.00/session =     168 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+after 1100 RPCs per session (replay cache saturated): 14031 B/session live client heap
+      6144 B x   1.00/session =    6144 B
+      1280 B x   1.00/session =    1280 B
+      1096 B x   1.00/session =    1096 B
+      1024 B x   1.00/session =    1024 B
+       512 B x   2.00/session =    1023 B
+       256 B x   3.00/session =     768 B
+       384 B x   1.00/session =     384 B
+       352 B x   1.00/session =     352 B
+       280 B x   1.00/session =     280 B
+       224 B x   1.00/session =     224 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       168 B x   1.00/session =     168 B
+       160 B x   1.00/session =     160 B
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 29.71s
+

@@ -7,7 +7,8 @@ that a later review, commit or push has happened.
 The owner directed on 2026-10-31 that the audit follow-up land on `main` with a
 fresh-eyes Claude subagent review in place of step 4, because GPT-6 Astra was
 unavailable; see [REVIEW-FOLLOWUP.md](REVIEW-FOLLOWUP.md). That direction applies to
-that follow-up and does not relax this procedure for later candidates. The manifest and
+that follow-up and does not relax this procedure for later candidates. The owner gave the
+same direction for the bot workload and compliance follow-up after it. The manifest and
 gate steps here concern the historical 2026-10-30 evidence set.
 
 1. Finish source, documentation, tests and measurements. Stage every intended

@@ -78,6 +78,9 @@ pub trait Session: Send + Sync + 'static {
     ///
     /// This method may not necessarily remember the peers forever,
     /// except for users where [`PeerInfo::User::is_self`] is `Some(true)`.
+    ///
+    /// Clients do not call it for each mention of a peer, only when its information
+    /// changes and otherwise about every ten minutes while they keep hearing from it.
     fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>>;
 
     /// Bulk cache_peer, allows optimization in specific implementations

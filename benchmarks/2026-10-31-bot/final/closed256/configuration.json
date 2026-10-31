@@ -1,0 +1,16 @@
+{
+  "scenarios": {
+    "closed256": {
+      "BOT_CONCURRENCY": "256",
+      "BOT_CLIENT_CPUS": "0"
+    }
+  },
+  "rounds": 6,
+  "server_cpus": "2,3",
+  "binaries": {
+    "7774ed6": "ec217ffc44cfbe9820ab113b86760e50890b34edeb943554bdc357526d25f4bd",
+    "2ffd991": "b3b0bd1e6d2d1901d8d659b919e473100de104f0654a940a7d7f129591078c74",
+    "79c1c0a": "b0460c38c03fb3e427942fad75cce28b2c7eac05a0b8b5b7747d9ddf1108b439",
+    "final": "92283a8711c7236e627cb7e98488a83f408f5c24a954de478602a95598d567d6"
+  }
+}

@@ -10,9 +10,15 @@ use std::collections::{HashMap, HashSet};
 
 use grammers_tl_parser::tl::{Category, Definition, Parameter, ParameterType, Type};
 
+/// Definitions boxed although they do not recurse.
+///
+/// Holding them inline makes `Message` over 2.5 KiB, `Update` over 5 KiB and every
+/// value containing those a large copy at each move through the update path.
+const BOXED_FOR_SIZE: [&str; 3] = ["message", "messageService", "ephemeralMessage"];
+
 /// Additional metadata required by several parts of the generation.
 pub(crate) struct Metadata<'a> {
-    recursing_defs: HashSet<u32>,
+    boxed_defs: HashSet<u32>,
     defs_with_type: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Definition>>,
     unused_flags: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Parameter>>,
 }
@@ -20,7 +26,7 @@ pub(crate) struct Metadata<'a> {
 impl<'a> Metadata<'a> {
     pub fn new(definitions: &'a [Definition]) -> Self {
         let mut metadata = Self {
-            recursing_defs: HashSet::new(),
+            boxed_defs: HashSet::new(),
             defs_with_type: HashMap::new(),
             unused_flags: HashMap::new(),
         };
@@ -60,9 +66,15 @@ impl<'a> Metadata<'a> {
 
         type_definitions.iter().for_each(|d| {
             if def_self_references(d, d, &metadata.defs_with_type, &mut HashSet::new()) {
-                metadata.recursing_defs.insert(d.id);
+                metadata.boxed_defs.insert(d.id);
             }
         });
+        type_definitions
+            .iter()
+            .filter(|d| d.namespace.is_empty() && BOXED_FOR_SIZE.contains(&d.name.as_str()))
+            .for_each(|d| {
+                metadata.boxed_defs.insert(d.id);
+            });
 
         metadata
     }
@@ -74,10 +86,11 @@ impl<'a> Metadata<'a> {
             .unwrap_or(false)
     }
 
-    /// Returns `true` if any of the parameters of `Definition` eventually
-    /// contains the same type as the `Definition` itself (meaning it recurses).
-    pub fn is_recursive_def(&self, def: &Definition) -> bool {
-        self.recursing_defs.contains(&def.id)
+    /// Returns `true` if the enum variant of this `Definition` holds it in a `Box`:
+    /// any of its parameters eventually contains the same type as the `Definition`
+    /// itself (meaning it recurses), or it is one of [`BOXED_FOR_SIZE`].
+    pub fn is_boxed_def(&self, def: &Definition) -> bool {
+        self.boxed_defs.contains(&def.id)
     }
 
     pub fn defs_with_type(&self, ty: &'a Type) -> &Vec<&Definition> {

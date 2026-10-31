@@ -21,6 +21,7 @@ pub(crate) struct ClientInner {
     pub(crate) handle: SenderPoolHandle,
     pub(crate) configuration: ClientConfiguration,
     pub(crate) auth_copied_to_dcs: tokio::sync::Mutex<Vec<(i32, Box<[u8; 256]>)>>,
+    pub(crate) stored_peers: super::chats::StoredPeers,
     pub(crate) lifecycle: Option<super::runtime::ManagedLifecycle>,
     #[cfg(test)]
     pub(crate) rpc_responder: Option<Arc<TestRpcResponder>>,

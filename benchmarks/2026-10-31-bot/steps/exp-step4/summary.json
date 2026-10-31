@@ -1,0 +1,260 @@
+{
+  "closed64": {
+    "medians": {
+      "step3": {
+        "rate": 245894.5,
+        "cpu_us": 4.0649999999999995,
+        "user_us": 3.5,
+        "sys_us": 0.54,
+        "core_share": 0.9995,
+        "allocs_per_rpc": 17.19,
+        "bytes_per_rpc": 13826.5,
+        "p50_us": 249.85000000000002,
+        "p95_us": 329.75,
+        "p99_us": 366.54999999999995,
+        "rss_steady_kib": 6616.0,
+        "rss_peak_kib": 6616.0,
+        "live_heap_b": 405521.0
+      },
+      "step4": {
+        "rate": 241085.0,
+        "cpu_us": 4.145,
+        "user_us": 3.55,
+        "sys_us": 0.585,
+        "core_share": 0.999,
+        "allocs_per_rpc": 17.19,
+        "bytes_per_rpc": 13825.5,
+        "p50_us": 256.0,
+        "p95_us": 331.8,
+        "p99_us": 374.75,
+        "rss_steady_kib": 6452.0,
+        "rss_peak_kib": 6542.0,
+        "live_heap_b": 405521.0
+      }
+    },
+    "against": {
+      "step3": {
+        "rate": {
+          "paired_delta_percent": -1.14,
+          "bootstrap_95_percent": [
+            -4.85,
+            1.63
+          ]
+        },
+        "cpu_us": {
+          "paired_delta_percent": 1.17,
+          "bootstrap_95_percent": [
+            -1.72,
+            5.19
+          ]
+        },
+        "user_us": {
+          "paired_delta_percent": -0.98,
+          "bootstrap_95_percent": [
+            -2.41,
+            5.2
+          ]
+        },
+        "sys_us": {
+          "paired_delta_percent": 5.6,
+          "bootstrap_95_percent": [
+            1.85,
+            25.93
+          ]
+        },
+        "core_share": {
+          "paired_delta_percent": 0.0,
+          "bootstrap_95_percent": [
+            -0.1,
+            0.0
+          ]
+        },
+        "allocs_per_rpc": {
+          "paired_delta_percent": 0.0,
+          "bootstrap_95_percent": [
+            0.0,
+            0.0
+          ]
+        },
+        "bytes_per_rpc": {
+          "paired_delta_percent": -0.05,
+          "bootstrap_95_percent": [
+            -0.27,
+            0.36
+          ]
+        },
+        "p50_us": {
+          "paired_delta_percent": 1.68,
+          "bootstrap_95_percent": [
+            -1.58,
+            5.77
+          ]
+        },
+        "p95_us": {
+          "paired_delta_percent": 0.0,
+          "bootstrap_95_percent": [
+            -2.5,
+            3.71
+          ]
+        },
+        "p99_us": {
+          "paired_delta_percent": 1.67,
+          "bootstrap_95_percent": [
+            -1.11,
+            5.5
+          ]
+        },
+        "rss_steady_kib": {
+          "paired_delta_percent": -2.45,
+          "bootstrap_95_percent": [
+            -6.52,
+            0.12
+          ]
+        },
+        "rss_peak_kib": {
+          "paired_delta_percent": -0.45,
+          "bootstrap_95_percent": [
+            -6.52,
+            0.12
+          ]
+        },
+        "live_heap_b": {
+          "paired_delta_percent": 0.0,
+          "bootstrap_95_percent": [
+            0.0,
+            0.0
+          ]
+        }
+      }
+    }
+  },
+  "closed256": {
+    "medians": {
+      "step3": {
+        "rate": 255462.5,
+        "cpu_us": 3.91,
+        "user_us": 3.5,
+        "sys_us": 0.45,
+        "core_share": 0.999,
+        "allocs_per_rpc": 17.14,
+        "bytes_per_rpc": 14296.0,
+        "p50_us": 991.2,
+        "p95_us": 1237.0,
+        "p99_us": 1384.45,
+        "rss_steady_kib": 7450.0,
+        "rss_peak_kib": 7494.0,
+        "live_heap_b": 1210236.5
+      },
+      "step4": {
+        "rate": 248873.5,
+        "cpu_us": 4.02,
+        "user_us": 3.525,
+        "sys_us": 0.475,
+        "core_share": 0.999,
+        "allocs_per_rpc": 17.14,
+        "bytes_per_rpc": 14296.0,
+        "p50_us": 1015.8,
+        "p95_us": 1277.95,
+        "p99_us": 1450.0,
+        "rss_steady_kib": 7476.0,
+        "rss_peak_kib": 7502.0,
+        "live_heap_b": 1240366.0
+      }
+    },
+    "against": {
+      "step3": {
+        "rate": {
+          "paired_delta_percent": -2.65,
+          "bootstrap_95_percent": [
+            -3.57,
+            -1.48
+          ]
+        },
+        "cpu_us": {
+          "paired_delta_percent": 2.82,
+          "bootstrap_95_percent": [
+            1.74,
+            3.43
+          ]
+        },
+        "user_us": {
+          "paired_delta_percent": 1.83,
+          "bootstrap_95_percent": [
+            -0.87,
+            3.59
+          ]
+        },
+        "sys_us": {
+          "paired_delta_percent": 2.22,
+          "bootstrap_95_percent": [
+            2.08,
+            40.54
+          ]
+        },
+        "core_share": {
+          "paired_delta_percent": 0.0,
+          "bootstrap_95_percent": [
+            -0.2,
+            0.1
+          ]
+        },
+        "allocs_per_rpc": {
+          "paired_delta_percent": 0.0,
+          "bootstrap_95_percent": [
+            0.0,
+            0.0
+          ]
+        },
+        "bytes_per_rpc": {
+          "paired_delta_percent": -0.28,
+          "bootstrap_95_percent": [
+            -0.94,
+            0.37
+          ]
+        },
+        "p50_us": {
+          "paired_delta_percent": 2.48,
+          "bootstrap_95_percent": [
+            1.61,
+            3.41
+          ]
+        },
+        "p95_us": {
+          "paired_delta_percent": 3.34,
+          "bootstrap_95_percent": [
+            1.27,
+            4.11
+          ]
+        },
+        "p99_us": {
+          "paired_delta_percent": 5.28,
+          "bootstrap_95_percent": [
+            -1.09,
+            7.41
+          ]
+        },
+        "rss_steady_kib": {
+          "paired_delta_percent": 1.03,
+          "bootstrap_95_percent": [
+            -0.59,
+            2.83
+          ]
+        },
+        "rss_peak_kib": {
+          "paired_delta_percent": -0.2,
+          "bootstrap_95_percent": [
+            -1.12,
+            4.38
+          ]
+        },
+        "live_heap_b": {
+          "paired_delta_percent": -1.9,
+          "bootstrap_95_percent": [
+            -7.9,
+            17.47
+          ]
+        }
+      }
+    }
+  }
+}

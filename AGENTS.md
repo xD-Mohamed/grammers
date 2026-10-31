@@ -1,5 +1,33 @@
 # grammers fork
 
+## Bot workload and compliance follow-up (2026-10-31)
+
+[Measurements](benchmarks/2026-10-31-bot/README.md) and [audit with sources](COMPLIANCE-2026-10-31.md).
+Keep `grammers-client/tests/bot_workload.rs`'s mock in its own process, and heap accounting
+out of its CPU window. Mock-only: never point it at Telegram. Live checks go through the
+ignored `live_telegram_bot` test, with a credential the owner provided for it.
+
+Keep these, each measured or required by the audit:
+
+- `send_message` and anything like it must not hold `tl::enums::Updates` across an await:
+  destructure it first in a plain function. Long-lived futures stay small, so box a value
+  held across a yield in `run_sender`. Size guards are in `depth_tests.rs`.
+- `tl-gen`'s `BOXED_FOR_SIZE` keeps `Update` near 752 B. A schema rename silently unboxes,
+  which those guards catch. This diverges from upstream: see UPSTREAM.md.
+- Do not sort `Vec<Update>` with the standard stable sort on a path taken per batch.
+- A full update queue gets one yield per batch, then drops. Dropping costs a recovery
+  request to Telegram; more yields stall RPCs on a stalled consumer.
+- Written peers are only remembered after storage succeeds, and forgotten every ten minutes,
+  because a `Session` may forget them. Never write fewer than a peer's changes.
+- Every recovery failure honours `retry_after` and backs off to 60 s; unreadable replies keep a
+  short pause so that their limited attempts end. Per-channel delays apply to any cause of a
+  difference. Updates beyond a position stay in the gap, capped, never advancing it.
+- Connection attempts are paced per DC. `Dropped` and `InvalidDc` never reached a server.
+- A read-buffer change also changes fairness: reads cost budget per 2 KiB, a measured trade
+  against quiet pools. Re-measure with `compare-overload.py`, not only the bot workload.
+
+Limits Telegram's servers enforce are not this library's to raise. Report them as such.
+
 ## Audit follow-up (2026-10-31)
 
 [REVIEW-FOLLOWUP.md](REVIEW-FOLLOWUP.md) records the status of every remaining audit
@@ -13,10 +41,11 @@ schema recursion passes through one; recheck that if bare recursive types ever a
 The limit of 64 is a resource policy sized from measured stack use, and an overly small
 limit wedges updates on real data, so re-measure before lowering it.
 
-A failed recovery RPC, or failing to store its result, pauses retries about a second
-while live updates keep flowing; GetState then replaces any provisional account position formed meanwhile. Releasing held
-channel updates after a temporary failure must not re-queue updates beyond a gap: that
-restarts recovery with no new traffic. Replay eviction by age must keep raising the floor
+A failed recovery RPC, or failing to store its result, pauses retries, from a second up to a
+minute as failures repeat (see the follow-up above), while live updates keep flowing; GetState
+then replaces any provisional account position formed meanwhile. Releasing held
+channel updates after a temporary failure must not re-queue updates beyond a gap: they wait in
+that gap, or recovery would restart with no new traffic. Replay eviction by age must keep raising the floor
 to the highest ID that actually left. Batched requests stay charged per request, or a
 ready queue can do many times the work per poll. Grown socket buffers are released only
 when empty and idle, which replaces the older note below that grown capacity is kept.

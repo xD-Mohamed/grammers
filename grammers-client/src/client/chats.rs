@@ -11,8 +11,9 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::future::Future;
-use std::sync::Arc;
-use std::time::Duration;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use grammers_mtsender::{InvocationError, RpcError};
 use grammers_session::types::{PeerId, PeerInfo, PeerKind, PeerRef};
@@ -35,6 +36,88 @@ use crate::peer::chats::BannedRightsBuilderInner;
 const MAX_PARTICIPANT_LIMIT: usize = 200;
 const MAX_PHOTO_LIMIT: usize = 100;
 const KICK_BAN_DURATION: i32 = 60; // in seconds, in case the second request fails
+
+/// Peers last written to storage through [`Client::cache_peer_map`].
+///
+/// One slot per peer ID, so a slot holds the last value written for that ID and a peer
+/// whose information changed is written again. Peers sharing a slot evict each other,
+/// which only costs a write; frequent eviction grows the table, up to about 512 KiB for
+/// a bot hearing from tens of thousands of peers. Nothing is allocated before the first
+/// write. A [`grammers_session::Session`] may forget peers, so everything is forgotten
+/// here as well every [`STORED_PEER_LIFETIME`], when active peers are written once more.
+#[derive(Default)]
+pub(crate) struct StoredPeers(Mutex<StoredPeerSlots>);
+
+#[derive(Default)]
+struct StoredPeerSlots {
+    slots: Vec<u64>,
+    evictions: usize,
+    forget_at: Option<Instant>,
+}
+
+const MIN_STORED_PEER_SLOTS: usize = 256;
+const MAX_STORED_PEER_SLOTS: usize = 65_536;
+const STORED_PEER_LIFETIME: Duration = Duration::from_secs(600);
+
+impl StoredPeers {
+    fn fingerprint(peer: &PeerInfo) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        peer.hash(&mut hasher);
+        // Zero marks an empty slot.
+        hasher.finish() | 1
+    }
+
+    fn index(peer: &PeerInfo, len: usize) -> usize {
+        // Fibonacci hashing: telegram identifiers are not evenly spread in their low bits.
+        let id = peer.id().bot_api_dialog_id_unchecked() as u64;
+        (id.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - len.ilog2())) as usize
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expire_for_tests(&self) {
+        self.0.lock().unwrap().forget_at = Some(Instant::now());
+    }
+
+    #[cfg(test)]
+    pub(crate) fn capacity_for_tests(&self) -> usize {
+        self.0.lock().unwrap().slots.len()
+    }
+
+    fn forget_if_old(&self) {
+        let mut table = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if table.forget_at.is_some_and(|at| Instant::now() >= at) {
+            table.slots.fill(0);
+            table.forget_at = None;
+        }
+    }
+
+    pub(crate) fn contains(&self, peer: &PeerInfo) -> bool {
+        let table = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        !table.slots.is_empty()
+            && table.slots[Self::index(peer, table.slots.len())] == Self::fingerprint(peer)
+    }
+
+    pub(crate) fn remember(&self, peer: &PeerInfo) {
+        let mut table = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if table.slots.is_empty() {
+            table.slots = vec![0; MIN_STORED_PEER_SLOTS];
+        }
+        table
+            .forget_at
+            .get_or_insert_with(|| Instant::now() + STORED_PEER_LIFETIME);
+        let index = Self::index(peer, table.slots.len());
+        let fingerprint = Self::fingerprint(peer);
+        if !matches!(table.slots[index], 0) && table.slots[index] != fingerprint {
+            table.evictions += 1;
+        }
+        table.slots[index] = fingerprint;
+        if table.evictions >= table.slots.len() && table.slots.len() < MAX_STORED_PEER_SLOTS {
+            // Positions depend on the size. Active peers are simply written once more.
+            table.slots = vec![0; table.slots.len() * 2];
+            table.evictions = 0;
+        }
+    }
+}
 
 enum ParticipantIterInner {
     Empty,
@@ -967,23 +1050,26 @@ impl Client {
     }
 
     pub(crate) async fn cache_peer_map(&self, peers: &PeerMap) {
-        let cache_result = if self.0.configuration.auto_cache_peers {
-            self.0
-                .session
-                .cache_peers(
-                    peers
-                        .map
-                        .values()
-                        .filter(|peer| peer.auth().is_some())
-                        .map(grammers_session::types::PeerInfo::from)
-                        .collect(),
-                )
-                .await
-        } else {
-            Ok(())
-        };
-        if let Err(e) = cache_result {
-            warn!(?e, "cache_peer fail");
+        if !self.0.configuration.auto_cache_peers {
+            return;
+        }
+        // A bot mostly hears from the same peers, and each write here can be a storage
+        // transaction per update. Only what changed since it was last stored needs one.
+        let stored = &self.0.stored_peers;
+        stored.forget_if_old();
+        let changed: Vec<PeerInfo> = peers
+            .map
+            .values()
+            .filter(|peer| peer.auth().is_some())
+            .map(PeerInfo::from)
+            .filter(|peer| !stored.contains(peer))
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        match self.0.session.cache_peers(changed.clone()).await {
+            Ok(()) => changed.iter().for_each(|peer| stored.remember(peer)),
+            Err(e) => warn!(?e, "cache_peer fail"),
         }
     }
 

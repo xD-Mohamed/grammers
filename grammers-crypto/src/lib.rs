@@ -187,7 +187,12 @@ pub fn decrypt_data_v2<'b>(
     // https://core.telegram.org/mtproto/security_guidelines#mtproto-encrypted-messages
     let our_key = sha256!(&auth_key.data[88 + x..88 + x + 32], &plaintext);
 
-    if msg_key != our_key[8..8 + 16] {
+    // Not stopping at the first difference: the time taken reveals nothing about it.
+    let difference = msg_key
+        .iter()
+        .zip(&our_key[8..8 + 16])
+        .fold(0, |difference, (ours, theirs)| difference | (ours ^ theirs));
+    if std::hint::black_box(difference) != 0 {
         return Err(Error::MessageKeyMismatch);
     }
 

@@ -26,6 +26,9 @@ use crate::{InvocationError, SenderPoolHandle, UpdatesConfiguration};
 const BOT_CHANNEL_DIFF_LIMIT: i32 = 100000;
 const USER_CHANNEL_DIFF_LIMIT: i32 = 100;
 const RECOVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
+// As TDLib: a failure doubles the delay, up to about a minute. Telegram's own wait,
+// when it gives one, is honoured whatever this says.
+const RECOVERY_RETRY_DELAY_LIMIT: Duration = Duration::from_secs(60);
 // Consecutive unreadable replies before a backlog is abandoned so that its sequence
 // is not wedged for good. Nothing else can make such a reply readable.
 const MAX_UNREADABLE_DIFFERENCES: u8 = 30;
@@ -89,6 +92,7 @@ pub struct UpdatesReceiver {
     is_bot: Option<bool>,
     next_self_check: tokio::time::Instant,
     recovery_paused_until: tokio::time::Instant,
+    recovery_failures: u32,
     // Keyed by channel; `None` is the account sequence.
     unreadable_differences: BTreeMap<Option<i64>, u8>,
 }
@@ -124,13 +128,15 @@ async fn prepare_channel_difference(
         } else {
             USER_CHANNEL_DIFF_LIMIT
         };
-        trace!(?request, "requesting");
+        // The request now holds the channel's access hash, which is left out.
+        trace!(channel_id = id, pts = request.pts, "requesting");
         Ok(Some(request))
     } else if is_bot && message_box.try_exhaust_channel_grace() {
-        // The skeleton request carries a zero hash, which bots can use to address
-        // channels they are allowed to read (TDLib's get_input_channel does this).
-        // Try it before abandoning the backlog. A rejection takes the ordinary
-        // channel-error paths and exhaustion persists, so this cannot loop quickly.
+        // The skeleton request carries a zero hash, which core.telegram.org/api/peers
+        // says "must be used by bots when only a min access hash (or no access hash) is
+        // available locally", as does TDLib's get_input_channel. Try it before abandoning
+        // the backlog. A rejection takes the ordinary channel-error paths and exhaustion
+        // persists, so this cannot loop quickly.
         warn!(
             channel_id = ?id,
             "missing channel hash after grace; trying the bot zero-hash form before discarding its backlog",
@@ -183,6 +189,7 @@ impl UpdatesReceiver {
             is_bot: None,
             next_self_check: tokio::time::Instant::now(),
             recovery_paused_until: tokio::time::Instant::now(),
+            recovery_failures: 0,
             unreadable_differences: BTreeMap::new(),
         })
     }
@@ -279,6 +286,7 @@ impl UpdatesReceiver {
                         self.message_box.discard_account_state();
                         self.message_box.set_state(state);
                         self.authorization = Authorization::Confirmed;
+                        self.recovery_failures = 0;
                         // Cancellation or storage failure must leave recovery armed.
                         self.should_get_state = false;
                     }
@@ -304,7 +312,7 @@ impl UpdatesReceiver {
                         // can advance the home generation and spin through
                         // repeated GetState attempts inside this same next() call.
                         self.should_get_state = true;
-                        self.pause_recovery();
+                        self.pause_recovery_after(&error);
                         return Err(error);
                     }
                 }
@@ -345,9 +353,11 @@ impl UpdatesReceiver {
                             let is_bot = match self.is_bot {
                                 Some(is_bot) => is_bot,
                                 None => {
-                                    let is_bot = if let Some(PeerInfo::User { bot, .. }) =
-                                        session.peer(PeerId::self_user()).await?
-                                    {
+                                    let own = session.peer(PeerId::self_user()).await;
+                                    if own.is_err() {
+                                        self.pause_recovery();
+                                    }
+                                    let is_bot = if let Some(PeerInfo::User { bot, .. }) = own? {
                                         self.authorization = Authorization::Confirmed;
                                         bot.unwrap_or(false)
                                     } else {
@@ -363,12 +373,16 @@ impl UpdatesReceiver {
                                 &mut self.message_box,
                                 is_bot,
                             )
-                            .await?
+                            .await
                             {
-                                Some(request) => Some(request),
-                                None => {
+                                Ok(Some(request)) => Some(request),
+                                Ok(None) => {
                                     self.prefer_live = true;
                                     continue;
+                                }
+                                Err(error) => {
+                                    self.pause_recovery_after(&error);
+                                    return Err(error);
                                 }
                             }
                         }
@@ -400,6 +414,7 @@ impl UpdatesReceiver {
                     }
                 };
                 self.unreadable_differences.remove(&None);
+                self.recovery_failures = 0;
                 self.extend_update_queue(updates, users, chats);
                 continue;
             }
@@ -428,7 +443,7 @@ impl UpdatesReceiver {
                             || e.is("API_ID_*")
                             || matches!(e.root_cause(), InvocationError::Rpc(rpc) if matches!(rpc.code, 401 | 420 | 429)) =>
                     {
-                        self.pause_recovery();
+                        self.pause_recovery_after(&e);
                         return Err(e);
                     }
                     Err(e) if e.is("PERSISTENT_TIMESTAMP_OUTDATED") => {
@@ -466,8 +481,12 @@ impl UpdatesReceiver {
                         .iter()
                         .any(|name| e.is(name)) =>
                     {
+                        // The request holds the channel's access hash, which is left out.
                         info!(
-                            ?request,
+                            channel = ?match &request.channel {
+                                tl::enums::InputChannel::Channel(channel) => Some(channel.channel_id),
+                                _ => None,
+                            },
                             error = ?e.root_cause(),
                             "channel difference rejected; discarding this channel's saved position",
                         );
@@ -491,7 +510,7 @@ impl UpdatesReceiver {
                         continue;
                     }
                     Err(e) => {
-                        self.pause_recovery();
+                        self.pause_recovery_after(&e);
                         return Err(e);
                     }
                 };
@@ -512,6 +531,10 @@ impl UpdatesReceiver {
                 if let tl::enums::InputChannel::Channel(channel) = &request.channel {
                     self.unreadable_differences
                         .remove(&Some(channel.channel_id));
+                }
+                // Not while the account keeps failing, or its delay would never grow.
+                if self.message_box.get_difference().is_none() {
+                    self.recovery_failures = 0;
                 }
                 self.extend_update_queue(updates, users, chats);
                 continue;
@@ -555,7 +578,20 @@ impl UpdatesReceiver {
     }
 
     fn pause_recovery(&mut self) {
-        self.recovery_paused_until = tokio::time::Instant::now() + RECOVERY_RETRY_DELAY;
+        let delay = RECOVERY_RETRY_DELAY
+            .saturating_mul(1 << self.recovery_failures.min(6))
+            .min(RECOVERY_RETRY_DELAY_LIMIT);
+        self.recovery_failures = self.recovery_failures.saturating_add(1);
+        self.recovery_paused_until = tokio::time::Instant::now() + delay;
+    }
+
+    /// Pause after a failed request: no shorter than any wait Telegram asked for.
+    fn pause_recovery_after(&mut self, error: &InvocationError) {
+        self.pause_recovery();
+        if let Some(wait) = error.retry_after() {
+            let until = tokio::time::Instant::now() + wait;
+            self.recovery_paused_until = self.recovery_paused_until.max(until);
+        }
     }
 
     fn difference_unreadable(&mut self, sequence: Option<i64>) -> bool {
@@ -568,12 +604,21 @@ impl UpdatesReceiver {
         abandon
     }
 
+    // Telegram answered, and waiting longer will not make its reply readable: this keeps
+    // the short pause, so that a sequence stops being blocked after its limited attempts.
+    fn pause_recovery_for_unreadable_reply(&mut self) {
+        self.recovery_paused_until = tokio::time::Instant::now() + RECOVERY_RETRY_DELAY;
+    }
+
     fn account_recovery_failed(&mut self, error: InvocationError) -> InvocationError {
-        self.pause_recovery();
         if !matches!(error.root_cause(), InvocationError::Deserialize(_)) {
+            self.pause_recovery_after(&error);
             // Only consecutive unreadable replies count towards abandoning it.
             self.unreadable_differences.remove(&None);
-        } else if self.difference_unreadable(None) {
+            return error;
+        }
+        self.pause_recovery_for_unreadable_reply();
+        if self.difference_unreadable(None) {
             warn!(%error, "abandoning account backlog after repeated unreadable differences; those updates are lost");
             self.message_box.discard_account_state();
         }
@@ -600,7 +645,10 @@ impl UpdatesReceiver {
         } else {
             PrematureEndReason::TemporaryServerIssues
         });
-        self.pause_recovery();
+        if let Some(channel) = channel {
+            self.message_box.retry_channel_without_delay(channel);
+        }
+        self.pause_recovery_for_unreadable_reply();
         error
     }
 

@@ -9,24 +9,30 @@
 //! Methods related to sending messages.
 
 use std::collections::HashMap;
+use std::future::Future;
 
 use grammers_mtsender::InvocationError;
 use grammers_session::types::{PeerAuth, PeerId, PeerInfo, PeerKind, PeerRef};
 use grammers_tl_types::{self as tl, enums::InputPeer};
 use jiff::Timestamp;
-use tracing::{Level, enabled, warn};
+use tracing::warn;
 
 use super::{Client, IterBuffer};
 use crate::media::{InputMedia, Media};
 use crate::message::{InputMessage, InputReactions, Message, SendOptions};
 use crate::utils::{generate_random_id, generate_random_ids};
 
-async fn map_random_ids_to_messages(
-    client: &Client,
-    fetched_in: PeerRef,
-    random_ids: &[i64],
-    updates: tl::enums::Updates,
-) -> Result<Vec<Option<Message>>, Box<dyn std::error::Error + Send + Sync>> {
+/// The contents of `tl::enums::Updates` which can map to sent messages.
+///
+/// Taken outside any future: that enum is several kilobytes, which every enclosing
+/// future would otherwise carry for its whole life.
+type SentUpdateParts = Option<(
+    Vec<tl::enums::Update>,
+    Vec<tl::enums::User>,
+    Vec<tl::enums::Chat>,
+)>;
+
+fn sent_update_parts(updates: tl::enums::Updates) -> SentUpdateParts {
     match updates {
         tl::enums::Updates::Updates(tl::types::Updates {
             updates,
@@ -34,60 +40,71 @@ async fn map_random_ids_to_messages(
             chats,
             date: _,
             seq: _,
-        }) => {
-            let peers = client.build_peer_map(users, chats).await;
+        }) => Some((updates, users, chats)),
+        _ => None,
+    }
+}
 
-            let rnd_to_id = updates
-                .iter()
-                .filter_map(|update| match update {
-                    tl::enums::Update::MessageId(u) => Some((u.random_id, u.id)),
-                    _ => None,
-                })
-                .collect::<HashMap<_, _>>();
-
-            // TODO ideally this would use the same UpdateIter mechanism to make sure we don't
-            //      accidentally miss variants
-            let mut id_to_msg = updates
-                .into_iter()
-                .filter_map(|update| match update {
-                    tl::enums::Update::NewMessage(tl::types::UpdateNewMessage {
-                        message, ..
-                    }) => Some(message),
-                    tl::enums::Update::NewChannelMessage(tl::types::UpdateNewChannelMessage {
-                        message,
-                        ..
-                    }) => Some(message),
-                    tl::enums::Update::NewScheduledMessage(
-                        tl::types::UpdateNewScheduledMessage { message, .. },
-                    ) => Some(message),
-                    _ => None,
-                })
-                .map(|message| Message::from_raw(client, message, Some(fetched_in), peers.handle()))
-                .map(|message| (message.id(), message))
-                .collect::<HashMap<_, _>>();
-
-            Ok(random_ids
-                .iter()
-                .map(|rnd| {
-                    rnd_to_id
-                        .get(rnd)
-                        .and_then(|id| id_to_msg.remove(id))
-                        .or_else(|| {
-                            if id_to_msg.len() == 1 {
-                                // If there's no random_id to map from, in the common case a single message
-                                // should've been produced regardless, so try to recover by returning that.
-                                id_to_msg.drain().next().map(|(_, m)| m)
-                            } else {
-                                None
-                            }
-                        })
-                })
-                .collect())
-        }
+async fn map_random_ids_to_messages(
+    client: &Client,
+    fetched_in: PeerRef,
+    random_ids: &[i64],
+    parts: SentUpdateParts,
+) -> Result<Vec<Option<Message>>, Box<dyn std::error::Error + Send + Sync>> {
+    let Some((updates, users, chats)) = parts else {
         // The send may have succeeded without a usable message mapping. Preserve
         // one result per input for the existing fallback, without resending.
-        _ => Ok(random_ids.iter().map(|_| None).collect()),
-    }
+        return Ok(random_ids.iter().map(|_| None).collect());
+    };
+    let peers = client.build_peer_map(users, chats).await;
+
+    let rnd_to_id = updates
+        .iter()
+        .filter_map(|update| match update {
+            tl::enums::Update::MessageId(u) => Some((u.random_id, u.id)),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+
+    // TODO ideally this would use the same UpdateIter mechanism to make sure we don't
+    //      accidentally miss variants
+    let mut id_to_msg = updates
+        .into_iter()
+        .filter_map(|update| match update {
+            tl::enums::Update::NewMessage(tl::types::UpdateNewMessage { message, .. }) => {
+                Some(message)
+            }
+            tl::enums::Update::NewChannelMessage(tl::types::UpdateNewChannelMessage {
+                message,
+                ..
+            }) => Some(message),
+            tl::enums::Update::NewScheduledMessage(tl::types::UpdateNewScheduledMessage {
+                message,
+                ..
+            }) => Some(message),
+            _ => None,
+        })
+        .map(|message| Message::from_raw(client, message, Some(fetched_in), peers.handle()))
+        .map(|message| (message.id(), message))
+        .collect::<HashMap<_, _>>();
+
+    Ok(random_ids
+        .iter()
+        .map(|rnd| {
+            rnd_to_id
+                .get(rnd)
+                .and_then(|id| id_to_msg.remove(id))
+                .or_else(|| {
+                    if id_to_msg.len() == 1 {
+                        // If there's no random_id to map from, in the common case a single message
+                        // should've been produced regardless, so try to recover by returning that.
+                        id_to_msg.drain().next().map(|(_, m)| m)
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect())
 }
 
 async fn send_message_peer(client: &Client, peer: PeerRef) -> Result<PeerRef, InvocationError> {
@@ -113,49 +130,50 @@ async fn send_message_peer(client: &Client, peer: PeerRef) -> Result<PeerRef, In
     })
 }
 
-async fn message_from_send_response(
+/// The reply to a send which is not short. A plain function, so that its future does
+/// not store the several kilobytes of `updates` as an argument.
+fn message_from_full_updates(
     client: &Client,
     peer: PeerRef,
-    message: InputMessage,
     random_id: i64,
     updates: tl::enums::Updates,
-) -> Result<Message, InvocationError> {
-    Ok(match updates {
-        tl::enums::Updates::UpdateShortSentMessage(updates) => {
-            Message::from_raw_short_updates(client, updates, message, peer)
-        }
-        updates => {
-            let updates_debug = if enabled!(Level::WARN) {
-                Some(updates.clone())
-            } else {
-                None
-            };
-            match map_random_ids_to_messages(client, peer, &[random_id], updates)
-                .await?
-                .pop()
-                .flatten()
-            {
-                Some(message) => message,
-                None => {
-                    if let Some(updates) = updates_debug {
-                        warn!(
-                            "failed to find just-sent message in response updates; please report this:"
-                        );
-                        warn!("{:#?}", updates);
-                    }
-                    Message::from_raw(
-                        client,
-                        tl::enums::Message::Empty(tl::types::MessageEmpty {
-                            id: 0,
-                            peer_id: Some(peer.id.into()),
-                        }),
-                        Some(peer),
-                        client.empty_peer_map(),
-                    )
-                }
-            }
-        }
-    })
+) -> impl Future<Output = Result<Message, InvocationError>> {
+    let constructor = updates_constructor(&updates);
+    let parts = sent_update_parts(updates);
+    async move {
+        let mapped = map_random_ids_to_messages(client, peer, &[random_id], parts)
+            .await?
+            .pop()
+            .flatten();
+        Ok(mapped.unwrap_or_else(|| {
+            warn!(
+                constructor,
+                "failed to find just-sent message in response updates; please report this"
+            );
+            Message::from_raw(
+                client,
+                tl::enums::Message::Empty(tl::types::MessageEmpty {
+                    id: 0,
+                    peer_id: Some(peer.id.into()),
+                }),
+                Some(peer),
+                client.empty_peer_map(),
+            )
+        }))
+    }
+}
+
+// Logged instead of the updates themselves, which hold other people's messages.
+fn updates_constructor(updates: &tl::enums::Updates) -> &'static str {
+    match updates {
+        tl::enums::Updates::TooLong => "updatesTooLong",
+        tl::enums::Updates::UpdateShortMessage(_) => "updateShortMessage",
+        tl::enums::Updates::UpdateShortChatMessage(_) => "updateShortChatMessage",
+        tl::enums::Updates::UpdateShort(_) => "updateShort",
+        tl::enums::Updates::Combined(_) => "updatesCombined",
+        tl::enums::Updates::Updates(_) => "updates",
+        tl::enums::Updates::UpdateShortSentMessage(_) => "updateShortSentMessage",
+    }
 }
 
 pub(crate) async fn parse_mention_entities(
@@ -667,8 +685,12 @@ impl Client {
         let peer = peer.into();
         // Resolve before any mutating RPC; retain InputPeerSelf on the wire.
         // Reply reconstruction must not fail on a post-delivery self lookup.
-        let fetched_in = send_message_peer(self, peer).await?;
-        let message = message.into();
+        let fetched_in = if peer.id.bare_id().is_some() {
+            peer
+        } else {
+            Box::pin(send_message_peer(self, peer)).await?
+        };
+        let mut message: InputMessage = message.into();
         let random_id = generate_random_id();
         let entities = parse_mention_entities(self, message.entities.clone()).await;
         let updates = if let Some(media) = message.media.clone() {
@@ -697,14 +719,15 @@ impl Client {
             })
             .await
         } else {
-            self.invoke(&tl::functions::messages::SendMessage {
+            // The text only comes back for a short reply, so lend it to the request.
+            let request = tl::functions::messages::SendMessage {
                 no_webpage: !message.link_preview,
                 silent: message.silent,
                 background: message.background,
                 clear_draft: message.clear_draft,
                 peer: peer.into(),
                 reply_to: message.reply_to.map(input_reply_to),
-                message: message.text.clone(),
+                message: std::mem::take(&mut message.text),
                 random_id,
                 reply_markup: message.reply_markup.clone(),
                 entities,
@@ -720,11 +743,19 @@ impl Client {
                 allow_paid_stars: None,
                 suggested_post: None,
                 rich_message: message.rich_message.clone(),
-            })
-            .await
+            };
+            let result = self.invoke(&request).await;
+            message.text = request.message;
+            result
         }?;
 
-        message_from_send_response(self, fetched_in, message, random_id, updates).await
+        // A short reply needs nothing awaited; keep it free of the other path's state.
+        match updates {
+            tl::enums::Updates::UpdateShortSentMessage(updates) => Ok(
+                Message::from_raw_short_updates(self, updates, message, fetched_in),
+            ),
+            updates => message_from_full_updates(self, fetched_in, random_id, updates).await,
+        }
     }
 
     /// Send text or media using a struct of common optional flags.
@@ -859,7 +890,7 @@ impl Client {
             })
             .await?;
 
-        Ok(map_random_ids_to_messages(self, peer, &random_ids, updates).await?)
+        Ok(map_random_ids_to_messages(self, peer, &random_ids, sent_update_parts(updates)).await?)
     }
 
     /// Edits an existing message.
@@ -1036,7 +1067,10 @@ impl Client {
             from_ephemeral: false,
         };
         let result = self.invoke(&request).await?;
-        Ok(map_random_ids_to_messages(self, peer, &request.random_id, result).await?)
+        Ok(
+            map_random_ids_to_messages(self, peer, &request.random_id, sent_update_parts(result))
+                .await?,
+        )
     }
 
     /// Gets the [`Message`] to which the input message is replying to.
@@ -1450,9 +1484,14 @@ mod response_mapping_tests {
         ];
         for reply in replies {
             for ids in [&[][..], &[42][..], &[42, 43, 44][..]] {
-                let mapped = map_random_ids_to_messages(&client, peer, ids, reply.clone())
-                    .await
-                    .unwrap();
+                let mapped = map_random_ids_to_messages(
+                    &client,
+                    peer,
+                    ids,
+                    sent_update_parts(reply.clone()),
+                )
+                .await
+                .unwrap();
                 assert_eq!(mapped.len(), ids.len());
                 assert!(mapped.iter().all(Option::is_none));
             }

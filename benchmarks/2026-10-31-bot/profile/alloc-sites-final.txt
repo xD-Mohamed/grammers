@@ -1,0 +1,162 @@
+ALLOC SITES by bytes (9973126 sampled-equivalent allocations over 212064 RPCs)
+ 25.52% bytes      7974 B/rpc   2.98 allocs/rpc
+    reserve_rehash<(grammers_session::peer::PeerId, grammers_client::peer::Peer), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<grammers_session::peer::PeerId, grammers_client::peer::Peer, std::hash::random::RandomState>> @ /rust/deps/hashbrown-0.17.1/src/raw.rs:962:24
+    reserve<(grammers_session::peer::PeerId, grammers_client::peer::Peer), alloc::alloc::Global, hashbrown::map::make_hasher::{closure_env#0}<grammers_session::peer::PeerId, grammers_client::peer::Peer, std::hash::random::RandomState>> @ /rust/deps/hashbrown-0.17.1/src/raw.rs:914:31
+    reserve<grammers_session::peer::PeerId, grammers_client::peer::Peer, std::hash::random::RandomState, alloc::alloc::Global> @ /rust/deps/hashbrown-0.17.1/src/map.rs:1083:14
+    extend<grammers_session::peer::PeerId, grammers_client::peer::Peer, std::hash::random::RandomState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::chain::Chain<core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::User, alloc::alloc::Global>, grammers_client::client::chats::{impl#3}::peer_map_from_raw::{closure_env#0}>, core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::Chat, alloc::alloc::Global>, grammers_client::client::chats::{impl#3}::peer_map_from_raw::{closure_env#1}>>, grammers_client::client::chats::{impl#3}::peer_map_from_raw::{closure_env#2}>> @ /rust/deps/hashbrown-0.17.1/src/map.rs:4878:14
+    extend<grammers_session::peer::PeerId, grammers_client::peer::Peer, std::hash::random::RandomState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::chain::Chain<core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::User, alloc::alloc::Global>, grammers_client::client::chats::{impl#3}::peer_map_from_raw::{closure_env#0}>, core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::Chat, alloc::alloc::Global>, grammers_client::client::chats::{impl#3}::peer_map_from_raw::{closure_env#1}>>, grammers_client::client::chats::{impl#3}::peer_map_from_raw::{closure_env#2}>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/collections/hash/map.rs:3031:19
+    from_iter<grammers_session::peer::PeerId, grammers_client::peer::Peer, std::hash::random::RandomState, core::iter::adapters::map::Map<core::iter::adapters::chain::Chain<core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::User, alloc::alloc::Global>, grammers_client::client::chats::{impl#3}::peer_map_from_raw::{closure_env#0}>, core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::Chat, alloc::alloc::Global>, grammers_client::client::chats::{impl#3}::peer_map_from_raw::{closure_env#1}>>, grammers_client::client::chats::{impl#3}::peer_map_from_raw::{closure_env#2}>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/std/src/collections/hash/map.rs:3015:13
+ 16.94% bytes      5294 B/rpc   2.05 allocs/rpc
+    new<grammers_tl_types::generated::types::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    deserialize_vector<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:405:21
+    deserialize<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+    {closure#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -mtsender/src/sender_pool.rs:468:30
+    and_then<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError, grammers_tl_types::generated::enums::Updates, grammers_mtsender::sender_pool::{impl#9}::invoke_in_dc::{async_fn#0}::{closure_env#0}<grammers_tl_types::generated::functions::messages::SendMessage>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/result.rs:1492:22
+ 11.72% bytes      3661 B/rpc   1.42 allocs/rpc
+    try_new_uninit_in<grammers_tl_types::generated::types::Message, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:619:19
+    new_uninit_in<grammers_tl_types::generated::types::Message, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:586:15
+    clone<grammers_tl_types::generated::types::Message, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:2089:25
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1088:37
+ 11.49% bytes      3589 B/rpc   4.34 allocs/rpc
+    <grammers_session::message_box::defs::MessageBoxes>::process_updates @ -session/src/message_box/mod.rs:651:14
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1088:37
+  8.34% bytes      2607 B/rpc   2.22 allocs/rpc
+    with_capacity_in<grammers_tl_types::generated::enums::Update, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:177:20
+    with_capacity_in<grammers_tl_types::generated::enums::Update, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:969:20
+    with_capacity<grammers_tl_types::generated::enums::Update> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:522:9
+    deserialize_vector<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:402:22
+    deserialize<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+  3.99% bytes      1248 B/rpc   0.25 allocs/rpc
+    grow_one<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:188:29
+    push_mut<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:1033:22
+    push<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:996:22
+    process_own_update<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:808:25
+    process_mtp_buffer<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:782:26
+    on_net_read<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:600:26
+  3.69% bytes      1154 B/rpc   1.80 allocs/rpc
+    with_capacity_in<grammers_tl_types::generated::enums::Chat, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:177:20
+    with_capacity_in<grammers_tl_types::generated::enums::Chat, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:969:20
+    with_capacity<grammers_tl_types::generated::enums::Chat> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:522:9
+    deserialize_vector<grammers_tl_types::generated::enums::Chat> @ -tl-types/src/deserialize.rs:402:22
+    deserialize<grammers_tl_types::generated::enums::Chat> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+  3.50% bytes      1093 B/rpc   0.42 allocs/rpc
+    new<grammers_tl_types::generated::types::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    into<grammers_tl_types::generated::types::Message, grammers_tl_types::generated::enums::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/convert/mod.rs:781:9
+    <grammers_session::message_box::defs::MessageBoxes>::process_updates @ -session/src/message_box/mod.rs:651:14
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1088:37
+  3.41% bytes      1064 B/rpc   0.41 allocs/rpc
+    new<grammers_tl_types::generated::types::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    deserialize_vector<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:397:17
+    deserialize<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+    process_update<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:819:15
+    process_mtp_buffer<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:784:57
+  3.03% bytes       946 B/rpc   1.46 allocs/rpc
+    with_capacity_in<grammers_tl_types::generated::enums::User, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:177:20
+    with_capacity_in<grammers_tl_types::generated::enums::User, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:969:20
+    with_capacity<grammers_tl_types::generated::enums::User> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:522:9
+    deserialize_vector<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:402:22
+    deserialize<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+  1.37% bytes       428 B/rpc   1.15 allocs/rpc
+    {closure#0}<i32, grammers_client::message::model::Message, std::hash::random::RandomState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::map::Map<core::iter::adapters::filter_map::FilterMap<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::Update, alloc::alloc::Global>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#2}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#3}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#4}>> @ /rust/deps/hashbrown-0.17.1/src/map.rs:4880:18
+    {closure#0}<(i32, grammers_client::message::model::Message), hashbrown::map::{impl#82}::extend::{closure_env#0}<i32, grammers_client::message::model::Message, std::hash::random::RandomState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::map::Map<core::iter::adapters::filter_map::FilterMap<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::Update, alloc::alloc::Global>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#2}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#3}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#4}>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/iter/traits/iterator.rs:884:29
+    {closure#0}<grammers_client::message::model::Message, (i32, grammers_client::message::model::Message), (), grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#4}, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<(i32, grammers_client::message::model::Message), hashbrown::map::{impl#82}::extend::{closure_env#0}<i32, grammers_client::message::model::Message, std::hash::random::RandomState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::map::Map<core::iter::adapters::filter_map::FilterMap<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::Update, alloc::alloc::Global>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#2}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#3}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#4}>>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/iter/adapters/map.rs:88:21
+    {closure#0}<grammers_tl_types::generated::enums::Message, grammers_client::message::model::Message, (), grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#3}, core::iter::adapters::map::map_fold::{closure_env#0}<grammers_client::message::model::Message, (i32, grammers_client::message::model::Message), (), grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#4}, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<(i32, grammers_client::message::model::Message), hashbrown::map::{impl#82}::extend::{closure_env#0}<i32, grammers_client::message::model::Message, std::hash::random::RandomState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::map::Map<core::iter::adapters::filter_map::FilterMap<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::Update, alloc::alloc::Global>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#2}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#3}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#4}>>>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/iter/adapters/map.rs:88:21
+    {closure#0}<grammers_tl_types::generated::enums::Update, grammers_tl_types::generated::enums::Message, (), grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#2}, core::iter::adapters::map::map_fold::{closure_env#0}<grammers_tl_types::generated::enums::Message, grammers_client::message::model::Message, (), grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#3}, core::iter::adapters::map::map_fold::{closure_env#0}<grammers_client::message::model::Message, (i32, grammers_client::message::model::Message), (), grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#4}, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<(i32, grammers_client::message::model::Message), hashbrown::map::{impl#82}::extend::{closure_env#0}<i32, grammers_client::message::model::Message, std::hash::random::RandomState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::map::Map<core::iter::adapters::filter_map::FilterMap<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::Update, alloc::alloc::Global>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#2}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#3}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#4}>>>>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/iter/adapters/filter_map.rs:40:20
+    fold<grammers_tl_types::generated::enums::Update, alloc::alloc::Global, (), core::iter::adapters::filter_map::filter_map_fold::{closure_env#0}<grammers_tl_types::generated::enums::Update, grammers_tl_types::generated::enums::Message, (), grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#2}, core::iter::adapters::map::map_fold::{closure_env#0}<grammers_tl_types::generated::enums::Message, grammers_client::message::model::Message, (), grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#3}, core::iter::adapters::map::map_fold::{closure_env#0}<grammers_client::message::model::Message, (i32, grammers_client::message::model::Message), (), grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#4}, core::iter::traits::iterator::Iterator::for_each::call::{closure_env#0}<(i32, grammers_client::message::model::Message), hashbrown::map::{impl#82}::extend::{closure_env#0}<i32, grammers_client::message::model::Message, std::hash::random::RandomState, alloc::alloc::Global, core::iter::adapters::map::Map<core::iter::adapters::map::Map<core::iter::adapters::filter_map::FilterMap<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::Update, alloc::alloc::Global>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#2}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#3}>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#4}>>>>>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/into_iter.rs:367:25
+  1.35% bytes       421 B/rpc   4.39 allocs/rpc
+    on_net_read<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:598:26
+    {closure#4}<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:416:60
+    and_then<usize, grammers_mtsender::errors::ReadError, alloc::vec::Vec<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global>, grammers_mtsender::sender::{impl#2}::step::{async_fn#0}::{closure_env#4}<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/result.rs:1492:22
+    {async_fn#0}<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:416:42
+    poll<grammers_mtsender::sender_pool::run_sender::{async_block#0}::__tokio_select_util::Out<core::result::Result<alloc::vec::Vec<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global>, grammers_mtsender::errors::ReadError>, core::option::Option<grammers_mtsender::sender_pool::Rpc>>, grammers_mtsender::sender_pool::run_sender::{async_block#0}::{closure_env#0}> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/future/poll_fn.rs:151:9
+    {closure#0}<grammers_mtsender::sender_pool::run_sender::{async_block_env#0}, alloc::sync::Arc<tokio::runtime::scheduler::current_thread::Handle, alloc::alloc::Global>> @ <registry>/tokio-1.54.0/src/runtime/task/core.rs:380:24
+  0.93% bytes       291 B/rpc   0.11 allocs/rpc
+    new<grammers_tl_types::generated::types::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    deserialize_vector<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:405:21
+    deserialize<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+    deserialize_own_update<grammers_mtsender::sender::{impl#2}::process_own_update::{closure_env#0}<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted>> @ -mtsender/src/sender.rs:139:14
+    process_own_update<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:801:15
+  0.73% bytes       229 B/rpc   0.90 allocs/rpc
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -mtsender/src/sender_pool.rs:464:24
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -client/src/client/net.rs:120:52
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -client/src/client/net.rs:97:43
+    {async_fn#0}<grammers_session::peer::PeerRef, &str> @ -client/src/client/messages.rs:747:48
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1126:84
+  0.41% bytes       128 B/rpc   1.00 allocs/rpc
+    new<alloc::sync::ArcInner<tokio::sync::oneshot::Inner<core::result::Result<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError>>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    new<tokio::sync::oneshot::Inner<core::result::Result<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/sync.rs:440:25
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -mtsender/src/sender_pool.rs:467:14
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -client/src/client/net.rs:120:52
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -client/src/client/net.rs:97:43
+    {async_fn#0}<grammers_session::peer::PeerRef, &str> @ -client/src/client/messages.rs:747:48
+  0.40% bytes       126 B/rpc   1.96 allocs/rpc
+    new<alloc::sync::ArcInner<std::collections::hash::map::HashMap<grammers_session::peer::PeerId, grammers_client::peer::Peer, std::hash::random::RandomState, alloc::alloc::Global>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    new<std::collections::hash::map::HashMap<grammers_session::peer::PeerId, grammers_client::peer::Peer, std::hash::random::RandomState, alloc::alloc::Global>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/sync.rs:440:25
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1088:37
+  0.35% bytes       110 B/rpc   0.86 allocs/rpc
+    new<alloc::sync::ArcInner<tokio::sync::oneshot::Inner<core::result::Result<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError>>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    new<tokio::sync::oneshot::Inner<core::result::Result<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/sync.rs:440:25
+    {async_fn#0}<grammers_tl_types::generated::functions::users::GetUsers> @ -mtsender/src/sender_pool.rs:467:14
+    {async_fn#0}<grammers_tl_types::generated::functions::users::GetUsers> @ -client/src/client/net.rs:120:52
+    {async_fn#0}<grammers_tl_types::generated::functions::users::GetUsers> @ -client/src/client/net.rs:97:43
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1126:84
+  0.35% bytes       108 B/rpc   0.04 allocs/rpc
+    new<grammers_tl_types::generated::types::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    into<grammers_tl_types::generated::types::Message, grammers_tl_types::generated::enums::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/convert/mod.rs:781:9
+    {async_fn#0}<grammers_session::peer::PeerRef, &str> @ -client/src/client/messages.rs:755:17
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1126:84
+  0.34% bytes       105 B/rpc   2.64 allocs/rpc
+    clone_one<grammers_tl_types::generated::types::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/clone/uninit.rs:20:33
+    clone_to_uninit<grammers_tl_types::generated::types::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/clone.rs:652:18
+    clone<grammers_tl_types::generated::types::Message, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:2091:22
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1088:37
+  0.33% bytes       104 B/rpc   0.04 allocs/rpc
+    grow_one<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:188:29
+    push_mut<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:1033:22
+    push<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:996:22
+    process_update<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:820:30
+    process_mtp_buffer<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:784:57
+    on_net_read<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:600:26
+  0.25% bytes        77 B/rpc   1.75 allocs/rpc
+    deserialize_vector<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:405:21
+    deserialize<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+    {closure#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -mtsender/src/sender_pool.rs:468:30
+    and_then<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError, grammers_tl_types::generated::enums::Updates, grammers_mtsender::sender_pool::{impl#9}::invoke_in_dc::{async_fn#0}::{closure_env#0}<grammers_tl_types::generated::functions::messages::SendMessage>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/result.rs:1492:22
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -mtsender/src/sender_pool.rs:468:14
+  0.24% bytes        76 B/rpc   0.59 allocs/rpc
+    new<alloc::sync::ArcInner<tokio::sync::oneshot::Inner<core::result::Result<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError>>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    new<tokio::sync::oneshot::Inner<core::result::Result<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/sync.rs:440:25
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -mtsender/src/sender_pool.rs:467:14
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -client/src/client/net.rs:120:52
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -client/src/client/net.rs:97:43
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1126:84
+  0.17% bytes        52 B/rpc   0.82 allocs/rpc
+    new<alloc::sync::ArcInner<std::collections::hash::map::HashMap<grammers_session::peer::PeerId, grammers_client::peer::Peer, std::hash::random::RandomState, alloc::alloc::Global>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    new<std::collections::hash::map::HashMap<grammers_session::peer::PeerId, grammers_client::peer::Peer, std::hash::random::RandomState, alloc::alloc::Global>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/sync.rs:440:25
+    {async_fn#0}<grammers_session::peer::PeerRef, &str> @ -client/src/client/messages.rs:755:17
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1126:84
+  0.16% bytes        51 B/rpc   0.64 allocs/rpc
+    with_capacity_in<core::option::Option<grammers_client::message::model::Message>, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:177:20
+    with_capacity_in<core::option::Option<grammers_client::message::model::Message>, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:969:20
+    with_capacity<core::option::Option<grammers_client::message::model::Message>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:522:9
+    from_iter<core::option::Option<grammers_client::message::model::Message>, core::iter::adapters::map::Map<core::slice::iter::Iter<i64>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#5}>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/spec_from_iter_nested.rs:52:33
+    from_iter<core::option::Option<grammers_client::message::model::Message>, core::iter::adapters::map::Map<core::slice::iter::Iter<i64>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#5}>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/spec_from_iter.rs:33:9
+    from_iter<core::option::Option<grammers_client::message::model::Message>, core::iter::adapters::map::Map<core::slice::iter::Iter<i64>, grammers_client::client::messages::map_random_ids_to_messages::{async_fn#0}::{closure_env#5}>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:3996:9
+  0.13% bytes        40 B/rpc   3.69 allocs/rpc
+    deserialize_vector<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:397:17
+    deserialize<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+    {closure#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -mtsender/src/sender_pool.rs:468:30
+    and_then<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError, grammers_tl_types::generated::enums::Updates, grammers_mtsender::sender_pool::{impl#9}::invoke_in_dc::{async_fn#0}::{closure_env#0}<grammers_tl_types::generated::functions::messages::SendMessage>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/result.rs:1492:22
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -mtsender/src/sender_pool.rs:468:14
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 9.01s
+

@@ -75,11 +75,11 @@ fn write_enum<W: Write>(
             write!(file, "(")?;
         }
 
-        if metadata.is_recursive_def(d) {
+        if metadata.is_boxed_def(d) {
             write!(file, "Box<")?;
         }
         write!(file, "{}", rustifier::definitions::qual_name(d))?;
-        if metadata.is_recursive_def(d) {
+        if metadata.is_boxed_def(d) {
             write!(file, ">")?;
         }
 
@@ -291,7 +291,7 @@ fn write_deserializable<W: Write>(
             write!(file, "(")?;
         }
 
-        if metadata.is_recursive_def(d) {
+        if metadata.is_boxed_def(d) {
             write!(file, "Box::new(")?;
         }
         write!(
@@ -299,7 +299,7 @@ fn write_deserializable<W: Write>(
             "{}::deserialize(buf)?",
             rustifier::definitions::qual_name(d)
         )?;
-        if metadata.is_recursive_def(d) {
+        if metadata.is_boxed_def(d) {
             write!(file, ")")?;
         }
         writeln!(file, "),")?;
@@ -352,7 +352,7 @@ fn write_impl_from<W: Write>(
 
         if def.params.is_empty() {
             writeln!(file)?;
-        } else if metadata.is_recursive_def(def) {
+        } else if metadata.is_boxed_def(def) {
             writeln!(file, "(Box::new(x))")?;
         } else {
             writeln!(file, "(x)")?;

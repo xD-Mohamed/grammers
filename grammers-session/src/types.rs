@@ -8,6 +8,7 @@
 
 //! Session type definitions.
 
+use std::fmt;
 use std::net::{SocketAddrV4, SocketAddrV6};
 
 pub use crate::peer::{ChannelKind, PeerAuth, PeerId, PeerInfo, PeerKind, PeerRef};
@@ -16,7 +17,7 @@ pub use crate::peer::{ChannelKind, PeerAuth, PeerId, PeerInfo, PeerKind, PeerRef
 ///
 /// This is very similar to Telegram's own `dcOption` type, except it also
 /// contains the permanent authentication key and serves as a stable interface.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", serde_with::serde_as)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DcOption {
@@ -42,6 +43,22 @@ pub struct DcOption {
     #[cfg(feature = "serde")]
     #[serde_as(as = "Option<serde_with::hex::Hex>")]
     pub auth_key: Option<[u8; 256]>,
+}
+
+impl fmt::Debug for DcOption {
+    /// The permanent authentication key is left out: it grants full account access,
+    /// and debug output tends to end up in logs.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DcOption")
+            .field("id", &self.id)
+            .field("ipv4", &self.ipv4)
+            .field("ipv6", &self.ipv6)
+            .field(
+                "auth_key",
+                &self.auth_key.as_ref().map(|_| format_args!("<redacted>")),
+            )
+            .finish()
+    }
 }
 
 /// Full update state needed to process updates in order without gaps.
@@ -96,4 +113,30 @@ pub enum UpdateState {
         /// New [`ChannelState::pts`] value.
         pts: i32,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn debug_output_never_contains_the_auth_key() {
+        let option = DcOption {
+            id: 2,
+            ipv4: SocketAddrV4::new(Ipv4Addr::LOCALHOST, 443),
+            ipv6: SocketAddrV6::new(Ipv4Addr::LOCALHOST.to_ipv6_mapped(), 443, 0, 0),
+            auth_key: Some([0xab; 256]),
+        };
+        for text in [format!("{option:?}"), format!("{option:#?}")] {
+            assert!(!text.contains("171"), "{text}"); // 0xab in decimal
+            assert!(text.contains("<redacted>"));
+            assert!(text.contains("127.0.0.1:443"));
+        }
+        let keyless = DcOption {
+            auth_key: None,
+            ..option
+        };
+        assert!(format!("{keyless:?}").contains("auth_key: None"));
+    }
 }

@@ -37,6 +37,34 @@ use crate::errors::{InvocationError, InvocationErrorCategory, ReadError};
 use crate::queue;
 use crate::{Sender, ServerAddr, connect, connect_with_auth};
 
+/// Serialized size reserved for a typed request before it is known.
+const INITIAL_REQUEST_CAPACITY: usize = 256;
+
+/// A connection surviving this long ends any run of failed attempts to its datacenter.
+const STABLE_CONNECTION: Duration = Duration::from_secs(30);
+const CONNECT_RETRY_DELAY_LIMIT: Duration = Duration::from_secs(30);
+
+/// How long another connection waits after `failures` in a row. The first retry is not
+/// delayed, since connections do end normally; repeated ones must not hammer the server
+/// whatever the caller's own retry loop does. TDLib's `ConnectionCreator` allows about
+/// one attempt a second, then spaces them further.
+fn connect_retry_delay(failures: u32) -> Duration {
+    match failures {
+        0 | 1 => Duration::ZERO,
+        failures => {
+            Duration::from_secs(1u64 << (failures - 2).min(5)).min(CONNECT_RETRY_DELAY_LIMIT)
+        }
+    }
+}
+
+/// Recent connection attempts to one datacenter.
+struct ConnectPacing {
+    dc_id: i32,
+    failures: u32,
+    not_before: tokio::time::Instant,
+    connected_at: Option<tokio::time::Instant>,
+}
+
 /// How long to wait after warning the user that the updates was dropped.
 const UPDATES_DROPPED_LOG_COOLDOWN: Duration = Duration::from_secs(300);
 
@@ -359,6 +387,7 @@ pub struct SenderPoolRunner {
     updates_tx: Option<mpsc::Sender<UpdatesLike>>,
     connections: Vec<ConnectionInfo>,
     connection_pool: JoinSet<(i32, Result<(), ReadError>)>,
+    connect_pacing: Vec<ConnectPacing>,
     routes: Routes,
     state: Arc<PoolState>,
 }
@@ -431,7 +460,10 @@ impl SenderPoolHandle {
         dc_id: i32,
         request: &R,
     ) -> Result<R::Return, InvocationError> {
-        self.do_invoke_in_dc(dc_id, request.to_bytes())
+        // Most requests fit, which avoids several reallocations per call.
+        let mut body = Vec::with_capacity(INITIAL_REQUEST_CAPACITY);
+        tl::Serializable::serialize(request, &mut body);
+        self.do_invoke_in_dc(dc_id, body)
             .await
             .and_then(|body| R::Return::from_bytes(&body).map_err(|e| e.into()))
     }
@@ -786,6 +818,7 @@ impl SenderPool {
                 updates_tx: receive_updates.then_some(updates_tx),
                 connections: Vec::new(),
                 connection_pool: JoinSet::new(),
+                connect_pacing: Vec::new(),
                 routes: Arc::clone(&routes),
                 state: Arc::clone(&state),
             },
@@ -929,6 +962,11 @@ impl SenderPoolRunner {
             .retain(|(_, tx)| !tx.is_closed());
         match completion {
             Ok((dc_id, result)) => {
+                // Closing soon after connecting counts as failing to connect: otherwise a
+                // server that accepts and then drops connections would never be backed off.
+                if !self.forget_failures_if_stable(dc_id) && result.is_err() {
+                    self.note_connect_failure(dc_id);
+                }
                 let category = result
                     .err()
                     .map(|error| InvocationError::from(error).category());
@@ -1015,6 +1053,7 @@ impl SenderPoolRunner {
             }
             Request::Disconnect { dc_id } => {
                 self.cancel_setup(dc_id);
+                self.forget_failures_if_stable(dc_id);
                 {
                     let mut cache = self.routes.write().unwrap_or_else(|e| e.into_inner());
                     cache.finish_disconnect(dc_id);
@@ -1056,11 +1095,21 @@ impl SenderPoolRunner {
         }
         let mut setup = self.setup_context();
         let routes = Arc::clone(&self.routes);
+        let not_before = self
+            .connect_pacing
+            .iter()
+            .find(|pacing| pacing.dc_id == dc_id)
+            .map(|pacing| pacing.not_before);
         let abort_handle = self.setup_pool.spawn(async move {
             let result = tokio::select! {
                 biased;
                 _ = wait_for_connection_cancel(routes, dc_id) => Err(InvocationError::Dropped("connection initialization was cancelled")),
-                result = Box::pin(setup.create_connection(dc_id)) => result,
+                result = Box::pin(async {
+                    if let Some(not_before) = not_before {
+                        tokio::time::sleep_until(not_before).await;
+                    }
+                    setup.create_connection(dc_id).await
+                }) => result,
             };
             (dc_id, tokio::task::id(), result)
         });
@@ -1073,6 +1122,42 @@ impl SenderPoolRunner {
             #[cfg(test)]
             closure_polls: 0,
         });
+    }
+
+    fn pacing_mut(&mut self, dc_id: i32) -> &mut ConnectPacing {
+        let index = match self.connect_pacing.iter().position(|p| p.dc_id == dc_id) {
+            Some(index) => index,
+            None => {
+                // There is one of these per datacenter, and pools can be many.
+                self.connect_pacing.reserve_exact(1);
+                self.connect_pacing.push(ConnectPacing {
+                    dc_id,
+                    failures: 0,
+                    not_before: tokio::time::Instant::now(),
+                    connected_at: None,
+                });
+                self.connect_pacing.len() - 1
+            }
+        };
+        &mut self.connect_pacing[index]
+    }
+
+    fn forget_failures_if_stable(&mut self, dc_id: i32) -> bool {
+        let pacing = self.pacing_mut(dc_id);
+        let stable = pacing
+            .connected_at
+            .is_some_and(|since| since.elapsed() >= STABLE_CONNECTION);
+        if stable {
+            pacing.failures = 0;
+        }
+        stable
+    }
+
+    fn note_connect_failure(&mut self, dc_id: i32) {
+        let pacing = self.pacing_mut(dc_id);
+        pacing.failures = pacing.failures.saturating_add(1);
+        pacing.connected_at = None;
+        pacing.not_before = tokio::time::Instant::now() + connect_retry_delay(pacing.failures);
     }
 
     fn cancel_setup(&mut self, dc_id: i32) {
@@ -1092,9 +1177,19 @@ impl SenderPoolRunner {
         let mut pending = self.pending.swap_remove(index);
         let requests = std::mem::take(&mut pending.requests);
         let sender = match result {
-            Ok(sender) => sender,
+            Ok(sender) => {
+                self.pacing_mut(dc_id).connected_at = Some(tokio::time::Instant::now());
+                sender
+            }
             Err(error) => {
                 let error = error.for_unframed_request();
+                // Neither of these reached the server.
+                if !matches!(
+                    error,
+                    InvocationError::Dropped(_) | InvocationError::InvalidDc
+                ) {
+                    self.note_connect_failure(dc_id);
+                }
                 self.report_setup_failure(dc_id, &error);
                 if requests.len() == 1 {
                     let rpc = requests.into_iter().next().unwrap();
@@ -1448,14 +1543,35 @@ fn run_sender(
             tokio::task::consume_budget().await;
             tokio::select! {
                 step = sender.step() => match step {
-                    Ok(all_new_updates) => {
-                        let Some(updates) = updates.as_ref().filter(|_| !updates_closed) else {
-                            continue;
-                        };
-                        for new_updates in all_new_updates {
-                            if let Err(e) = forward_update(updates, &state, new_updates) {
+                    Ok(mut all_new_updates) => {
+                        let batch = all_new_updates.len();
+                        let mut consumer_stalled = false;
+                        if let Some(updates) = updates.as_ref().filter(|_| !updates_closed) {
+                        for new_updates in all_new_updates.drain(..) {
+                            // A burst decoded in one poll can fill the queue before its
+                            // consumer has run. Dropping causes a gap, and so a recovery
+                            // request to Telegram: yield to the consumer once first.
+                            // Boxed so that this future, which lives as long as the connection,
+                            // does not hold room for one across the yield. Only once a batch:
+                            // RPCs on this connection must not wait for a stalled consumer.
+                            let new_updates = match updates.try_send(new_updates) {
+                                Err(mpsc::error::TrySendError::Full(new_updates)) => {
+                                    Box::new(new_updates)
+                                }
+                                Err(mpsc::error::TrySendError::Closed(_)) => {
+                                    debug!("updates channel closed, stopping update forwarding");
+                                    updates_closed = true;
+                                    break;
+                                }
+                                Ok(()) => continue,
+                            };
+                            if !consumer_stalled {
+                                tokio::task::yield_now().await;
+                            }
+                            if let Err(e) = forward_update(updates, &state, *new_updates) {
                                 match e {
                                     UpdateDeliveryError::Full => {
+                                        consumer_stalled = true;
                                         dropped += 1;
                                         if last_update_limit_warn.elapsed() >= UPDATES_DROPPED_LOG_COOLDOWN {
                                             warn!(
@@ -1475,6 +1591,12 @@ fn run_sender(
                                     }
                                 }
                             }
+                        }
+                        }
+                        sender.recycle_updates(all_new_updates, batch);
+                        // After delivery: this can yield, and the task can end while it waits.
+                        for _ in 0..sender.take_read_charge() {
+                            tokio::task::consume_budget().await;
                         }
                     },
                     Err(err) => {
@@ -1633,7 +1755,8 @@ mod optimization_tests {
     }
 
     #[tokio::test]
-    async fn closing_the_queue_mid_batch_retires_everything_already_queued() {
+    async fn closing_the_queue_retires_everything_the_sender_already_holds() {
+        use tokio::io::AsyncReadExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let (sender, peer) = tokio::join!(
             connect_with_auth(
@@ -1645,31 +1768,434 @@ mod optimization_tests {
             ),
             listener.accept()
         );
-        let _peer = peer.unwrap().0;
+        let peer_socket = peer.unwrap().0;
+        let tracker = crate::InvocationTracker::default();
         let (tx, rx) = queue::unbounded_channel();
         let mut responses = Vec::new();
-        for _ in 0..3 {
+        for ping_id in 0..3 {
             let (tx_result, rx_result) = oneshot::channel();
             tx.send(Rpc {
-                body: Bytes::from_static(&[0; 3]),
-                permit: None,
+                body: tl::functions::Ping { ping_id }.to_bytes().into(),
+                permit: (ping_id == 0).then(|| tracker.try_acquire().unwrap()),
                 tx: tx_result,
             })
             .unwrap();
             responses.push(rx_result);
         }
-        drop(tx);
         let session = erase(Arc::new(
             grammers_session::storages::MemorySession::default(),
         ));
-        let (_, result) = run_sender(sender.unwrap(), rx, None, 2, session, Arc::default()).await;
-        assert!(result.is_ok());
-        for response in responses {
+        let runner = run_sender(sender.unwrap(), rx, None, 2, session, Arc::default());
+        tokio::pin!(runner);
+        // Run until they all reached the peer: then they are in the sender, not the queue.
+        let mut peer = peer_socket;
+        let mut bytes = vec![0; 4096];
+        let received = tokio::select! {
+            _ = &mut runner => panic!("open connection should remain active"),
+            read = peer.read(&mut bytes) => read.unwrap(),
+        };
+        assert!(received > 0);
+        assert!(tracker.try_acquire().is_none());
+        for response in &mut responses {
             assert!(matches!(
-                response.await.unwrap(),
-                Err(InvocationError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidInput
+                response.try_recv(),
+                Err(oneshot::error::TryRecvError::Empty)
             ));
         }
+        // Closing now cannot lose them: the connection ends and retires each one.
+        drop(tx);
+        let (_, result) = runner.await;
+        assert!(result.is_ok());
+        for response in responses {
+            assert!(response.await.is_err());
+        }
+        assert!(tracker.try_acquire().is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stable_connection_ending_forgets_earlier_connection_failures() {
+        let pool = SenderPool::new(
+            Arc::new(grammers_session::storages::MemorySession::default()),
+            1,
+        );
+        let mut runner = pool.runner;
+        for _ in 0..5 {
+            runner.note_connect_failure(2);
+        }
+        let delay = runner.pacing_mut(2).not_before - tokio::time::Instant::now();
+        assert_eq!(delay, connect_retry_delay(5));
+        runner.pacing_mut(2).connected_at = Some(tokio::time::Instant::now());
+
+        // A connection failing soon after it came up counts as one more failure.
+        let closed = || Err(ReadError::Io(std::io::Error::other("closed")));
+        runner.record_completion(Ok((2, closed()))).unwrap();
+        assert_eq!(runner.pacing_mut(2).failures, 6);
+
+        // One lasting a while, however it ends, shows that the problem went away.
+        runner.pacing_mut(2).connected_at = Some(tokio::time::Instant::now());
+        tokio::time::advance(STABLE_CONNECTION).await;
+        runner.record_completion(Ok((2, closed()))).unwrap();
+        assert_eq!(runner.pacing_mut(2).failures, 0);
+
+        runner.note_connect_failure(2);
+        runner.pacing_mut(2).connected_at = Some(tokio::time::Instant::now());
+        tokio::time::advance(STABLE_CONNECTION).await;
+        assert!(
+            runner
+                .process_request(Request::Disconnect { dc_id: 2 })
+                .await
+                .is_continue()
+        );
+        assert_eq!(runner.pacing_mut(2).failures, 0);
+    }
+
+    #[test]
+    fn repeated_connection_failures_are_spaced_out() {
+        let delays: Vec<u64> = (0..=9)
+            .map(|failures| connect_retry_delay(failures).as_secs())
+            .collect();
+        assert_eq!(delays, [0, 0, 1, 2, 4, 8, 16, 30, 30, 30]);
+    }
+
+    #[tokio::test]
+    async fn a_caller_retry_loop_cannot_reconnect_as_fast_as_it_fails() {
+        // Accepts and drops every connection, as an overloaded front end might.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let attempts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let accepted = Arc::clone(&attempts);
+        let server = tokio::spawn(async move {
+            loop {
+                let (socket, _) = listener.accept().await.unwrap();
+                accepted.lock().unwrap().push(tokio::time::Instant::now());
+                drop(socket);
+            }
+        });
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        let std::net::SocketAddr::V4(ipv4) = address else {
+            panic!("expected IPv4")
+        };
+        session
+            .set_dc_option(&grammers_session::types::DcOption {
+                id: 2,
+                ipv4,
+                ipv6: std::net::SocketAddrV6::new(ipv4.ip().to_ipv6_mapped(), ipv4.port(), 0, 0),
+                auth_key: Some([1; 256]),
+            })
+            .await
+            .unwrap();
+        session.set_home_dc_id(2).await.unwrap();
+        let pool = SenderPool::new(session, 1);
+        let runner = tokio::spawn(pool.runner.run());
+        for _ in 0..4 {
+            assert!(
+                pool.handle
+                    .thin
+                    .raw_invoke_in_dc(2, tl::functions::Ping { ping_id: 1 }.to_bytes())
+                    .await
+                    .is_err()
+            );
+        }
+        let attempts = attempts.lock().unwrap().clone();
+        assert_eq!(attempts.len(), 4);
+        // The first retry is not delayed; the next wait one and then two seconds.
+        assert!(attempts[2] - attempts[1] >= Duration::from_secs(1));
+        assert!(attempts[3] - attempts[2] >= Duration::from_secs(2));
+        pool.handle.thin.quit();
+        runner.await.unwrap();
+        server.abort();
+    }
+
+    // A flood wait above what the retry policy sleeps through returns to the caller, whose
+    // loop calls next() again: that must not ask Telegram again before the wait is over.
+    #[tokio::test(start_paused = true)]
+    async fn recovery_honours_a_flood_wait_longer_than_its_own_delay() {
+        let session = Arc::new(RecoverySession::default());
+        cache_self_user(session.as_ref()).await;
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let (result, ()) = tokio::join!(receiver.next(), async {
+            expect_get_state(&mut pool.runner)
+                .await
+                .send(Err(InvocationError::Rpc(
+                    tl::types::RpcError {
+                        error_code: 420,
+                        error_message: "FLOOD_WAIT_120".into(),
+                    }
+                    .into(),
+                )))
+                .unwrap();
+            let Request::CheckRetry { error, tx, .. } =
+                pool.runner.request_rx.recv().await.unwrap()
+            else {
+                panic!("expected retry inspection")
+            };
+            tx.send(ControlFlow::Break(*error)).unwrap();
+        });
+        assert!(result.unwrap_err().is("FLOOD_WAIT"));
+        let failed_at = tokio::time::Instant::now();
+        tokio::time::timeout(Duration::from_secs(119), receiver.next())
+            .await
+            .unwrap_err();
+        assert!(pool.runner.request_rx.try_recv().is_err());
+        let (result, ()) = tokio::join!(receiver.next(), async {
+            expect_get_state(&mut pool.runner)
+                .await
+                .send(Ok(state_reply()))
+                .unwrap();
+            update_tx.send(config_update()).await.unwrap();
+        });
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        assert_eq!(failed_at.elapsed(), Duration::from_secs(120));
+    }
+
+    // Telegram gives no delay for a failing recovery request, so it must not stay at one
+    // request a second for as long as the failure lasts.
+    #[tokio::test(start_paused = true)]
+    async fn repeated_recovery_failures_back_off_to_a_minute_and_success_resets() {
+        let session = Arc::new(RecoverySession::default());
+        cache_self_user(session.as_ref()).await;
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let mut spacing = Vec::new();
+        let mut last = tokio::time::Instant::now();
+        for _ in 0..9 {
+            let (result, ()) = tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Err(InvocationError::Rpc(
+                        tl::types::RpcError {
+                            error_code: 500,
+                            error_message: "INTERNAL".into(),
+                        }
+                        .into(),
+                    )))
+                    .unwrap();
+                let Request::CheckRetry { error, tx, .. } =
+                    pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected retry inspection")
+                };
+                tx.send(ControlFlow::Break(*error)).unwrap();
+            });
+            assert!(result.is_err());
+            spacing.push(last.elapsed().as_secs());
+            last = tokio::time::Instant::now();
+        }
+        assert_eq!(spacing, [0, 1, 2, 4, 8, 16, 32, 60, 60]);
+        let (result, ()) = tokio::join!(receiver.next(), async {
+            expect_get_state(&mut pool.runner)
+                .await
+                .send(Ok(state_reply()))
+                .unwrap();
+            update_tx.send(config_update()).await.unwrap();
+        });
+        assert!(result.is_ok());
+        // Success forgets the failures: the next recovery failing waits one second again.
+        // ConnectionClosed forgets the account position, so that it asks for state again.
+        update_tx.send(UpdatesLike::ConnectionClosed).await.unwrap();
+        let (result, ()) = tokio::join!(receiver.next(), async {
+            let Request::Invoke { tx, .. } = pool.runner.request_rx.recv().await.unwrap() else {
+                panic!("expected a recovery request")
+            };
+            tx.send(Err(InvocationError::Rpc(
+                tl::types::RpcError {
+                    error_code: 500,
+                    error_message: "INTERNAL".into(),
+                }
+                .into(),
+            )))
+            .unwrap();
+            let Request::CheckRetry { error, tx, .. } =
+                pool.runner.request_rx.recv().await.unwrap()
+            else {
+                panic!("expected retry inspection")
+            };
+            tx.send(ControlFlow::Break(*error)).unwrap();
+        });
+        assert!(result.is_err());
+        let failed_at = tokio::time::Instant::now();
+        let (result, ()) = tokio::join!(receiver.next(), async {
+            let Request::Invoke { tx, .. } = pool.runner.request_rx.recv().await.unwrap() else {
+                panic!("expected a recovery request")
+            };
+            assert_eq!(failed_at.elapsed(), Duration::from_secs(1));
+            tx.send(Err(InvocationError::Dropped("end of test")))
+                .unwrap();
+            let Request::CheckRetry { error, tx, .. } =
+                pool.runner.request_rx.recv().await.unwrap()
+            else {
+                panic!("expected retry inspection")
+            };
+            tx.send(ControlFlow::Break(*error)).unwrap();
+        });
+        assert!(result.is_err());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_stalled_consumer_costs_one_yield_per_batch() {
+        use crate::sender::optimization_tests::{zero_key_aes, zero_key_server_packet};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        const BURST: usize = 64;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (sender, peer) = tokio::join!(
+            connect_with_auth(
+                Transport::new(),
+                ServerAddr::Tcp {
+                    address: listener.local_addr().unwrap()
+                },
+                [0; 256]
+            ),
+            listener.accept()
+        );
+        let mut peer = peer.unwrap().0;
+        // No one reads this queue: every update beyond the first has nowhere to go.
+        let (updates_tx, _updates_rx) = mpsc::channel(1);
+        let state: Arc<PoolState> = Arc::default();
+        let (tx, rx) = queue::unbounded_channel();
+        let (tx_result, _rx_result) = oneshot::channel();
+        tx.send(Rpc {
+            body: tl::functions::Ping { ping_id: 1 }.to_bytes().into(),
+            permit: None,
+            tx: tx_result,
+        })
+        .unwrap();
+        let session = erase(Arc::new(
+            grammers_session::storages::MemorySession::default(),
+        ));
+        let mut connection = std::pin::pin!(run_sender(
+            sender.unwrap(),
+            rx,
+            Some(updates_tx),
+            2,
+            session,
+            Arc::clone(&state),
+        ));
+        let mut bytes = vec![0; 4096];
+        let read = tokio::select! {
+            _ = &mut connection => panic!("open connection should remain active"),
+            read = peer.read(&mut bytes) => read.unwrap(),
+        };
+        let packet = &bytes[2..read];
+        let (key, iv) = zero_key_aes(&packet[8..24].try_into().unwrap());
+        let mut plain = packet[24..].to_vec();
+        grammers_crypto::aes::ige_decrypt(&mut plain, &key, &iv);
+        let session_id = i64::from_le_bytes(plain[8..16].try_into().unwrap());
+        let mut burst = Vec::new();
+        let body = tl::enums::Updates::TooLong.to_bytes();
+        for index in 0..BURST as i64 {
+            let id = (1_700_000_000i64 << 32) + 2 * index + 1;
+            let packet = zero_key_server_packet(session_id, id, 1, &body);
+            burst.push((packet.len() / 4) as u8);
+            burst.extend(packet);
+        }
+        peer.write_all(&burst).await.unwrap();
+        // Each yield is one more poll, so a yield per update would take at least BURST.
+        let mut polls = 0;
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            std::future::poll_fn(|cx| {
+                if state.dropped.load(Ordering::Relaxed) == BURST as u64 - 1 {
+                    return Poll::Ready(());
+                }
+                polls += 1;
+                assert!(connection.as_mut().poll(cx).is_pending());
+                Poll::Pending
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(polls < BURST / 2, "{polls} polls");
+    }
+
+    // A connection decoding more updates at once than the queue holds used to drop the
+    // rest, and each drop costs a recovery request to Telegram.
+    #[tokio::test(flavor = "current_thread")]
+    async fn update_burst_beyond_the_queue_reaches_a_consumer_on_the_same_thread() {
+        use crate::sender::optimization_tests::{zero_key_aes, zero_key_server_packet};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        const BURST: usize = 64;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (sender, peer) = tokio::join!(
+            connect_with_auth(
+                Transport::new(),
+                ServerAddr::Tcp {
+                    address: listener.local_addr().unwrap()
+                },
+                [0; 256]
+            ),
+            listener.accept()
+        );
+        let mut peer = peer.unwrap().0;
+        let (updates_tx, mut updates_rx) = mpsc::channel(4);
+        let state: Arc<PoolState> = Arc::default();
+        let (tx, rx) = queue::unbounded_channel();
+        let (tx_result, _rx_result) = oneshot::channel();
+        tx.send(Rpc {
+            body: tl::functions::Ping { ping_id: 1 }.to_bytes().into(),
+            permit: None,
+            tx: tx_result,
+        })
+        .unwrap();
+        let session = erase(Arc::new(
+            grammers_session::storages::MemorySession::default(),
+        ));
+        let connection = tokio::spawn(run_sender(
+            sender.unwrap(),
+            rx,
+            Some(updates_tx),
+            2,
+            session,
+            Arc::clone(&state),
+        ));
+
+        // The client's first packet tells its session: a marker, a length, the key's ID,
+        // the message key and then the encrypted contents, all under the zero test key.
+        let mut bytes = vec![0; 4096];
+        let read = peer.read(&mut bytes).await.unwrap();
+        assert_eq!(bytes[0], 0xef);
+        let packet = &bytes[2..read];
+        let (key, iv) = zero_key_aes(&packet[8..24].try_into().unwrap());
+        let mut plain = packet[24..].to_vec();
+        grammers_crypto::aes::ige_decrypt(&mut plain, &key, &iv);
+        let session_id = i64::from_le_bytes(plain[8..16].try_into().unwrap());
+
+        let mut burst = Vec::new();
+        let body = tl::enums::Updates::TooLong.to_bytes();
+        for index in 0..BURST as i64 {
+            let id = (1_700_000_000i64 << 32) + 2 * index + 1;
+            let packet = zero_key_server_packet(session_id, id, 1, &body);
+            burst.push((packet.len() / 4) as u8);
+            burst.extend(packet);
+        }
+        peer.write_all(&burst).await.unwrap();
+
+        let mut seen = 0;
+        while seen < BURST {
+            tokio::time::timeout(Duration::from_secs(5), updates_rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            seen += 1;
+        }
+        assert_eq!(state.dropped.load(Ordering::Relaxed), 0);
+        connection.abort();
     }
 
     // A pts update can create a provisional account position during the pause after
@@ -2754,8 +3280,9 @@ mod optimization_tests {
                 .unwrap_err();
             assert!(pool.runner.request_rx.try_recv().is_err());
         }
+        // Each failure doubled the pause; this is the rest of the third, four second one.
         let retried_from = tokio::time::Instant::now();
-        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
             tokio::join!(receiver.next(), async {
                 expect_get_state(&mut pool.runner)
                     .await
@@ -2767,7 +3294,7 @@ mod optimization_tests {
         .await
         .unwrap();
         assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
-        assert_eq!(retried_from.elapsed(), Duration::from_millis(600));
+        assert_eq!(retried_from.elapsed(), Duration::from_millis(3600));
     }
 
     // Beyond the generated TL decoder's nesting limit, including its 2-frame story cycle.
@@ -2798,7 +3325,6 @@ mod optimization_tests {
     }
 
     fn too_deep_vector() -> Vec<u8> {
-        use tl::Serializable;
         let mut bytes = 0x1cb5c415u32.to_bytes();
         bytes.extend(1u32.to_bytes());
         bytes.extend(too_deep_message());

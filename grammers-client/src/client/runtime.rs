@@ -472,6 +472,7 @@ impl ClientBuilder {
             handle: pool.handle.thin,
             configuration: self.configuration,
             auth_copied_to_dcs: tokio::sync::Mutex::new(Vec::new()),
+            stored_peers: Default::default(),
             lifecycle: Some(lifecycle),
             #[cfg(test)]
             rpc_responder: None,

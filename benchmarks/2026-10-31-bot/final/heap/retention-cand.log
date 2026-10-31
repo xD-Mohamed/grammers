@@ -1,0 +1,37 @@
+
+running 1 test
+test loopback_large_reply_retention ... 32 sessions, one 1 MiB reply each, then small replies
+right after the large reply: 1063686 B/session live client heap
+     16384+ B x   1.00/session =   16384 B
+      1280 B x   1.00/session =    1280 B
+      1096 B x   1.00/session =    1096 B
+       512 B x   2.00/session =    1024 B
+       256 B x   3.00/session =     768 B
+       384 B x   1.00/session =     384 B
+       352 B x   1.00/session =     352 B
+       280 B x   1.00/session =     280 B
+       224 B x   1.00/session =     224 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       168 B x   1.00/session =     168 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+61 seconds later, after one small reply: 7966 B/session live client heap
+      1280 B x   1.00/session =    1280 B
+      1096 B x   1.00/session =    1096 B
+       512 B x   2.00/session =    1024 B
+      1024 B x   1.00/session =    1024 B
+       256 B x   3.00/session =     768 B
+       384 B x   1.00/session =     384 B
+       352 B x   1.00/session =     352 B
+       280 B x   1.00/session =     280 B
+       224 B x   1.00/session =     224 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       168 B x   1.00/session =     168 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 62.13s
+

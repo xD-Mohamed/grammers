@@ -64,7 +64,7 @@ impl Message {
         peer: PeerRef,
     ) -> Self {
         Self {
-            raw: tl::enums::Message::Message(tl::types::Message {
+            raw: tl::types::Message {
                 out: updates.out,
                 mentioned: false,
                 media_unread: false,
@@ -132,7 +132,8 @@ impl Message {
                 schedule_repeat_period: None,
                 summary_from_language: None,
                 rich_message: None,
-            }),
+            }
+            .into(),
             fetched_in: Some(peer),
             client: client.clone(),
             peers: client.empty_peer_map(),
@@ -390,9 +391,7 @@ impl Message {
     /// The message's rich message content if any.
     pub fn rich_message(&self) -> Option<&tl::enums::RichMessage> {
         match &self.raw {
-            tl::enums::Message::Message(tl::types::Message { rich_message, .. }) => {
-                rich_message.as_ref()
-            }
+            tl::enums::Message::Message(message) => message.rich_message.as_ref(),
             _ => None,
         }
     }
@@ -492,10 +491,10 @@ impl Message {
     /// How many replies does this message have, when applicable.
     pub fn reply_count(&self) -> Option<i32> {
         match &self.raw {
-            tl::enums::Message::Message(tl::types::Message {
-                replies: Some(tl::enums::MessageReplies::Replies(replies)),
-                ..
-            }) => Some(replies.replies),
+            tl::enums::Message::Message(message) => message
+                .replies
+                .as_ref()
+                .map(|tl::enums::MessageReplies::Replies(replies)| replies.replies),
             _ => None,
         }
     }
@@ -553,20 +552,20 @@ impl Message {
     /// How many reactions does this message have, when applicable.
     pub fn reaction_count(&self) -> Option<i32> {
         match &self.raw {
-            tl::enums::Message::Message(tl::types::Message {
-                reactions: Some(tl::enums::MessageReactions::Reactions(reactions)),
-                ..
-            }) => {
-                let count = reactions
-                    .results
-                    .iter()
-                    .map(|reaction: &tl::enums::ReactionCount| {
-                        let tl::enums::ReactionCount::Count(reaction) = reaction;
-                        reaction.count
-                    })
-                    .sum();
-                Some(count)
-            }
+            tl::enums::Message::Message(message) => match &message.reactions {
+                Some(tl::enums::MessageReactions::Reactions(reactions)) => {
+                    let count = reactions
+                        .results
+                        .iter()
+                        .map(|reaction: &tl::enums::ReactionCount| {
+                            let tl::enums::ReactionCount::Count(reaction) = reaction;
+                            reaction.count
+                        })
+                        .sum();
+                    Some(count)
+                }
+                None => None,
+            },
             _ => None,
         }
     }
@@ -626,10 +625,10 @@ impl Message {
     /// If this message is replying to another message, return the replied message ID.
     pub fn reply_to_message_id(&self) -> Option<i32> {
         match &self.raw {
-            tl::enums::Message::Message(tl::types::Message {
-                reply_to: Some(tl::enums::MessageReplyHeader::Header(header)),
-                ..
-            }) => header.reply_to_msg_id,
+            tl::enums::Message::Message(message) => match &message.reply_to {
+                Some(tl::enums::MessageReplyHeader::Header(header)) => header.reply_to_msg_id,
+                _ => None,
+            },
             _ => None,
         }
     }

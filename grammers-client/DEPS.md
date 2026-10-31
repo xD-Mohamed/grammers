@@ -78,3 +78,16 @@ Provides useful functions for working with futures/tasks.
 ## url
 
 Used to parse certain URLs to offer features such as joining private chats via their invite link.
+
+## sha1
+
+Development-only, for the mock server of the local `bot_workload` measurement.
+
+## sha2
+
+Development-only, for the mock server of the local `bot_workload` measurement.
+
+## libc
+
+Development-only, for the process CPU and thread affinity of the local `bot_workload`
+measurement on Linux.

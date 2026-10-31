@@ -18,3 +18,4 @@ testbed.rs
 !benchmarks/2026-10-30/round1/**/*.json
 !benchmarks/2026-10-30/round2/**/*.json
 !benchmarks/2026-10-30/final/**/*.json
+!benchmarks/2026-10-31-bot/**/*.json

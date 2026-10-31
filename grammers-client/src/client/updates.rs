@@ -264,4 +264,238 @@ mod tests {
             typeck(get_update_stream().next());
         }
     }
+
+    /// Counts storage writes and how many peers they carried, failing on request.
+    #[derive(Default)]
+    struct CountingWrites {
+        memory: MemorySession,
+        writes: std::sync::atomic::AtomicUsize,
+        fail: AtomicBool,
+    }
+
+    impl Session for CountingWrites {
+        type Error = std::io::Error;
+        fn home_dc_id(&self) -> Result<i32, Self::Error> {
+            self.memory.home_dc_id().map_err(std::io::Error::other)
+        }
+        fn set_home_dc_id(&self, id: i32) -> BoxFuture<'_, Result<(), Self::Error>> {
+            Box::pin(async move {
+                self.memory
+                    .set_home_dc_id(id)
+                    .await
+                    .map_err(std::io::Error::other)
+            })
+        }
+        fn dc_option(&self, id: i32) -> Result<Option<DcOption>, Self::Error> {
+            self.memory.dc_option(id).map_err(std::io::Error::other)
+        }
+        fn set_dc_option(&self, option: &DcOption) -> BoxFuture<'_, Result<(), Self::Error>> {
+            let option = option.clone();
+            Box::pin(async move {
+                self.memory
+                    .set_dc_option(&option)
+                    .await
+                    .map_err(std::io::Error::other)
+            })
+        }
+        fn peer(&self, peer: PeerId) -> BoxFuture<'_, Result<Option<PeerInfo>, Self::Error>> {
+            Box::pin(async move { self.memory.peer(peer).await.map_err(std::io::Error::other) })
+        }
+        fn cache_peer(&self, peer: PeerInfo) -> BoxFuture<'_, Result<(), Self::Error>> {
+            self.cache_peers(vec![peer])
+        }
+        fn cache_peers(&self, peers: Vec<PeerInfo>) -> BoxFuture<'_, Result<(), Self::Error>> {
+            Box::pin(async move {
+                self.writes.fetch_add(1, Ordering::Relaxed);
+                if self.fail.load(Ordering::Relaxed) {
+                    return Err(std::io::Error::other("full disk"));
+                }
+                self.memory
+                    .cache_peers(peers)
+                    .await
+                    .map_err(std::io::Error::other)
+            })
+        }
+        fn updates_state(&self) -> BoxFuture<'_, Result<UpdatesState, Self::Error>> {
+            Box::pin(async {
+                self.memory
+                    .updates_state()
+                    .await
+                    .map_err(std::io::Error::other)
+            })
+        }
+        fn set_update_state(&self, update: UpdateState) -> BoxFuture<'_, Result<(), Self::Error>> {
+            Box::pin(async {
+                self.memory
+                    .set_update_state(update)
+                    .await
+                    .map_err(std::io::Error::other)
+            })
+        }
+    }
+
+    fn user_with_hash(id: i64, access_hash: i64) -> tl::enums::User {
+        let mut user = tl::types::User {
+            is_self: false,
+            contact: false,
+            mutual_contact: false,
+            deleted: false,
+            bot: false,
+            bot_chat_history: false,
+            bot_nochats: false,
+            verified: false,
+            restricted: false,
+            min: false,
+            bot_inline_geo: false,
+            support: false,
+            scam: false,
+            apply_min_photo: false,
+            fake: false,
+            bot_attach_menu: false,
+            premium: false,
+            attach_menu_enabled: false,
+            bot_can_edit: false,
+            close_friend: false,
+            stories_hidden: false,
+            stories_unavailable: false,
+            contact_require_premium: false,
+            bot_business: false,
+            bot_has_main_app: false,
+            bot_forum_view: false,
+            bot_forum_can_manage_topics: false,
+            bot_can_manage_bots: false,
+            bot_guestchat: false,
+            bot_guard: false,
+            id,
+            access_hash: None,
+            first_name: None,
+            last_name: None,
+            username: None,
+            phone: None,
+            photo: None,
+            status: None,
+            bot_info_version: None,
+            restriction_reason: None,
+            bot_inline_placeholder: None,
+            lang_code: None,
+            emoji_status: None,
+            usernames: None,
+            stories_max_id: None,
+            color: None,
+            profile_color: None,
+            bot_active_users: None,
+            bot_verification_icon: None,
+            send_paid_messages_stars: None,
+            linked_community_id: None,
+        };
+        user.access_hash = Some(access_hash);
+        user.into()
+    }
+
+    #[tokio::test]
+    async fn unchanged_peers_are_written_to_storage_only_once() {
+        let session = Arc::new(CountingWrites::default());
+        let pool = SenderPool::new(Arc::clone(&session), 1);
+        let client = Client::new(pool.handle);
+        let writes = || session.writes.load(Ordering::Relaxed);
+
+        let peers = client.peer_map_from_raw(vec![user_with_hash(7, 100)], Vec::new());
+        client.cache_peer_map(&peers).await;
+        assert_eq!(writes(), 1);
+        let stored = session.memory.peer(PeerId::user(7).unwrap()).await.unwrap();
+        assert!(stored.unwrap().auth().is_some());
+
+        // The same peer in a later update needs nothing.
+        client.cache_peer_map(&peers).await;
+        let same = client.peer_map_from_raw(vec![user_with_hash(7, 100)], Vec::new());
+        client.cache_peer_map(&same).await;
+        assert_eq!(writes(), 1);
+
+        // Changed information is written, also when it goes back to an earlier value.
+        for (expected, hash) in [(2, 200), (3, 100)] {
+            let changed = client.peer_map_from_raw(vec![user_with_hash(7, hash)], Vec::new());
+            client.cache_peer_map(&changed).await;
+            assert_eq!(writes(), expected);
+        }
+        let stored = session.memory.peer(PeerId::user(7).unwrap()).await.unwrap();
+        assert_eq!(stored.unwrap().auth().unwrap().hash(), 100);
+
+        // A batch with only some unknown peers writes those.
+        let mixed = client.peer_map_from_raw(
+            vec![user_with_hash(7, 100), user_with_hash(8, 800)],
+            Vec::new(),
+        );
+        client.cache_peer_map(&mixed).await;
+        assert_eq!(writes(), 4);
+        assert!(
+            session
+                .memory
+                .peer(PeerId::user(8).unwrap())
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    // A session may forget peers, so an active one must be offered to it again.
+    #[tokio::test]
+    async fn unchanged_peers_are_written_again_after_a_while() {
+        let session = Arc::new(CountingWrites::default());
+        let pool = SenderPool::new(Arc::clone(&session), 1);
+        let client = Client::new(pool.handle);
+        let peers = client.peer_map_from_raw(vec![user_with_hash(7, 100)], Vec::new());
+        client.cache_peer_map(&peers).await;
+        client.cache_peer_map(&peers).await;
+        assert_eq!(session.writes.load(Ordering::Relaxed), 1);
+        client.0.stored_peers.expire_for_tests();
+        client.cache_peer_map(&peers).await;
+        assert_eq!(session.writes.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn a_failed_peer_write_is_attempted_again() {
+        let session = Arc::new(CountingWrites::default());
+        let pool = SenderPool::new(Arc::clone(&session), 1);
+        let client = Client::new(pool.handle);
+        let peers = client.peer_map_from_raw(vec![user_with_hash(7, 100)], Vec::new());
+
+        session.fail.store(true, Ordering::Relaxed);
+        client.cache_peer_map(&peers).await;
+        session.fail.store(false, Ordering::Relaxed);
+        client.cache_peer_map(&peers).await;
+        assert_eq!(session.writes.load(Ordering::Relaxed), 2);
+        assert!(
+            session
+                .memory
+                .peer(PeerId::user(7).unwrap())
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn stored_peers_stay_bounded_and_recognize_recent_peers_after_growing() {
+        let session = Arc::new(CountingWrites::default());
+        let pool = SenderPool::new(Arc::clone(&session), 1);
+        let client = Client::new(pool.handle);
+        // Far more peers than the table can ever hold.
+        for id in 1..=200_000 {
+            let info = PeerInfo::User {
+                id,
+                auth: None,
+                bot: None,
+                is_self: None,
+            };
+            client.0.stored_peers.remember(&info);
+        }
+        assert!(client.0.stored_peers.capacity_for_tests() <= 65_536);
+        let recent = PeerInfo::User {
+            id: 200_000,
+            auth: None,
+            bot: None,
+            is_self: None,
+        };
+        assert!(client.0.stored_peers.contains(&recent));
+    }
 }

@@ -1,5 +1,9 @@
 # Audit follow-up measurements (2026-10-31)
 
+Later measurements of bot workloads are in [2026-10-31-bot](../2026-10-31-bot/README.md).
+The `.gitignore` of that commit excluded `*.json` here, so the `build.json` and `summary.json`
+linked below were never committed and no longer exist. The raw logs were.
+
 Paired comparisons of this tree with the published commit `2ffd991` and the historical
 baseline `7774ed6`. [Build identities](final/build.json) bind the three executables and
 the measured Rust inputs. All three use the same loopback harness. Changes are medians

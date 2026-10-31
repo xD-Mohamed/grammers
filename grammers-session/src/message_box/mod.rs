@@ -57,6 +57,8 @@ use crate::types::{ChannelState, PeerId, UpdatesState};
 const MAX_CHANNEL_DEFERRALS: u8 = 30;
 // Boxed, so an empty slot costs 16 bytes while the updates themselves are rare.
 const MAX_HELD_UPDATES: usize = 512;
+const CHANNEL_RETRY_DELAY_LIMIT: Duration = Duration::from_secs(60);
+const MAX_INSERTION_SORT_UPDATES: usize = 32;
 
 fn hold_channel_update(
     held: &mut VecDeque<(i64, Box<tl::enums::Update>)>,
@@ -79,6 +81,27 @@ fn update_sort_key(update: &tl::enums::Update) -> i32 {
     match PtsInfo::from_update(update) {
         Some(info) => info.pts.saturating_sub(info.count),
         None => NO_PTS,
+    }
+}
+
+/// Stable sort, without the standard one's scratch space for at least 48 elements, which
+/// even two updates would pay for with this large a type. Batches are small and almost
+/// always in order already.
+fn sort_updates_by_key<K: Ord>(
+    updates: &mut [tl::enums::Update],
+    key: impl Fn(&tl::enums::Update) -> K,
+) {
+    if updates.is_sorted_by_key(&key) {
+        return;
+    }
+    if updates.len() > MAX_INSERTION_SORT_UPDATES {
+        updates.sort_by_key(key);
+        return;
+    }
+    for sorted in 1..updates.len() {
+        let current = key(&updates[sorted]);
+        let position = updates[..sorted].partition_point(|update| key(update) <= current);
+        updates[position..=sorted].rotate_right(1);
     }
 }
 
@@ -117,11 +140,21 @@ impl From<PtsInfo> for MessageBox {
 
 impl LiveEntry {
     fn effective_deadline(&self) -> Instant {
-        match &self.possible_gap {
+        let due = match &self.possible_gap {
             Some(gap) => gap.deadline.min(self.deadline),
             None => self.deadline,
-        }
+        };
+        self.retry_not_before
+            .map_or(due, |not_before| due.max(not_before))
     }
+}
+
+/// How long a channel waits after `failures` consecutive temporary rejections.
+///
+/// Telegram documents these as "try again later" without a delay. This doubles from
+/// one second up to a minute, as TDLib's `retry_get_channel_difference_later` does.
+fn channel_retry_delay(failures: u8) -> Duration {
+    Duration::from_secs(1u64 << failures.saturating_sub(1).min(6)).min(CHANNEL_RETRY_DELAY_LIMIT)
 }
 
 #[allow(clippy::new_without_default)]
@@ -187,6 +220,8 @@ impl MessageBoxes {
                 recovery_deferred: false,
                 recovery_pending: true,
                 recovery_deferrals: 0,
+                recovery_failures: 0,
+                retry_not_before: None,
                 possible_gap: None,
             });
         }
@@ -198,6 +233,8 @@ impl MessageBoxes {
                 recovery_deferred: false,
                 recovery_pending: true,
                 recovery_deferrals: 0,
+                recovery_failures: 0,
+                retry_not_before: None,
                 possible_gap: None,
             });
         }
@@ -213,6 +250,8 @@ impl MessageBoxes {
                     recovery_deferred: false,
                     recovery_pending: true,
                     recovery_deferrals: 0,
+                    recovery_failures: 0,
+                    retry_not_before: None,
                     possible_gap: None,
                 }),
         );
@@ -318,6 +357,8 @@ impl MessageBoxes {
                 recovery_deferred: false,
                 recovery_pending: false,
                 recovery_deferrals: 0,
+                recovery_failures: 0,
+                retry_not_before: None,
                 possible_gap: None,
             });
         }
@@ -385,7 +426,8 @@ impl MessageBoxes {
                     self.getting_diff_for.push_back(entry.key);
                 }
                 if now >= entry.effective_deadline() && !entry.recovery_pending {
-                    debug!(?entry, "deadline for forcibly fetching updates met");
+                    // Not the entry itself: its gap can hold many people's messages.
+                    debug!(key = ?entry.key, "deadline for forcibly fetching updates met");
                     if let (Key::Channel(channel_id), Some(gap)) =
                         (entry.key, entry.possible_gap.take())
                     {
@@ -473,6 +515,8 @@ impl MessageBoxes {
             recovery_deferred: false,
             recovery_pending: false,
             recovery_deferrals: 0,
+            recovery_failures: 0,
+            retry_not_before: None,
             possible_gap: None,
         });
         self.set_entry(LiveEntry {
@@ -482,6 +526,8 @@ impl MessageBoxes {
             recovery_deferred: false,
             recovery_pending: false,
             recovery_deferrals: 0,
+            recovery_failures: 0,
+            retry_not_before: None,
             possible_gap: None,
         });
         self.date = state.date;
@@ -502,6 +548,8 @@ impl MessageBoxes {
                 recovery_deferred: false,
                 recovery_pending: false,
                 recovery_deferrals: 0,
+                recovery_failures: 0,
+                retry_not_before: None,
                 possible_gap: None,
             });
         }
@@ -514,11 +562,20 @@ impl MessageBoxes {
     fn try_begin_get_diff(&mut self, key: Key) {
         if !self.is_getting_diff(key) {
             let mut gap = None;
+            let mut not_before = None;
             if self.update_entry(key, |entry| {
                 gap = entry.possible_gap.take();
                 entry.recovery_pending = true;
                 entry.recovery_deferred = false;
                 entry.recovery_deferrals = 0;
+                // Whatever asks for this difference, a rejected channel still waits.
+                not_before = entry
+                    .retry_not_before
+                    .filter(|not_before| *not_before > Instant::now());
+                if let Some(not_before) = not_before {
+                    entry.recovery_deferred = true;
+                    entry.deadline = not_before;
+                }
             }) {
                 if let (Key::Channel(channel_id), Some(gap)) = (key, gap) {
                     for update in gap.updates {
@@ -530,8 +587,12 @@ impl MessageBoxes {
                         );
                     }
                 }
-                self.getting_diff_for.push_back(key);
-                self.ready_diff_count += 1;
+                if let Some(not_before) = not_before {
+                    self.next_deadline = self.next_deadline.min(not_before);
+                } else {
+                    self.getting_diff_for.push_back(key);
+                    self.ready_diff_count += 1;
+                }
             } else {
                 info!(
                     ?key,
@@ -677,7 +738,7 @@ impl MessageBoxes {
         // Telegram can send updates out of order (e.g. `ReadChannelInbox` first
         // and then `NewChannelMessage`, both with the same `pts`, but the `count`
         // is `0` and `1` respectively), so we sort them first.
-        updates.sort_by_key(update_sort_key);
+        sort_updates_by_key(&mut updates, update_sort_key);
 
         let mut result = Vec::with_capacity(updates.len());
         let mut have_unresolved_gaps = false;
@@ -705,6 +766,8 @@ impl MessageBoxes {
                         recovery_deferred: false,
                         recovery_pending: false,
                         recovery_deferrals: 0,
+                        recovery_failures: 0,
+                        retry_not_before: None,
                         possible_gap: None,
                     });
                 }
@@ -768,6 +831,8 @@ impl MessageBoxes {
                     recovery_deferred: false,
                     recovery_pending: false,
                     recovery_deferrals: 0,
+                    recovery_failures: 0,
+                    retry_not_before: None,
                     possible_gap: None,
                 },
                 |entry| {
@@ -798,20 +863,22 @@ impl MessageBoxes {
                                 "gap on update",
                             );
 
-                            entry
-                                .possible_gap
-                                .get_or_insert_with(|| PossibleGap {
-                                    deadline: Instant::now() + POSSIBLE_GAP_TIMEOUT,
-                                    updates: Vec::new(),
-                                })
-                                .updates
-                                .push(update.clone());
+                            // Retry backoff can keep a gap open for much longer than its
+                            // timeout. What exceeds this comes back with the difference.
+                            let gap = entry.possible_gap.get_or_insert_with(|| PossibleGap {
+                                deadline: Instant::now() + POSSIBLE_GAP_TIMEOUT,
+                                updates: Vec::new(),
+                            });
+                            if gap.updates.len() < MAX_HELD_UPDATES {
+                                gap.updates.push(update.clone());
+                            }
                         }
                     };
 
                     if let Some(mut gap) = entry.possible_gap.take() {
-                        gap.updates
-                            .sort_by_key(|u| std::cmp::Reverse(update_sort_key(u)));
+                        sort_updates_by_key(&mut gap.updates, |u| {
+                            std::cmp::Reverse(update_sort_key(u))
+                        });
                         while let Some(gap_update) = gap.updates.pop() {
                             let gap_info = PtsInfo::from_update(&gap_update)
                                 .expect("only updates with pts info may be stored as gaps");
@@ -863,8 +930,8 @@ impl MessageBoxes {
     /// does not deliver them twice, except that count-0 updates at the position apply. Later
     /// ones pass the usual ordering checks and contiguous updates establish a fresh
     /// position after discarded state. After a temporary failure, updates beyond the
-    /// retained position's gap are dropped instead: a later difference delivers them,
-    /// and re-queueing them would retry a failing recovery with no new traffic.
+    /// retained position's gap are not released: they wait in that gap, for an update
+    /// closing it or for the channel's next attempt, and a difference delivers them.
     /// At most 512 updates are retained across all
     /// channels, oldest evicted first; callers that never release them simply lose
     /// them to eviction, as the socket updates of a recovery were previously lost.
@@ -1157,10 +1224,14 @@ impl MessageBoxes {
         trace!(channel_id, ?difference, "applying channel difference");
         self.exhausted_channels.remove(&channel_id);
 
+        let mut previous_failures = 0;
         self.update_entry(key, |entry| {
+            previous_failures = entry.recovery_failures;
             entry.possible_gap = None;
             entry.recovery_deferred = false;
             entry.recovery_deferrals = 0;
+            entry.recovery_failures = 0;
+            entry.retry_not_before = None;
         });
 
         let tl::types::updates::ChannelDifference {
@@ -1214,6 +1285,16 @@ impl MessageBoxes {
         }));
 
         self.reset_timeout(key, timeout);
+
+        // Socket updates beyond a position that Telegram calls final would reopen the gap
+        // at once, and with it recovery. They wait for an update closing the gap or for
+        // the next attempt, spaced out so that lasting lag cannot become a request loop.
+        if r#final {
+            let beyond = self.retain_contiguous_held_updates(channel_id, pts);
+            if !beyond.is_empty() {
+                self.schedule_channel_retry(key, previous_failures.saturating_add(1), beyond);
+            }
+        }
 
         // A channel with a long backlog yields to every other pending channel
         // after each page. Keep its entry active so gap tracking is unchanged.
@@ -1340,6 +1421,25 @@ impl MessageBoxes {
         self.update_entry(key, |entry| entry.recovery_deferrals = 0);
     }
 
+    /// Allow another difference for the channel without its usual delay after temporary
+    /// failures. For a reply that could not be read, which Telegram did not reject and
+    /// which only limited attempts may wait for.
+    pub fn retry_channel_without_delay(&mut self, channel_id: i64) {
+        let now = Instant::now();
+        let mut retry = false;
+        self.update_entry(Key::Channel(channel_id), |entry| {
+            entry.recovery_failures = entry.recovery_failures.saturating_sub(1);
+            entry.retry_not_before = None;
+            if let Some(gap) = &mut entry.possible_gap {
+                gap.deadline = now;
+                retry = true;
+            }
+        });
+        if retry {
+            self.next_deadline = now;
+        }
+    }
+
     pub fn end_channel_difference(&mut self, reason: PrematureEndReason) {
         let (key, channel_id) = self
             .channel_in_diff()
@@ -1348,10 +1448,15 @@ impl MessageBoxes {
         trace!(channel_id, ?reason, "ending channel difference");
         match reason {
             PrematureEndReason::TemporaryServerIssues => {
-                self.update_entry(key, |entry| entry.possible_gap = None);
+                let mut failures = 0;
+                self.update_entry(key, |entry| {
+                    entry.possible_gap = None;
+                    failures = entry.recovery_failures.saturating_add(1);
+                });
                 self.try_end_get_diff(key);
                 if let Some(pts) = self.entry(key).map(|entry| entry.pts) {
-                    self.retain_contiguous_held_updates(channel_id, pts);
+                    let beyond = self.retain_contiguous_held_updates(channel_id, pts);
+                    self.schedule_channel_retry(key, failures, beyond);
                 }
             }
             PrematureEndReason::Banned => {
@@ -1364,9 +1469,15 @@ impl MessageBoxes {
 }
 
 impl MessageBoxes {
-    /// Keep only the channel's held updates that directly follow its position. Others
-    /// are dropped: releasing them would open a gap whose timer restarts recovery.
-    fn retain_contiguous_held_updates(&mut self, channel_id: i64, mut pts: i32) {
+    /// Keep only the channel's held updates that directly follow its position, and return
+    /// those beyond it, which releasing would make into a gap whose timer restarts recovery.
+    /// Updates at or before the position are dropped, as they have been delivered.
+    fn retain_contiguous_held_updates(
+        &mut self,
+        channel_id: i64,
+        mut pts: i32,
+    ) -> Vec<tl::enums::Update> {
+        let mut beyond = Vec::new();
         let mut channel = Vec::new();
         let mut others = VecDeque::new();
         for (id, update) in mem::take(&mut self.held_updates) {
@@ -1382,15 +1493,40 @@ impl MessageBoxes {
             let Some(info) = PtsInfo::from_update(&update) else {
                 continue;
             };
+            if !beyond.is_empty() {
+                beyond.push(*update);
+                continue;
+            }
             match (i64::from(pts) + i64::from(info.count)).cmp(&i64::from(info.pts)) {
                 Ordering::Equal => {
                     pts = info.pts;
                     self.held_updates.push_back((channel_id, update));
                 }
                 Ordering::Greater => {}
-                Ordering::Less => break,
+                Ordering::Less => beyond.push(*update),
             }
         }
+        beyond
+    }
+
+    /// Space out the channel's next difference after `failures` in a row, with `beyond`
+    /// as its gap. So an update closing that gap still delivers them all, and otherwise
+    /// the attempt comes without needing any other traffic to report the gap again.
+    fn schedule_channel_retry(&mut self, key: Key, failures: u8, beyond: Vec<tl::enums::Update>) {
+        let retry_at = Instant::now() + channel_retry_delay(failures);
+        if !beyond.is_empty() {
+            self.next_deadline = self.next_deadline.min(retry_at);
+        }
+        self.update_entry(key, |entry| {
+            entry.recovery_failures = failures;
+            entry.retry_not_before = Some(retry_at);
+            if !beyond.is_empty() {
+                entry.possible_gap = Some(PossibleGap {
+                    deadline: retry_at,
+                    updates: beyond,
+                });
+            }
+        });
     }
 
     /// Discard the account position, its backlog and any pending account recovery.

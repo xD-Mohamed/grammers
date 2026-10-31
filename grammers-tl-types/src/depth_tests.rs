@@ -271,3 +271,21 @@ fn depth_scope_restores_after_unwind() {
     assert!(result.is_err());
     assert_eq!(cursor.depth, 0);
 }
+
+// These values move through every step of the update path. Holding the largest variants
+// inline made a single update over 5 KiB, so a schema change undoing this must be noticed.
+#[test]
+fn update_types_stay_small_enough_to_move_around() {
+    assert!(size_of::<enums::Message>() <= 32);
+    assert!(size_of::<enums::EphemeralMessage>() <= 32);
+    assert!(
+        size_of::<enums::Update>() <= 1024,
+        "{}",
+        size_of::<enums::Update>()
+    );
+    assert!(
+        size_of::<enums::Updates>() <= 2048,
+        "{}",
+        size_of::<enums::Updates>()
+    );
+}

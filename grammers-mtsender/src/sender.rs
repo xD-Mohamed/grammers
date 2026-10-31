@@ -50,6 +50,14 @@ const INITIAL_READ_BUFFER_SIZE: usize = 1024;
 const INITIAL_WRITE_BUFFER_SIZE: usize = 1024;
 const RETAINED_BUFFER_SIZE: usize = 16 * 1024;
 const BUFFER_RELEASE_DELAY: Duration = Duration::from_secs(60);
+/// A read filling the buffer suggests more is waiting. Replies are small, so a busy
+/// connection grows to this to read them with fewer system calls per packet.
+const BUSY_READ_BUFFER_SIZE: usize = RETAINED_BUFFER_SIZE;
+/// Bytes read per unit of scheduler budget. Smaller is fairer to other connections on
+/// the thread, larger gives this one more throughput: see benchmarks/2026-10-31-bot.
+const READ_CHARGE_UNIT: usize = 2 * 1024;
+/// Update batches kept for the next read, in elements of up to about 2 KiB each.
+const MAX_RECYCLED_UPDATES: usize = 8;
 
 /// How much leading space should be reserved in a buffer to avoid moving memory.
 const LEADING_BUFFER_SPACE: usize = mtp::MAX_TRANSPORT_HEADER_LEN
@@ -177,6 +185,9 @@ pub struct Sender<T: Transport, M: Mtp> {
     write_buffer: DequeBuffer<u8>,
     write_head: usize,
     last_large_transfer: Instant,
+    recycled_updates: Vec<UpdatesLike>,
+    last_update_burst: Instant,
+    read_since_charge: usize,
 }
 
 struct Request {
@@ -249,6 +260,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             ),
             write_head: 0,
             last_large_transfer: Instant::now(),
+            recycled_updates: Vec::new(),
+            last_update_burst: Instant::now(),
+            read_since_charge: 0,
         })
     }
 
@@ -562,13 +576,15 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             )));
         }
 
+        let filled = self.read_tail + n == self.read_buffer.len();
+        self.read_since_charge += n;
         self.read_tail += n;
         trace!("read {} bytes from the network", n);
         trace!("trying to unpack buffer of {} bytes...", self.read_tail);
 
         // TODO the buffer might have multiple transport packets, what should happen with the
         // updates successfully read if subsequent packets fail to be deserialized properly?
-        let mut updates = Vec::new();
+        let mut updates = std::mem::take(&mut self.recycled_updates);
         let mut next_offset = 0;
         while next_offset != self.read_tail {
             match self
@@ -596,21 +612,63 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         let used = self.read_tail;
         self.read_buffer.copy_within(next_offset..self.read_tail, 0);
         self.read_tail -= next_offset;
-        self.release_idle_buffers(used);
+        if filled && self.read_buffer.len() < BUSY_READ_BUFFER_SIZE {
+            self.last_large_transfer = Instant::now();
+            let next = (self.read_buffer.len() * 2).min(BUSY_READ_BUFFER_SIZE);
+            self.read_buffer
+                .reserve_exact(next - self.read_buffer.len());
+            self.read_buffer.resize(next, 0);
+        } else {
+            self.release_idle_buffers(used, filled);
+        }
 
         Ok(updates)
     }
 
+    /// How much of the scheduler's budget reads since the last call should cost.
+    ///
+    /// A large read does the decoding of many small ones in a single step. Charging by
+    /// the amount limits how long a busy connection holds the thread from others.
+    pub(crate) fn take_read_charge(&mut self) -> usize {
+        let charge = self.read_since_charge / READ_CHARGE_UNIT;
+        self.read_since_charge %= READ_CHARGE_UNIT;
+        charge
+    }
+
+    /// Return the vector from [`Self::step`] once its `batch` updates were handled.
+    /// Reads delivering several updates are worth a vector kept for the next. A single
+    /// update is not, and a kept vector goes after a while with no such reads, whose
+    /// keepalive replies also pass through here.
+    pub(crate) fn recycle_updates(&mut self, mut updates: Vec<UpdatesLike>, batch: usize) {
+        if updates.capacity() == 0 || updates.capacity() > MAX_RECYCLED_UPDATES {
+            return;
+        }
+        let keep = match batch {
+            0 => self.last_update_burst.elapsed() < BUFFER_RELEASE_DELAY,
+            1 => false,
+            _ => {
+                self.last_update_burst = Instant::now();
+                true
+            }
+        };
+        if keep {
+            updates.clear();
+            self.recycled_updates = updates;
+        }
+    }
+
     // Only buffers holding no pending bytes are replaced. Keepalive replies
     // guarantee a later visit, so this also applies to otherwise idle sessions.
-    fn release_idle_buffers(&mut self, used: usize) {
-        if used > RETAINED_BUFFER_SIZE {
+    fn release_idle_buffers(&mut self, used: usize, filled: bool) {
+        if used > RETAINED_BUFFER_SIZE
+            || (filled && self.read_buffer.len() > INITIAL_READ_BUFFER_SIZE)
+        {
             self.last_large_transfer = Instant::now();
-        } else if (self.read_buffer.len() > RETAINED_BUFFER_SIZE
+        } else if (self.read_buffer.len() > INITIAL_READ_BUFFER_SIZE
             || self.write_buffer.capacity() > RETAINED_BUFFER_SIZE + LEADING_BUFFER_SPACE)
             && self.last_large_transfer.elapsed() >= BUFFER_RELEASE_DELAY
         {
-            if self.read_tail == 0 && self.read_buffer.len() > RETAINED_BUFFER_SIZE {
+            if self.read_tail == 0 && self.read_buffer.len() > INITIAL_READ_BUFFER_SIZE {
                 self.read_buffer = vec![0; INITIAL_READ_BUFFER_SIZE];
             }
             if self.write_buffer.is_empty()
@@ -645,7 +703,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         let used = self.write_buffer.len();
         self.write_buffer.clear();
         self.write_head = 0;
-        self.release_idle_buffers(used);
+        self.release_idle_buffers(used, false);
         for req in self.requests.iter_mut() {
             match &req.state {
                 RequestState::NotSerialized | RequestState::Sent(_) => {}
@@ -1016,6 +1074,9 @@ pub async fn generate_auth_key<T: Transport>(
         write_buffer: sender.write_buffer,
         write_head: sender.write_head,
         last_large_transfer: sender.last_large_transfer,
+        recycled_updates: Vec::new(),
+        last_update_burst: Instant::now(),
+        read_since_charge: 0,
         addr: sender.addr,
     })
 }
@@ -1033,7 +1094,7 @@ pub async fn connect_with_auth<T: Transport>(
 }
 
 #[cfg(test)]
-mod optimization_tests {
+pub(crate) mod optimization_tests {
     use super::*;
 
     static DH_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -1078,7 +1139,7 @@ mod optimization_tests {
         .to_bytes()
     }
 
-    fn zero_key_aes(msg_key: &[u8; 16]) -> ([u8; 32], [u8; 32]) {
+    pub(crate) fn zero_key_aes(msg_key: &[u8; 16]) -> ([u8; 32], [u8; 32]) {
         use sha2::{Digest, Sha256};
         // All-zero test key: x=0 and x=8 select identical slices.
         let mut a = Sha256::new();
@@ -1100,7 +1161,7 @@ mod optimization_tests {
         (key, iv)
     }
 
-    fn zero_key_server_packet(session: i64, id: i64, seq: i32, body: &[u8]) -> Vec<u8> {
+    pub(crate) fn zero_key_server_packet(session: i64, id: i64, seq: i32, body: &[u8]) -> Vec<u8> {
         use sha2::{Digest, Sha256};
         let mut plain = 0i64.to_le_bytes().to_vec();
         plain.extend(session.to_le_bytes());
@@ -1460,10 +1521,10 @@ mod optimization_tests {
             sender.write_buffer.clear();
         };
         grow(&mut sender);
-        sender.release_idle_buffers(RETAINED_BUFFER_SIZE + 1);
+        sender.release_idle_buffers(RETAINED_BUFFER_SIZE + 1, false);
         // Active transfers keep their capacity, however small the transfer between.
         tokio::time::advance(BUFFER_RELEASE_DELAY - Duration::from_secs(1)).await;
-        sender.release_idle_buffers(1);
+        sender.release_idle_buffers(1, false);
         assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
         assert!(sender.write_buffer.capacity() >= MAXIMUM_DATA);
         tokio::time::advance(Duration::from_secs(1)).await;
@@ -1471,17 +1532,17 @@ mod optimization_tests {
         sender.read_tail = 5;
         sender.read_buffer[..5].copy_from_slice(b"parts");
         sender.write_buffer.push(9);
-        sender.release_idle_buffers(1);
+        sender.release_idle_buffers(1, false);
         assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
         assert_eq!(&sender.read_buffer[..5], b"parts");
         assert!(sender.write_buffer.capacity() >= MAXIMUM_DATA);
         assert_eq!(&sender.write_buffer[..], [9]);
         sender.write_buffer.clear();
-        sender.release_idle_buffers(1);
+        sender.release_idle_buffers(1, false);
         assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
         assert!(sender.write_buffer.capacity() <= RETAINED_BUFFER_SIZE);
         sender.read_tail = 0;
-        sender.release_idle_buffers(1);
+        sender.release_idle_buffers(1, false);
         assert_eq!(sender.read_buffer.len(), INITIAL_READ_BUFFER_SIZE);
         // Ordinary traffic reaches this through the network paths, and buffers can
         // grow again afterwards. The loopback retention census exercises real reads.
@@ -1490,6 +1551,89 @@ mod optimization_tests {
         sender.on_net_write(0).unwrap();
         assert_eq!(sender.read_buffer.len(), INITIAL_READ_BUFFER_SIZE);
         assert!(sender.write_buffer.capacity() <= RETAINED_BUFFER_SIZE);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reads_filling_the_buffer_grow_it_until_idle() {
+        let mut sender = pair_with(mtp::Encrypted::build().finish([0; 256])).await.0;
+        let mut grown_to = Vec::new();
+        for _ in 0..6 {
+            // The start of a larger packet, so the read fills the buffer and leaves all of it.
+            let len = sender.read_buffer.len();
+            sender.read_buffer[..4].copy_from_slice(&(512 * 1024i32).to_le_bytes());
+            sender.on_net_read(len).unwrap();
+            grown_to.push(sender.read_buffer.len());
+            sender.read_tail = 0;
+        }
+        assert_eq!(grown_to[0], INITIAL_READ_BUFFER_SIZE * 2);
+        assert_eq!(*grown_to.last().unwrap(), BUSY_READ_BUFFER_SIZE);
+        assert!(grown_to.iter().all(|len| *len <= BUSY_READ_BUFFER_SIZE));
+        // Staying busy keeps it.
+        sender.release_idle_buffers(1, true);
+        tokio::time::advance(BUFFER_RELEASE_DELAY).await;
+        sender.release_idle_buffers(1, true);
+        assert_eq!(sender.read_buffer.len(), BUSY_READ_BUFFER_SIZE);
+        // A minute of reads that do not fill it returns it to its original size.
+        tokio::time::advance(BUFFER_RELEASE_DELAY).await;
+        sender.release_idle_buffers(1, false);
+        assert_eq!(sender.read_buffer.len(), INITIAL_READ_BUFFER_SIZE);
+    }
+
+    #[tokio::test]
+    async fn read_charges_keep_their_remainder() {
+        let mut sender = pair_with(mtp::Encrypted::build().finish([0; 256])).await.0;
+        sender.read_buffer[..4].copy_from_slice(&(512 * 1024i32).to_le_bytes());
+        sender.on_net_read(1024).unwrap();
+        assert_eq!(sender.take_read_charge(), 0);
+        sender.on_net_read(512).unwrap();
+        assert_eq!(sender.take_read_charge(), 0);
+        // The remainder counts towards the next charge rather than being forgiven.
+        sender.on_net_read(512).unwrap();
+        sender.on_net_read(100).unwrap();
+        assert_eq!(sender.take_read_charge(), 1);
+        assert_eq!(sender.read_since_charge, 100);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_kept_update_vector_goes_once_bursts_stop() {
+        let mut sender = pair_with(mtp::Encrypted::build().finish([0; 256])).await.0;
+        sender.recycle_updates(Vec::with_capacity(4), 2);
+        tokio::time::advance(BUFFER_RELEASE_DELAY - Duration::from_secs(1)).await;
+        let taken = std::mem::take(&mut sender.recycled_updates);
+        sender.recycle_updates(taken, 0);
+        assert_eq!(sender.recycled_updates.capacity(), 4);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let taken = std::mem::take(&mut sender.recycled_updates);
+        sender.recycle_updates(taken, 0);
+        assert_eq!(sender.recycled_updates.capacity(), 0);
+    }
+
+    #[tokio::test]
+    async fn only_small_update_batches_keep_their_vector() {
+        let mut sender = pair_with(mtp::Encrypted::build().finish([0; 256])).await.0;
+        let batch = |capacity: usize| Vec::<UpdatesLike>::with_capacity(capacity);
+        // A single update is not worth keeping memory for the life of a connection.
+        sender.recycle_updates(batch(1), 1);
+        assert_eq!(sender.recycled_updates.capacity(), 0);
+        sender.recycle_updates(batch(MAX_RECYCLED_UPDATES), 2);
+        assert_eq!(sender.recycled_updates.capacity(), MAX_RECYCLED_UPDATES);
+        // Neither is a one-off burst's large one.
+        sender.recycled_updates = Vec::new();
+        sender.recycle_updates(batch(MAX_RECYCLED_UPDATES * 2), 16);
+        assert_eq!(sender.recycled_updates.capacity(), 0);
+        // What is kept has no contents, and the next read starts from it.
+        let mut filled = batch(4);
+        filled.push(UpdatesLike::ConnectionClosed);
+        sender.recycle_updates(filled, 2);
+        assert!(sender.recycled_updates.is_empty());
+        assert_eq!(sender.recycled_updates.capacity(), 4);
+        // A step that only wrote returns an empty vector, which must not replace it.
+        sender.recycle_updates(Vec::new(), 0);
+        assert_eq!(sender.recycled_updates.capacity(), 4);
+        // A read with only RPC results took the kept vector, and gives it back.
+        let taken = std::mem::take(&mut sender.recycled_updates);
+        sender.recycle_updates(taken, 0);
+        assert_eq!(sender.recycled_updates.capacity(), 4);
     }
 
     #[tokio::test]

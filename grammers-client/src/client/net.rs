@@ -58,6 +58,7 @@ impl Client {
             api_id: sender_pool.api_id,
             handle: sender_pool.thin.clone(),
             auth_copied_to_dcs: Mutex::new(Vec::new()),
+            stored_peers: Default::default(),
             configuration,
             lifecycle: None,
             #[cfg(test)]

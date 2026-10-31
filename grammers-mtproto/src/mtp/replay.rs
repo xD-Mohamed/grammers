@@ -6,6 +6,8 @@
 
 use std::collections::VecDeque;
 
+use tracing::warn;
+
 const CAPACITY: usize = 1024;
 // https://core.telegram.org/mtproto/security_guidelines: msg_id is about unixtime
 // * 2^32 and values over 300 seconds in the past are ignored. Comparing server IDs
@@ -62,10 +64,13 @@ impl ReplayIds {
     /// Records a new ID and returns the highest ID that left the history, which
     /// may be `id` itself. Duplicates are filtered by the caller before recording.
     pub(super) fn remember(&mut self, id: i64) -> Option<i64> {
-        let newest = self
-            .offsets
-            .back()
-            .map_or(id, |last| self.id(*last).max(id));
+        let previous_newest = self.offsets.back().map(|last| self.id(*last));
+        if previous_newest.is_some_and(|previous| id.saturating_sub(previous) > MAX_AGE) {
+            // Everything below this now counts as old, which only a clock step or a
+            // misbehaving server would cause. Until reconnecting, order becomes stricter.
+            warn!("server message ID jumped more than 300 seconds ahead");
+        }
+        let newest = previous_newest.map_or(id, |previous| previous.max(id));
         let oldest_allowed = newest.saturating_sub(MAX_AGE);
         if id < oldest_allowed
             || (self.offsets.len() == CAPACITY
@@ -302,5 +307,32 @@ mod tests {
         assert!(later > *real.last().unwrap());
         assert_eq!(history.remember(later), Some(later));
         assert_eq!(history.values(), [future]);
+    }
+
+    #[test]
+    fn rebasing_retained_ids_preserves_every_decision() {
+        let mut replay = ReplayIds::new();
+        let start = REAL_TIME;
+        // Near the end of the offset range with IDs retained, which ordinary traffic
+        // reaches after about 18 hours. Everything recorded here stays within MAX_AGE.
+        replay.base = start - (OFFSET_LIMIT as i64 - MAX_AGE / 2);
+        let retained: Vec<i64> = (0..4).map(|i| start + i * SECOND + 1).collect();
+        for id in &retained {
+            let offset = replay.offset(*id).unwrap();
+            replay.offsets.push_back(offset);
+        }
+        let before = replay.base;
+        // This one no longer fits the offsets, and nothing retained has aged out.
+        let beyond = start + MAX_AGE - SECOND + 1;
+        assert_eq!(replay.offset(beyond), None);
+        assert_eq!(replay.remember(beyond), None);
+        assert_ne!(replay.base, before);
+        for id in retained.iter().chain([&beyond]) {
+            assert!(replay.contains(id), "{id} must still be known");
+        }
+        assert!(!replay.contains(&(start + 5)));
+        assert_eq!(replay.len(), retained.len() + 1);
+        // Later IDs and the eviction order carry on as if nothing happened.
+        assert_eq!(replay.remember(beyond + 2 * SECOND), Some(retained[0]));
     }
 }

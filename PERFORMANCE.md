@@ -1,5 +1,8 @@
 # Library efficiency and fork changes
 
+The latest measurements, of [bot workloads against all three baselines](benchmarks/2026-10-31-bot/README.md),
+come first. What follows is older and describes earlier states of this code.
+
 ## Large-reply memory scope
 
 The historical acceptance-round1 1 MiB scenario measured candidate/baseline

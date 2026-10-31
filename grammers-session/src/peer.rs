@@ -69,7 +69,7 @@ pub enum PeerKind {
 }
 
 /// An exploded peer reference along with any known useful information about the peer.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PeerInfo {
     User {
@@ -111,7 +111,7 @@ pub enum PeerInfo {
 /// and `Result<ChannelKind, ()>`
 /// slightly more performant.
 /// (See [`mod@core::option`]'s documentation about the "null pointer optimization".)
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ChannelKind {
     /// Value used for a channel with its [`tl::types::Channel::broadcast`] flag set to `true`.

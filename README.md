@@ -13,6 +13,18 @@ This independently maintained fork builds on [Lonami's grammers](https://codeber
 
 Before deploying many bots in one process, read the [known limitations and measured costs](CHANGELOG.md#known-limitations-and-measured-costs), including the generated-TL nesting limit, channel recovery without cached access, and measured throughput/memory tradeoffs.
 
+## Using the Telegram API
+
+This is an unofficial library, not affiliated with Telegram. Applications built on it
+are bound by the [API Terms of Service](https://core.telegram.org/api/terms): obtain
+[your own `api_id`](https://core.telegram.org/api/obtaining_api_id), tell your users that the
+app uses the Telegram API, and do not act for them without their knowledge and consent.
+Telegram's own [rate limits](https://core.telegram.org/bots/faq) are enforced by its servers,
+and no client can raise them. Short flood waits are slept through by default and longer ones are
+returned with [`retry_after`](https://xd-mohamed.github.io/grammers/api/grammers_mtsender/enum.InvocationError.html#method.retry_after):
+wait them out rather than retrying. The library's handling, with sources, is in
+[the compliance audit](COMPLIANCE-2026-10-31.md).
+
 ## Install
 
 Use this repository for the fork APIs. For deployments, pin a reviewed commit with `rev` instead of following `main`.

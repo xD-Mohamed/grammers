@@ -1,5 +1,9 @@
 # Audit follow-up ledger (2026-10-31)
 
+Later the same day: the [bot workload measurements](benchmarks/2026-10-31-bot/README.md), the
+[compliance audit](COMPLIANCE-2026-10-31.md) and the [second follow-up](#second-follow-up) below,
+which supersede this ledger where they disagree.
+
 Cumulative against the published commit `2ffd991` (tree `6132496e`). Its reviewer
 approved that tree with non-blocking findings and explicit deferrals, not as proof
 that every discovered issue was closed. This ledger records what happened to each.
@@ -106,3 +110,47 @@ dependencies, all local:
 Ignored tests are benchmarks and explicit network probes. Generated TL compilation can
 exhaust memory on this 6 GB host with parallel jobs; one build job avoids that. Hosted
 CI was not observed when this was written.
+
+## Second follow-up
+
+Against `79c1c0a`, with Claude working alone by the owner's direction and fresh-eyes subagents
+given only the diff and a neutral list of intentions, never conclusions.
+
+| Item | Status | What now holds |
+|---|---|---|
+| Review of `79c1c0a` | Done | Three approved with non-blocking findings. The real ones are fixed: a successful difference restarting recovery in a loop, unpaced storage failures, a test that did not test its name, untested 6-byte rebasing. Remaining smaller ones are listed below |
+| Busy p99 (+96.45%) with the quiet gain (-43.87%) kept | **Not both.** | Busy +28.11%, quiet -22.49%, completed +13.14%, all against `7774ed6`. A measured trade: see [the curve](benchmarks/2026-10-31-bot/README.md#fairness-across-many-pools-on-one-thread) |
+| User account with no access hash | Documented limit | Telegram's documentation says such a peer cannot be used. Details in the [audit](COMPLIANCE-2026-10-31.md#open-items-answered) |
+| Unknown channel rejection | Bounded | Per-channel backoff to one request a minute at most, retained updates capped, position unmoved. Limit in the audit |
+| 64-level TL limit | Sound; documented | 23 levels against the schema. Details in the audit. The error arm is listed as breaking |
+| Performance and memory | Large measured gains in bot workloads | The [measurements](benchmarks/2026-10-31-bot/README.md). No gain in per-session idle heap, where replay history remains the reason |
+| Zero access hash | Confirmed by Telegram's documentation | Kept |
+
+Reviews of this work, each by a new subagent, and what came of them:
+
+- Two parallel reviewers: one changes-requested finding, that a `Session` may forget peers, which
+  a table of written peers has to allow for. Also fixed from them: unreadable channel replies growing
+  the delay they should not, the account backoff being reset by channels, stale connection failures after a
+  stable connection, one yield per overflowing update. The harness then charged allocator accounting
+  to the CPU window, measured open-loop latency from task start and covered short replies only;
+  all three fixed. Covering full replies is what exposed the standard sort's scratch space.
+- Third reviewer: changes requested for one blocking bug, in the fix for the first review's main finding:
+  a live update during the retry delay could leave an update undelivered for 15 minutes. Fixed by
+  keeping those updates in the gap, which also fixed the same weakness on rejections.
+- Fourth reviewer, on everything including these documents, with the raw logs: changes requested for errors
+  in the documents. The heap log did not match its table, and two claims overstated retries and warnings.
+  Also fixed from it: more `Debug` and log exposures of the same kind. It confirmed about 60 quoted figures
+  against their summaries.
+- The approval of the published tree is recorded with the publication, as `PUBLICATION.md` describes.
+
+Still open and not changed, from those reviews or the audit:
+
+- Should Telegram ever send two authenticated IDs more than 300 s apart in one direction, messages
+  other than RPC results below the second would be dropped until reconnection. A warning now says so.
+- Released updates carry no peers in their batch, so `Message::sender()` returns `None` for them until
+  the session has them. The asynchronous variants fall back to the session.
+- `Update::from_raw` still clones the message, because the public `raw` field and the message both hold it.
+- No absolute inbound `msg_id` time window; `bad_server_salt` not matched to a sent message. See the audit.
+
+Validation of this tree is in the [measurements](benchmarks/2026-10-31-bot/README.md#validation). Hosted
+CI of the commit is reported with the publication, outside this file.

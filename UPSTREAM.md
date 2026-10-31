@@ -112,6 +112,9 @@ compilation alone does not establish lower CPU use or better latency.
   flags, request/response shapes and the advertised layer; regenerate through
   the existing build pipeline and compile all examples. Never copy a newer
   layer number onto an older schema.
+- `tl-gen` boxes `message`, `messageService` and `ephemeralMessage` for size, which upstream
+  does not. Merge schema changes through it, and check the size guards in
+  `grammers-tl-types/src/depth_tests.rs` when one of those definitions is renamed.
 - Preserve the contracts listed in `AGENTS.md`: raw request compatibility,
   update suppression, session-import isolation, lifetime tracking, cancellation,
   wire validation, routing and no replay after an uncertain response.

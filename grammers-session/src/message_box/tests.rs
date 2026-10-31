@@ -13,7 +13,7 @@ use std::time::Duration;
 use grammers_tl_types as tl;
 
 use super::defs::{
-    Gap, MessageBox, MessageBoxes, NO_DATE, NO_PTS, NO_SEQ, NO_UPDATES_TIMEOUT, State,
+    Gap, Key, MessageBox, MessageBoxes, NO_DATE, NO_PTS, NO_SEQ, NO_UPDATES_TIMEOUT, State,
     UpdateAndPeers,
 };
 use super::{MAX_HELD_UPDATES, PrematureEndReason, next_updates_deadline};
@@ -162,6 +162,10 @@ fn channel_too_long_preserves_local_pts_and_requires_a_positive_initial_hint() {
         });
         boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
         boxes.process_updates(channel_too_long(7, hint)).unwrap();
+        // Requested once that rejection's delay is over.
+        assert_eq!(boxes.get_channel_difference(), None);
+        advance_time_by(Duration::from_secs(1));
+        boxes.check_deadlines();
         assert_eq!(
             boxes.get_channel_difference(),
             Some(get_channel_difference(7, 10))
@@ -988,7 +992,8 @@ fn failed_channel_recovery_allows_contiguous_live_updates_without_skipping_gaps(
             .0
             .is_empty()
     );
-    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    // The channel's rejection delays the next attempt beyond the gap's own timeout.
+    advance_time_by(Duration::from_secs(1));
     boxes.check_deadlines();
     assert_eq!(
         boxes.get_channel_difference(),
@@ -1010,18 +1015,20 @@ fn failed_channel_recovery_allows_contiguous_live_updates_without_skipping_gaps(
         .0;
     assert_eq!(sibling.len(), 1);
     assert_eq!(sibling[0].0, channel_update(8, 21));
+    // Closing the gap delivers what had waited beyond it.
     let contiguous = boxes
         .process_updates(channel_updates(7, 0, 0, 12))
         .unwrap()
         .0;
-    assert_eq!(contiguous.len(), 1);
+    assert_eq!(contiguous.len(), 2);
     assert_eq!(contiguous[0].0, channel_update(7, 12));
+    assert_eq!(contiguous[1].0, channel_update(7, 13));
     let mut channels = boxes.session_state().channels;
     channels.sort_by_key(|channel| channel.id);
     assert_eq!(
         channels,
         vec![
-            ChannelState { id: 7, pts: 12 },
+            ChannelState { id: 7, pts: 13 },
             ChannelState { id: 8, pts: 21 }
         ]
     );
@@ -1075,28 +1082,28 @@ fn failed_recovery_releases_postponed_channel_updates_without_skipping_gaps() {
         Vec::<i32>::new()
     );
     boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
-    // 11 is contiguous. 13 is beyond the gap at 12: it must not skip that gap, and
-    // re-queueing it would keep retrying a failing recovery with no new traffic.
+    // 11 is contiguous. 13 is beyond the gap at 12, which it must not skip. It waits for
+    // that gap to close or for the next attempt, which a growing delay keeps from looping.
     assert_eq!(delivered_channel_pts(boxes.take_released_updates()), [11]);
     assert_eq!(boxes.session_state().channels[0].pts, 11);
     advance_time_by(POSSIBLE_GAP_TIMEOUT);
     boxes.check_deadlines();
     assert_eq!(boxes.get_channel_difference(), None);
-    // New traffic resumes both delivery and recovery.
+    // An update closing the gap delivers both.
     let contiguous = boxes.process_updates(channel_updates(7, 0, 0, 12)).unwrap();
-    assert_eq!(delivered_channel_pts(Some(contiguous)), [12]);
+    assert_eq!(delivered_channel_pts(Some(contiguous)), [12, 13]);
     assert!(
         boxes
-            .process_updates(channel_updates(7, 0, 0, 14))
+            .process_updates(channel_updates(7, 0, 0, 15))
             .unwrap()
             .0
             .is_empty()
     );
-    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    advance_time_by(Duration::from_secs(1));
     boxes.check_deadlines();
     assert_eq!(
         boxes.get_channel_difference(),
-        Some(get_channel_difference(7, 12))
+        Some(get_channel_difference(7, 13))
     );
 }
 
@@ -1167,6 +1174,9 @@ fn abandoned_account_difference_keeps_channel_positions() {
     assert_eq!((state.pts, state.qts), (NO_PTS, NO_PTS));
     assert_eq!(state.channels, vec![ChannelState { id: 7, pts: 10 }]);
     // No queue accounting is left behind, and fresh account state works normally.
+    assert_eq!(boxes.ready_diff_count, boxes.getting_diff_for.len());
+    assert!(!boxes.getting_diff_for.contains(&Key::Common));
+    assert!(!boxes.getting_diff_for.contains(&Key::Secondary));
     boxes.set_state(tl::types::updates::State {
         pts: 200,
         qts: 6,
@@ -2229,4 +2239,316 @@ fn all_deferred_channels_wait_until_the_earliest_retry() {
         boxes.get_channel_difference(),
         Some(get_channel_difference(7, 10))
     );
+}
+
+// A live channel, not one still catching up from saved state, so that recovery really
+// starts from a gap: the conversions under test only apply to that path.
+fn live_channel(id: i64, pts: i32) -> MessageBoxes {
+    let mut boxes = MessageBoxes::new();
+    boxes.try_set_channel_state(id, pts);
+    boxes
+}
+
+fn empty_channel_difference(pts: i32) -> tl::enums::updates::ChannelDifference {
+    tl::types::updates::ChannelDifferenceEmpty {
+        r#final: true,
+        pts,
+        timeout: None,
+    }
+    .into()
+}
+
+#[test]
+fn final_difference_short_of_a_held_update_does_not_restart_recovery() {
+    reset_time();
+    let mut boxes = live_channel(7, 10);
+    // 13 opens a real gap, whose timer moves it to the held updates.
+    assert!(
+        boxes
+            .process_updates(channel_updates(7, 0, 0, 13))
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    assert_eq!(boxes.get_channel_difference(), None);
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    assert_eq!(
+        boxes.get_channel_difference(),
+        Some(get_channel_difference(7, 10))
+    );
+    assert_eq!(boxes.held_updates.len(), 1);
+
+    // Replication lag: Telegram calls 11 final, although 13 was already delivered.
+    boxes
+        .try_apply_channel_difference(empty_channel_difference(11))
+        .unwrap();
+    assert!(boxes.take_released_updates().is_none());
+    assert!(boxes.held_updates.is_empty());
+    // Not at once, which would repeat for as long as the lag lasts.
+    advance_time_by(Duration::from_secs(1) - Duration::from_millis(1));
+    boxes.check_deadlines();
+    assert_eq!(boxes.get_channel_difference(), None);
+    // But soon, with no other traffic to report the gap: 13 reached this client.
+    advance_time_by(Duration::from_millis(1));
+    boxes.check_deadlines();
+    assert_eq!(
+        boxes.get_channel_difference(),
+        Some(get_channel_difference(7, 11))
+    );
+    // A difference with nothing left to reach ends it, at the usual timeout.
+    boxes
+        .try_apply_channel_difference(empty_channel_difference(13))
+        .unwrap();
+    assert_eq!(boxes.entry(Key::Channel(7)).unwrap().recovery_failures, 0);
+    advance_time_by(Duration::from_secs(120));
+    boxes.check_deadlines();
+    assert_eq!(boxes.get_channel_difference(), None);
+}
+
+#[test]
+fn an_unreadable_channel_reply_can_retry_without_the_rejection_delay() {
+    reset_time();
+    let mut boxes = live_channel(7, 10);
+    boxes.process_updates(channel_updates(7, 0, 0, 13)).unwrap();
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    assert!(boxes.get_channel_difference().is_some());
+    boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+    boxes.check_deadlines();
+    assert_eq!(boxes.get_channel_difference(), None);
+    // No new traffic is needed, and the reply does not count as a rejection.
+    boxes.retry_channel_without_delay(7);
+    boxes.check_deadlines();
+    assert_eq!(
+        boxes.get_channel_difference(),
+        Some(get_channel_difference(7, 10))
+    );
+    assert_eq!(boxes.entry(Key::Channel(7)).unwrap().recovery_failures, 0);
+}
+
+#[test]
+fn an_update_closing_the_gap_delivers_what_a_short_difference_left_held() {
+    reset_time();
+    let mut boxes = live_channel(7, 10);
+    boxes.process_updates(channel_updates(7, 0, 0, 13)).unwrap();
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    boxes
+        .try_apply_channel_difference(empty_channel_difference(11))
+        .unwrap();
+    assert!(boxes.take_released_updates().is_none());
+    // Arriving inside the retry window: its normal deadline must not lose the other.
+    let (applied, _, _) = boxes.process_updates(channel_updates(7, 0, 0, 12)).unwrap();
+    assert_eq!(
+        applied
+            .into_iter()
+            .map(|(update, _)| update)
+            .collect::<Vec<_>>(),
+        vec![channel_update(7, 12), channel_update(7, 13)]
+    );
+    assert_eq!(boxes.session_state().channels[0].pts, 13);
+    advance_time_by(Duration::from_secs(2));
+    boxes.check_deadlines();
+    assert_eq!(boxes.get_channel_difference(), None);
+}
+
+#[test]
+fn a_rejected_channel_also_waits_when_telegram_says_it_is_too_long() {
+    reset_time();
+    let mut boxes = live_channel(7, 10);
+    boxes.process_updates(channel_updates(7, 0, 0, 13)).unwrap();
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+    let too_long = UpdatesLike::Updates(tl::enums::Updates::UpdateShort(tl::types::UpdateShort {
+        update: tl::types::UpdateChannelTooLong {
+            channel_id: 7,
+            pts: Some(20),
+        }
+        .into(),
+        date: 0,
+    }));
+    boxes.process_updates(too_long).unwrap();
+    assert_eq!(boxes.get_channel_difference(), None);
+    assert_eq!(boxes.ready_diff_count, boxes.getting_diff_for.len());
+    advance_time_by(Duration::from_secs(1));
+    boxes.check_deadlines();
+    assert_eq!(
+        boxes.get_channel_difference(),
+        Some(get_channel_difference(7, 10))
+    );
+}
+
+#[test]
+fn final_difference_releases_held_updates_directly_after_its_position() {
+    reset_time();
+    let mut boxes = live_channel(7, 10);
+    for pts in [13, 14] {
+        boxes
+            .process_updates(channel_updates(7, 0, 0, pts))
+            .unwrap();
+    }
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    assert_eq!(boxes.held_updates.len(), 2);
+    boxes
+        .try_apply_channel_difference(empty_channel_difference(12))
+        .unwrap();
+    let (released, _, _) = boxes.take_released_updates().unwrap();
+    assert_eq!(
+        released
+            .iter()
+            .map(|(update, _)| update.clone())
+            .collect::<Vec<_>>(),
+        vec![channel_update(7, 13), channel_update(7, 14)]
+    );
+    assert_eq!(boxes.session_state().channels[0].pts, 14);
+}
+
+#[test]
+fn updates_of_a_real_gap_survive_until_its_channel_is_abandoned() {
+    reset_time();
+    let mut boxes = live_channel(7, 10);
+    boxes.process_updates(channel_updates(7, 0, 0, 13)).unwrap();
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    boxes.end_channel_difference(PrematureEndReason::Banned);
+    assert_eq!(boxes.ready_diff_count, boxes.getting_diff_for.len());
+    // Its position is gone, so what was received can be delivered and restart it.
+    let (released, _, _) = boxes.take_released_updates().unwrap();
+    assert_eq!(released[0].0, channel_update(7, 13));
+    assert_eq!(boxes.session_state().channels[0].pts, 13);
+}
+
+#[test]
+fn temporary_rejections_back_off_until_a_difference_succeeds() {
+    reset_time();
+    let mut boxes = live_channel(7, 10);
+    let gap_then_reject = |boxes: &mut MessageBoxes, wait: Duration, pts: i32| {
+        // Traffic beyond the gap must not bring the next attempt forward.
+        boxes
+            .process_updates(channel_updates(7, 0, 0, pts))
+            .unwrap();
+        let position = boxes.session_state().channels[0].pts;
+        advance_time_by(wait - Duration::from_millis(1));
+        boxes.check_deadlines();
+        assert_eq!(boxes.get_channel_difference(), None, "before {wait:?}");
+        advance_time_by(Duration::from_millis(1));
+        boxes.check_deadlines();
+        assert_eq!(
+            boxes.get_channel_difference(),
+            Some(get_channel_difference(7, position)),
+            "after {wait:?}"
+        );
+        boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+        assert_eq!(boxes.get_channel_difference(), None);
+    };
+    gap_then_reject(&mut boxes, POSSIBLE_GAP_TIMEOUT, 13);
+    gap_then_reject(&mut boxes, Duration::from_secs(1), 14);
+    gap_then_reject(&mut boxes, Duration::from_secs(2), 15);
+    gap_then_reject(&mut boxes, Duration::from_secs(4), 16);
+    gap_then_reject(&mut boxes, Duration::from_secs(8), 17);
+    gap_then_reject(&mut boxes, Duration::from_secs(16), 18);
+    gap_then_reject(&mut boxes, Duration::from_secs(32), 19);
+    gap_then_reject(&mut boxes, Duration::from_secs(60), 20);
+    gap_then_reject(&mut boxes, Duration::from_secs(60), 21);
+
+    // Success forgets all of it: the next gap takes only its usual short time.
+    boxes.process_updates(channel_updates(7, 0, 0, 22)).unwrap();
+    advance_time_by(Duration::from_secs(60));
+    boxes.check_deadlines();
+    boxes
+        .try_apply_channel_difference(empty_channel_difference(22))
+        .unwrap();
+    gap_then_reject(&mut boxes, POSSIBLE_GAP_TIMEOUT, 24);
+}
+
+#[test]
+fn a_gap_kept_open_by_backoff_retains_a_bounded_number_of_updates() {
+    reset_time();
+    let mut boxes = live_channel(7, 10);
+    boxes.process_updates(channel_updates(7, 0, 0, 13)).unwrap();
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+    for pts in 0..MAX_HELD_UPDATES as i32 * 2 {
+        boxes
+            .process_updates(channel_updates(7, 0, 0, 100 + pts))
+            .unwrap();
+    }
+    let entry = boxes.entry(Key::Channel(7)).unwrap();
+    assert_eq!(
+        entry.possible_gap.as_ref().unwrap().updates.len(),
+        MAX_HELD_UPDATES
+    );
+    assert_eq!(entry.pts, 10);
+}
+
+#[test]
+fn sorting_updates_is_stable_and_matches_the_standard_sort() {
+    let key = |update: &tl::enums::Update| super::update_sort_key(update);
+    let update = |pts: i32, count: i32, id: i32| -> tl::enums::Update {
+        tl::types::UpdateDeleteMessages {
+            messages: vec![id],
+            pts,
+            pts_count: count,
+        }
+        .into()
+    };
+    // Equal keys, different updates: their order must survive.
+    // Sizes around the point where it hands over to the standard sort, many equal keys.
+    let mut cases: Vec<Vec<tl::enums::Update>> = vec![
+        vec![
+            update(5, 1, 0),
+            update(3, 1, 1),
+            update(4, 0, 2),
+            update(4, 1, 3),
+        ],
+        (0..8).map(|i| update(i + 1, 1, i)).collect(),
+    ];
+    for len in [2, 16, 31, 32, 33, 40] {
+        cases.push((0..len).rev().map(|i| update(i + 1, 1, i)).collect());
+        cases.push((0..len).map(|i| update(i % 3 + 1, 1, i)).collect());
+    }
+    for case in cases {
+        let mut ours = case.clone();
+        super::sort_updates_by_key(&mut ours, key);
+        let mut expected = case.clone();
+        expected.sort_by_key(key);
+        assert_eq!(ours, expected);
+
+        // As the gap path uses it: last to apply first, equal keys still stable.
+        let reverse = |update: &tl::enums::Update| std::cmp::Reverse(key(update));
+        let mut ours = case.clone();
+        super::sort_updates_by_key(&mut ours, reverse);
+        let mut expected = case;
+        expected.sort_by_key(reverse);
+        assert_eq!(ours, expected);
+    }
+}
+
+#[test]
+fn updates_out_of_order_in_one_batch_are_applied_in_order() {
+    reset_time();
+    let mut boxes = live_channel(7, 10);
+    let (applied, _, _) = boxes
+        .process_updates(UpdatesLike::Updates(tl::enums::Updates::Updates(
+            tl::types::Updates {
+                updates: vec![channel_update(7, 12), channel_update(7, 11)],
+                users: Vec::new(),
+                chats: Vec::new(),
+                date: 0,
+                seq: 0,
+            },
+        )))
+        .unwrap();
+    assert_eq!(
+        applied
+            .into_iter()
+            .map(|(update, _)| update)
+            .collect::<Vec<_>>(),
+        vec![channel_update(7, 11), channel_update(7, 12)]
+    );
+    assert_eq!(boxes.session_state().channels[0].pts, 12);
 }

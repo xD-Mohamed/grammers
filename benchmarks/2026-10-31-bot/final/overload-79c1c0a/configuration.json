@@ -1,0 +1,15 @@
+{
+  "environment": {
+    "LOOPBACK_WINDOW_MS": "1500",
+    "LOOPBACK_RATE": "120000",
+    "LOOPBACK_CLIENT_CPUS": "0",
+    "LOOPBACK_SERVER_CPUS": "2,3",
+    "LOOPBACK_RUNTIME": "current"
+  },
+  "pairs": 12,
+  "command": "<binary> --exact loopback_open_loop --ignored --nocapture --test-threads=1",
+  "binaries": {
+    "baseline": "269eaec1549a1e5bfdda27964596371574bcf7d187888ba12702ac932d675ba3",
+    "candidate": "9116564e70fe908231d6048f3cbe82e3afa01cd53a657240d2ed5dcc660d228c"
+  }
+}

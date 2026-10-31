@@ -1,5 +1,66 @@
 # Changelog
 
+## Unreleased: bot workload performance and compliance audit
+
+The [measurements](benchmarks/2026-10-31-bot/README.md) and the
+[compliance audit with its sources](COMPLIANCE-2026-10-31.md). All local mock traffic.
+
+Against `7774ed6` on one session, in a closed loop with 64 callers: CPU per RPC -54.50%,
+allocations per RPC -21.32%, bytes allocated -56.35%, steady RSS -21.31%. At 5,000 RPC/s:
+CPU -20.16%. At 500 RPC/s there is no measured change in CPU (-4.72% [-12.42, +6.06]), but
+RSS is -29.21%. With a session in a SQLite file at 500 RPC/s: CPU -78.78%. These figures cannot
+raise Telegram's rate limits, which its servers enforce.
+
+### Fixed
+
+- Bursts no longer lose updates. A connection decoding more than the update queue holds
+  now gives way to its consumer once per batch before dropping. Dropped updates had cost a
+  gap, recovery requests to Telegram and, at 256 concurrent callers on one thread, most of
+  the client's throughput.
+- **A flood wait during update recovery was not honoured:** the next attempt came after
+  one second whatever Telegram asked for. It now waits for at least that long.
+- Failed recovery requests now back off from 1 s to 60 s instead of repeating every
+  second, each channel on its own. Updates beyond a rejected channel's gap wait for it,
+  bounded, instead of being dropped, and no other traffic is needed to retry while they do.
+- A final difference short of an update the socket already delivered no longer restarts
+  recovery in a loop. It is asked again with the same growing delay.
+- Repeated connection attempts are spaced out: the first retry is immediate, then 1 s
+  doubling to 30 s per datacenter, however fast a caller's own loop runs.
+- The `Debug` of `DcOption` and `authentication::Finished` no longer prints the auth key.
+  Logs no longer include whole updates when a sent message cannot be matched or a deadline
+  passes, or a channel's access hash.
+
+### Performance
+
+- `Client::send_message`'s future is 1,712 B instead of 28,232 B, and no longer clones
+  updates per reply. This was most of the live heap with many concurrent senders.
+- Peers unchanged since last written are not written to the session again. They are written
+  again every ten minutes, because a `Session` may forget them. The table of what was written
+  starts empty and grows to at most about 512 KiB.
+- Generated `enums::Message` and `EphemeralMessage` hold their largest variants in a `Box`:
+  `Update` is 752 B instead of 5,240 B, the client's `Update` 880 B instead of 7,928 B.
+- A batch of updates no longer goes through the standard stable sort, whose scratch space is
+  at least 48 elements of a large type.
+- Requests reserve their serialization buffer once, a connection reuses its update vector
+  between reads, and reads filling the buffer grow it up to 16 KiB until idle for a minute.
+  Reads cost scheduler budget per 2 KiB, which is a measured trade between pools sharing a
+  thread: against `7774ed6`, busy p99 is +28.11% and quiet p99 -22.49%, where the previous commit
+  had +96.45% and -43.87%. See the measurements for how that choice looks from each side.
+
+### Breaking changes
+
+- `tl::enums::Message::{Message, Service}` and the `EphemeralMessage` variants hold a `Box`.
+  Field access and moves out of the variant still work, and `.into()` still builds one.
+  Patterns such as `Message::Message(tl::types::Message { id, .. })` must bind the variant
+  and read its fields instead, and `Message::Message(value)` must become `value.into()`.
+- `deserialize::Error::DepthLimitExceeded`, from the previous commit, needs a new arm in
+  exhaustive matches: that enum is not `#[non_exhaustive]`.
+- `MessageBoxes` gained `retry_channel_without_delay`. A `Session` sees `cache_peer` less
+  often: only for changed peers, and otherwise about every ten minutes per active peer.
+- Behaviour: a connection retry can now wait up to 30 s, during which calls to that datacenter
+  stay pending, and a failing `UpdateStream::next` can hold a recovery back for up to 60 s.
+  Neither delays live updates.
+
 ## Unreleased audit follow-up
 
 See the [follow-up ledger](REVIEW-FOLLOWUP.md) for the status of every remaining

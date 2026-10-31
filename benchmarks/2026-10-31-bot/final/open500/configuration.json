@@ -1,0 +1,21 @@
+{
+  "scenarios": {
+    "open500": {
+      "BOT_RATE": "500",
+      "BOT_RUNTIME": "multi",
+      "BOT_WORKERS": "2",
+      "BOT_CONCURRENCY": "4096",
+      "BOT_CLIENT_CPUS": "0,1",
+      "BOT_WARM_MS": "3000",
+      "BOT_WINDOW_MS": "6000"
+    }
+  },
+  "rounds": 8,
+  "server_cpus": "2,3",
+  "binaries": {
+    "7774ed6": "ec217ffc44cfbe9820ab113b86760e50890b34edeb943554bdc357526d25f4bd",
+    "2ffd991": "b3b0bd1e6d2d1901d8d659b919e473100de104f0654a940a7d7f129591078c74",
+    "79c1c0a": "b0460c38c03fb3e427942fad75cce28b2c7eac05a0b8b5b7747d9ddf1108b439",
+    "final": "e419eb26ad9fc89f6f3a4f19ba72f5a1d811a4cb34223fd92a7b4ce0e13c29f5"
+  }
+}

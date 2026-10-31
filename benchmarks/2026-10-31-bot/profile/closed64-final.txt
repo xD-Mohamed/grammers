@@ -1,0 +1,111 @@
+
+running 1 test
+test bot_workload ... CPU samples: 7485
+--- categories
+ 39.17% inclusive: TL decoding
+ 39.06% other
+ 38.16% inclusive: on_net_read
+ 18.38% allocator
+ 15.67% inclusive: decrypt
+ 14.92% crypto
+ 12.84% large copies
+ 11.88% kernel
+  9.50% inclusive: friendly update
+  5.84% inclusive: message box
+  5.36% inclusive: try_fill_write
+  5.26% inclusive: peer map
+  4.25% inclusive: encrypt
+  2.91% clock
+  1.96% inclusive: peer storage
+--- self by line
+ 13.88% __libc_malloc @ :0
+  8.75% __send @ :0
+  6.41% _mm_aesdec_si128 @ x86/aes.rs:39
+  4.42% _mm_sha256msg2_epu32 @ x86/sha.rs:123
+  3.67% cfree @ :0
+  3.34% write @ ptr/mod.rs:1963
+  2.91% clock_gettime @ :0
+  2.44% copy_nonoverlapping @ ptr/mod.rs:573
+  2.04% read @ ptr/mod.rs:1755
+  1.71% _mm_aesenclast_si128 @ x86/aes.rs:72
+  1.60% branch @ src/result.rs:2178
+  1.60% recv @ :0
+  1.50% decrypt_data_v2 @ grammers-crypto/src/lib.rs:200
+  1.32% as_slice @ src/bytes.rs:645
+  1.26% new @ src/boxed.rs:293
+  1.24% {async_block#0} @ grammers-client/tests/bot_workload.rs:1089
+  1.03% drop_glue @ ptr/mod.rs:847
+  0.99% process_updates_inner @ grammers-session/src/message_box/mod.rs:676
+  0.98% process_own_update @ grammers-mtsender/src/sender.rs:805
+  0.96% atomic_add @ sync/atomic.rs:4029
+  0.95% {async_fn#0} @ grammers-client/src/client/messages.rs:684
+  0.92% clone @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:29124
+  0.91% _mm_sha256rnds2_epu32 @ x86/sha.rs:138
+  0.81% getrandom @ :0
+  0.79% {async_fn#0} @ grammers-client/src/client/net.rs:98
+  0.72% try_pop @ mpsc/list.rs:360
+  0.71% epoll_wait @ :0
+  0.68% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:29480
+  0.68% process_updates_inner @ grammers-session/src/message_box/mod.rs:920
+  0.65% atomic_sub @ sync/atomic.rs:4049
+  0.64% realloc @ :0
+  0.63% atomic_compare_exchange @ sync/atomic.rs:4083
+  0.60% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:29476
+  0.59% _mm_aeskeygenassist_si128 @ x86/aes.rs:100
+  0.57% rotate_left @ intrinsics/mod.rs:2215
+  0.56% {async_fn#0} @ grammers-client/src/client/updates.rs:34
+  0.52% buffer_read @ vec_deque/mod.rs:209
+  0.43% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:0
+  0.43% try_allocate_in @ raw_vec/mod.rs:0
+  0.41% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:662
+  0.39% adapt @ grammers-session/src/message_box/adaptor.rs:250
+  0.36% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_enums.rs:0
+  0.35% {async_fn#0} @ grammers-mtsender/src/sender_pool.rs:0
+  0.33% valid_update @ grammers-session/src/message_box/adaptor.rs:482
+  0.33% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:4344
+--- inclusive by grammers line
+100.00% bot_workload @ grammers-client/tests/bot_workload.rs:1283
+100.00% {closure#0} @ grammers-client/tests/bot_workload.rs:1252
+ 54.75% {async_block#0} @ grammers-mtsender/src/sender_pool.rs:1544
+ 38.16% {closure#4} @ grammers-mtsender/src/sender.rs:416
+ 38.16% {async_fn#0} @ grammers-mtsender/src/sender.rs:416
+ 21.50% {async_block#0} @ grammers-client/tests/bot_workload.rs:1088
+ 20.28% on_net_read @ grammers-mtsender/src/sender.rs:598
+ 17.77% on_net_read @ grammers-mtsender/src/sender.rs:600
+ 17.76% {async_fn#0} @ grammers-client/src/client/updates.rs:33
+ 16.70% {async_block#0} @ grammers-client/tests/bot_workload.rs:1126
+ 16.37% from_bytes @ grammers-tl-types/src/deserialize.rs:218
+ 15.67% deserialize @ grammers-mtproto/src/mtp/encrypted.rs:1818
+ 15.12% {async_fn#0} @ grammers-client/tests/bot_workload.rs:997
+ 14.95% deserialize @ grammers-tl-types/src/deserialize.rs:432
+ 14.88% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_enums.rs:24905
+ 14.63% __rust_alloc @ grammers-client/tests/bot_workload.rs:170
+ 14.01% alloc @ grammers-client/tests/bot_workload.rs:141
+ 12.34% deserialize_updates_like @ grammers-mtsender/src/sender.rs:102
+ 10.79% {async_fn#0} @ grammers-mtsender/src/sender.rs:414
+ 10.78% process_mtp_buffer @ grammers-mtsender/src/sender.rs:782
+ 10.51% {async_fn#0} @ grammers-client/src/client/updates.rs:50
+ 10.33% deserialize_vector @ grammers-tl-types/src/deserialize.rs:397
+  9.53% decrypt_data_v2 @ grammers-crypto/src/lib.rs:184
+  9.47% ige_decrypt @ grammers-crypto/src/aes.rs:87
+  8.96% process_own_update @ grammers-mtsender/src/sender.rs:801
+  8.70% call @ grammers-crypto/src/aes.rs:67
+  8.00% {async_fn#0} @ grammers-client/tests/bot_workload.rs:958
+  7.47% {async_fn#0} @ grammers-client/src/client/net.rs:120
+  7.47% {async_fn#0} @ grammers-client/src/client/net.rs:97
+  7.07% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:64464
+  6.91% deserialize_own_update @ grammers-mtsender/src/sender.rs:139
+  6.41% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:330
+  6.07% {async_fn#0} @ grammers-client/src/client/messages.rs:747
+  5.96% process_mtp_buffer @ grammers-mtsender/src/sender.rs:784
+  5.92% process_update @ grammers-mtsender/src/sender.rs:819
+  5.88% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:667
+  5.87% deserialize @ grammers-tl-types/src/deserialize.rs:494
+  5.84% <grammers_session::message_box::defs::MessageBoxes::process_updates @ grammers-session/src/message_box/mod.rs:651
+  5.34% {async_fn#0} @ grammers-mtsender/src/sender.rs:387
+  5.24% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:64465
+BOT rate=182161 updates_per_s=227701 user_us=4.94 sys_us=0.64 cpu_us=5.58 core_share=1.017 voluntary_switches_per_rpc=0.000 involuntary_switches_per_rpc=0.000 allocs_per_rpc=21.44 bytes_per_rpc=16708 p50_us=335.9 p95_us=458.8 p99_us=532.5 rss_steady_kib=240092 rss_peak_kib=240092 live_heap_b=128063392 errors=0 dropped=0 completed=5464864 updates_lost=0 update_errors=0
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 32.61s
+

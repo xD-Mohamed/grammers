@@ -1,0 +1,21 @@
+{
+  "scenarios": {
+    "closed64": {
+      "BOT_CONCURRENCY": "64",
+      "BOT_CLIENT_CPUS": "0"
+    },
+    "open5000": {
+      "BOT_RATE": "5000",
+      "BOT_RUNTIME": "multi",
+      "BOT_WORKERS": "2",
+      "BOT_CONCURRENCY": "4096",
+      "BOT_CLIENT_CPUS": "0,1"
+    }
+  },
+  "rounds": 4,
+  "server_cpus": "2,3",
+  "binaries": {
+    "system": "4fc2e7a9431c5579feeddf097c7d50c9454012620e8e28087d71ef0591b20c69",
+    "mimalloc": "b6773ff38cc135769934720195da815797d391d4e0e2fbc889caeaa1b5528934"
+  }
+}
