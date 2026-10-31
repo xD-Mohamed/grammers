@@ -1,0 +1,77 @@
+mod probe {
+    use super::*;
+    use crate::{Identifiable, Serializable, enums, types};
+    fn id<T: Identifiable>(b: &mut Vec<u8>) { T::CONSTRUCTOR_ID.serialize(b); }
+    fn vec1(b: &mut Vec<u8>) { 0x1cb5c415u32.serialize(b); 1u32.serialize(b); }
+    fn s(b: &mut Vec<u8>) { b"x".as_slice().serialize(b); }
+    fn rich(levels: usize) -> Vec<u8> { let mut b=vec![]; for _ in 0..levels { id::<types::TextBold>(&mut b);} id::<types::TextPlain>(&mut b); s(&mut b); b }
+    fn json(levels: usize) -> Vec<u8> { let mut b=vec![]; for _ in 0..levels { id::<types::JsonArray>(&mut b); vec1(&mut b);} id::<types::JsonNull>(&mut b); b }
+    fn cover(levels: usize) -> Vec<u8> { let mut b=vec![]; for _ in 0..levels { id::<types::PageBlockCover>(&mut b);} id::<types::PageBlockDivider>(&mut b); b }
+    fn details(levels: usize) -> Vec<u8> { let mut b=vec![]; for _ in 0..levels { id::<types::PageBlockDetails>(&mut b); 0u32.serialize(&mut b); vec1(&mut b);} id::<types::PageBlockDivider>(&mut b); let tail=rich(0); for _ in 0..levels { b.extend(&tail);} b }
+    fn story_item(b:&mut Vec<u8>){ id::<types::StoryItem>(b); (1u32<<14).serialize(b); 1i32.serialize(b);1i32.serialize(b);2i32.serialize(b);}
+    // MessageMedia -> Story -> StoryItem -> MessageMedia
+    fn story(levels: usize) -> Vec<u8> { let mut b=vec![]; for _ in 0..levels { id::<types::MessageMediaStory>(&mut b); 1u32.serialize(&mut b); id::<types::PeerUser>(&mut b); 1i64.serialize(&mut b); 1i32.serialize(&mut b); id::<types::StoryItem>(&mut b); 0u32.serialize(&mut b); 1i32.serialize(&mut b);1i32.serialize(&mut b);2i32.serialize(&mut b);} id::<types::MessageMediaEmpty>(&mut b); b }
+    // MessageMedia -> WebPage -> attr story -> StoryItem -> MessageMedia
+    fn web(levels: usize) -> Vec<u8> { let mut b=vec![]; for _ in 0..levels {
+        id::<types::MessageMediaWebPage>(&mut b); 0u32.serialize(&mut b);
+        id::<types::WebPage>(&mut b); (1u32<<12).serialize(&mut b); 1i64.serialize(&mut b); s(&mut b); s(&mut b); 0i32.serialize(&mut b); vec1(&mut b);
+        id::<types::WebPageAttributeStory>(&mut b); 1u32.serialize(&mut b); id::<types::PeerUser>(&mut b); 1i64.serialize(&mut b); 1i32.serialize(&mut b);
+        id::<types::StoryItem>(&mut b); 0u32.serialize(&mut b); 1i32.serialize(&mut b);1i32.serialize(&mut b);2i32.serialize(&mut b);
+    } id::<types::MessageMediaEmpty>(&mut b); b }
+    // MessageMedia -> Poll media answer cycle: MessageMediaPoll -> Poll -> PollAnswer -> MessageMedia
+    fn poll(levels: usize) -> Vec<u8> { let mut b=vec![]; for _ in 0..levels {
+        id::<types::MessageMediaPoll>(&mut b); 0u32.serialize(&mut b);
+        id::<types::Poll>(&mut b); 1i64.serialize(&mut b); 0u32.serialize(&mut b);
+        id::<types::TextWithEntities>(&mut b); s(&mut b); 0x1cb5c415u32.serialize(&mut b); 0u32.serialize(&mut b);
+        vec1(&mut b);
+        id::<types::PollAnswer>(&mut b); 1u32.serialize(&mut b);
+        id::<types::TextWithEntities>(&mut b); s(&mut b); 0x1cb5c415u32.serialize(&mut b); 0u32.serialize(&mut b);
+        s(&mut b);
+    }
+    id::<types::MessageMediaEmpty>(&mut b);
+    for _ in 0..levels {
+        // Poll tail: hash, then MessageMediaPoll.results.
+        0i64.serialize(&mut b);
+        id::<types::PollResults>(&mut b); 0u32.serialize(&mut b);
+    }
+    b }
+    fn message_update(levels: usize) -> Vec<u8> { let mut b=vec![];
+        id::<types::UpdateShort>(&mut b); id::<types::UpdateNewMessage>(&mut b); id::<types::Message>(&mut b);
+        (1u32 << 9).serialize(&mut b); 0u32.serialize(&mut b); 1i32.serialize(&mut b);
+        id::<types::PeerUser>(&mut b); 1i64.serialize(&mut b); 1i32.serialize(&mut b); s(&mut b);
+        b.extend(details_media(levels));
+        1i32.serialize(&mut b); 1i32.serialize(&mut b); 1i32.serialize(&mut b); b }
+    // Message media webpage instant view with PageBlockDetails nesting.
+    fn details_media(levels: usize) -> Vec<u8> { let mut b=vec![];
+        id::<types::MessageMediaWebPage>(&mut b); 0u32.serialize(&mut b);
+        id::<types::WebPage>(&mut b); (1u32<<10).serialize(&mut b); 1i64.serialize(&mut b); s(&mut b); s(&mut b); 0i32.serialize(&mut b);
+        id::<types::Page>(&mut b); 0u32.serialize(&mut b); s(&mut b); vec1(&mut b); b.extend(details(levels));
+        0x1cb5c415u32.serialize(&mut b); 0u32.serialize(&mut b); 0x1cb5c415u32.serialize(&mut b); 0u32.serialize(&mut b);
+        0i32.serialize(&mut b); b }
+    fn measure<T: Deserializable>(name:&str, bytes: Vec<u8>, boxed_levels: usize) {
+        let name=name.to_string();
+        std::thread::Builder::new().stack_size(512*1024*1024).spawn(move || {
+            LOW.with(|l| l.set(usize::MAX)); HIGH.with(|l| l.set(0)); FRAMES.with(|l| l.set(0));
+            let r = T::from_bytes(&bytes);
+            let used = HIGH.with(|h|h.get()) - LOW.with(|l|l.get());
+            let frames = FRAMES.with(|f|f.get());
+            println!("PROBE {name}: ok={} frames={frames} boxed={boxed_levels} stack={used}B per_frame={} per_boxed={}", r.is_ok(), used as u32/frames.max(1), used/boxed_levels.max(1));
+            if let Err(e)=&r { println!("  err {e}"); }
+        }).unwrap().join().unwrap();
+    }
+    #[test] fn probe() {
+        measure::<enums::RichText>("richtext", rich(100), 101);
+        measure::<enums::Jsonvalue>("json", json(100), 101);
+        measure::<enums::PageBlock>("cover", cover(100), 101);
+        measure::<enums::PageBlock>("details", details(100), 101);
+        measure::<enums::MessageMedia>("story", story(50), 101);
+        measure::<enums::MessageMedia>("webpage", web(25), 101);
+        measure::<enums::MessageMedia>("poll", poll(33), 100);
+        measure::<enums::Updates>("updates0", message_update(0), 9);
+        measure::<enums::Updates>("updates100", message_update(100), 109);
+    }
+    #[test] fn sizes() {
+        macro_rules! sz { ($($t:ty),*) => { $( println!("SIZE {} {}", stringify!($t), std::mem::size_of::<$t>()); )* } }
+        sz!(types::Message, types::WebPage, types::StoryItem, types::Poll, types::PollResults, types::PollAnswer, types::MessageMediaPoll, types::InputMediaPoll, enums::MessageMedia, enums::WebPage, enums::StoryItem, types::Page, enums::PageBlock, enums::RichText, enums::Update, enums::Updates);
+    }
+}

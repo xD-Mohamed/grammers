@@ -126,11 +126,24 @@ impl Client {
             return Ok(());
         }
 
-        let target_key = self
+        let mut target_key = self
             .0
             .session
             .dc_option(target_dc_id)?
             .and_then(|dc| dc.auth_key);
+        if target_key.is_none() {
+            // Authorization belongs to a key, so a missing key voids any earlier copy.
+            auth_copied_to_dcs.retain(|(dc, _)| *dc != target_dc_id);
+            // Create the key first with a call needing no authorization, so that a
+            // successful import below can be attributed to a key known beforehand.
+            self.invoke_in_dc(target_dc_id, &tl::functions::help::GetNearestDc {})
+                .await?;
+            target_key = self
+                .0
+                .session
+                .dc_option(target_dc_id)?
+                .and_then(|dc| dc.auth_key);
+        }
         if target_key.as_ref().is_some_and(|key| {
             auth_copied_to_dcs
                 .iter()
@@ -158,9 +171,6 @@ impl Client {
 
         // Setup may replace the key during import. Never attribute success to a
         // newly observed key; the mutex coalesces imports for an unchanged key.
-        // An absent pre-import key stays uncached: normal file retries already
-        // have a persisted key. Direct calls may repeat after initialization,
-        // avoiding attribution to a key replaced during the import await.
         if let Some(key) = target_key {
             let current_key = self
                 .0
@@ -225,6 +235,90 @@ mod tests {
                 _ = std::future::ready(()) => {}
             }
             assert!(client.0.auth_copied_to_dcs.lock().await.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn authorization_copy_without_a_key_establishes_it_before_importing() {
+        use std::sync::Mutex;
+        use tl::Identifiable;
+        for fail_key_setup in [false, true] {
+            let session = Arc::new(MemorySession::default());
+            session.set_home_dc_id(2).await.unwrap();
+            let target_dc = 4;
+            let mut dc = session.dc_option(target_dc).unwrap().unwrap();
+            dc.auth_key = None;
+            session.set_dc_option(&dc).await.unwrap();
+            let pool = SenderPool::new(Arc::clone(&session), 1);
+            let mut client = Client::new(pool.handle);
+            let calls: Arc<Mutex<Vec<(i32, u32)>>> = Arc::default();
+            let responder_calls = Arc::clone(&calls);
+            let responder_session = Arc::clone(&session);
+            Arc::get_mut(&mut client.0).unwrap().rpc_responder =
+                Some(Arc::new(move |dc_id, body: &[u8]| {
+                    let id = u32::from_le_bytes(body[..4].try_into().unwrap());
+                    responder_calls.lock().unwrap().push((dc_id, id));
+                    use tl::Serializable;
+                    Ok(match id {
+                        tl::functions::help::GetNearestDc::CONSTRUCTOR_ID => {
+                            if fail_key_setup {
+                                return Err(InvocationError::Dropped("no connection"));
+                            }
+                            // What real connection setup persists for the target DC.
+                            let mut dc = responder_session.dc_option(dc_id).unwrap().unwrap();
+                            dc.auth_key = Some([9; 256]);
+                            // In-memory storage completes without suspending.
+                            let mut write = responder_session.set_dc_option(&dc);
+                            let mut context =
+                                std::task::Context::from_waker(std::task::Waker::noop());
+                            assert!(write.as_mut().poll(&mut context).is_ready());
+                            tl::enums::NearestDc::Dc(tl::types::NearestDc {
+                                country: String::new(),
+                                this_dc: dc_id,
+                                nearest_dc: dc_id,
+                            })
+                            .to_bytes()
+                        }
+                        tl::functions::auth::ExportAuthorization::CONSTRUCTOR_ID => {
+                            tl::enums::auth::ExportedAuthorization::Authorization(
+                                tl::types::auth::ExportedAuthorization {
+                                    id: 1,
+                                    bytes: vec![1],
+                                },
+                            )
+                            .to_bytes()
+                        }
+                        tl::functions::auth::ImportAuthorization::CONSTRUCTOR_ID => {
+                            tl::enums::auth::Authorization::SignUpRequired(
+                                tl::types::auth::AuthorizationSignUpRequired {
+                                    terms_of_service: None,
+                                },
+                            )
+                            .to_bytes()
+                        }
+                        other => panic!("unexpected request {other:08x}"),
+                    })
+                }));
+            if fail_key_setup {
+                // Nothing account-related happens before a usable key exists.
+                assert!(client.copy_auth_to_dc(target_dc).await.is_err());
+                assert_eq!(calls.lock().unwrap().len(), 1);
+                continue;
+            }
+            client.copy_auth_to_dc(target_dc).await.unwrap();
+            client.copy_auth_to_dc(target_dc).await.unwrap();
+            assert_eq!(
+                *calls.lock().unwrap(),
+                [
+                    (target_dc, tl::functions::help::GetNearestDc::CONSTRUCTOR_ID),
+                    (2, tl::functions::auth::ExportAuthorization::CONSTRUCTOR_ID),
+                    (
+                        target_dc,
+                        tl::functions::auth::ImportAuthorization::CONSTRUCTOR_ID
+                    ),
+                ],
+                "exactly one import, and the second copy recognises its key"
+            );
         }
     }
 }

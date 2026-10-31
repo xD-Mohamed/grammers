@@ -1508,7 +1508,19 @@ fn run_sender(
                     },
                 },
                 rpc = rpc_rx.recv() => match rpc {
-                    Some(rpc) => sender.enqueue_tracked_body(rpc.body, rpc.tx, rpc.permit),
+                    Some(rpc) => {
+                        sender.enqueue_tracked_body(rpc.body, rpc.tx, rpc.permit);
+                        // Pack what is already queued into the next write instead of
+                        // one write per request. Each request is still charged, so a
+                        // ready queue yields as often as it would one at a time.
+                        for _ in 1..READY_RPC_BATCH {
+                            let Ok(rpc) = rpc_rx.try_recv() else {
+                                break;
+                            };
+                            sender.enqueue_tracked_body(rpc.body, rpc.tx, rpc.permit);
+                            tokio::task::consume_budget().await;
+                        }
+                    }
                     None => break Ok(()),
                 },
             }
@@ -1516,6 +1528,9 @@ fn run_sender(
         (dc_id, result)
     }
 }
+
+// Measured with the loopback overload scenario; see PERFORMANCE.md.
+const READY_RPC_BATCH: usize = 8;
 
 impl fmt::Debug for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1597,20 +1612,205 @@ mod optimization_tests {
             _ = std::future::ready(()) => {}
         }
         let mut completed = 0;
+        let mut pending = false;
         for result in &mut responses {
             match result.try_recv() {
                 Ok(Err(InvocationError::Io(error))) => {
                     assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+                    assert!(!pending, "requests must retire in queue order");
                     completed += 1;
                 }
-                Err(oneshot::error::TryRecvError::Empty) => {}
+                Err(oneshot::error::TryRecvError::Empty) => pending = true,
                 other => panic!("unexpected request outcome: {other:?}"),
             }
         }
+        // Batching must not stretch the runtime's quantum. Uncharged batches could
+        // finish this whole backlog in one poll.
         assert!(
             (1..responses.len()).contains(&completed),
             "completed {completed}"
         );
+    }
+
+    #[tokio::test]
+    async fn closing_the_queue_mid_batch_retires_everything_already_queued() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (sender, peer) = tokio::join!(
+            connect_with_auth(
+                Transport::new(),
+                ServerAddr::Tcp {
+                    address: listener.local_addr().unwrap()
+                },
+                [0; 256]
+            ),
+            listener.accept()
+        );
+        let _peer = peer.unwrap().0;
+        let (tx, rx) = queue::unbounded_channel();
+        let mut responses = Vec::new();
+        for _ in 0..3 {
+            let (tx_result, rx_result) = oneshot::channel();
+            tx.send(Rpc {
+                body: Bytes::from_static(&[0; 3]),
+                permit: None,
+                tx: tx_result,
+            })
+            .unwrap();
+            responses.push(rx_result);
+        }
+        drop(tx);
+        let session = erase(Arc::new(
+            grammers_session::storages::MemorySession::default(),
+        ));
+        let (_, result) = run_sender(sender.unwrap(), rx, None, 2, session, Arc::default()).await;
+        assert!(result.is_ok());
+        for response in responses {
+            assert!(matches!(
+                response.await.unwrap(),
+                Err(InvocationError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidInput
+            ));
+        }
+    }
+
+    // A pts update can create a provisional account position during the pause after
+    // a failed GetState. The reply must replace it without corrupting recovery.
+    #[tokio::test(start_paused = true)]
+    async fn get_state_after_a_pause_supersedes_a_provisional_account_position() {
+        let session = Arc::new(RecoverySession::default());
+        cache_self_user(session.as_ref()).await;
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Err(InvocationError::Rpc(
+                        tl::types::RpcError {
+                            error_code: 401,
+                            error_message: "AUTH_KEY_UNREGISTERED".into(),
+                        }
+                        .into(),
+                    )))
+                    .unwrap();
+                let Request::CheckRetry { error, tx, .. } =
+                    pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected retry inspection")
+                };
+                tx.send(ControlFlow::Break(*error)).unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert!(result.unwrap_err().is("AUTH_KEY_UNREGISTERED"));
+        // Inside the pause: an account update, then a reconnect marks it pending.
+        update_tx
+            .send(UpdatesLike::Updates(
+                tl::types::UpdateShort {
+                    update: tl::types::UpdateDeleteMessages {
+                        messages: vec![1],
+                        pts: 40,
+                        pts_count: 1,
+                    }
+                    .into(),
+                    date: 1,
+                }
+                .into(),
+            ))
+            .await
+            .unwrap();
+        assert!(matches!(
+            receiver.next().await.unwrap().0[0].0,
+            tl::enums::Update::DeleteMessages(_)
+        ));
+        update_tx.send(UpdatesLike::ConnectionClosed).await.unwrap();
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Ok(state_reply()))
+                    .unwrap();
+                update_tx.send(config_update()).await.unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        // The account state came from the reply, and recovery is idle: a stale queue
+        // entry would wake immediately instead of letting the paused clock advance.
+        tokio::time::timeout(Duration::from_secs(60), receiver.next())
+            .await
+            .unwrap_err();
+        assert!(pool.runner.request_rx.try_recv().is_err());
+        receiver.sync_update_state().await.unwrap();
+        assert_eq!(session.updates_state().await.unwrap().pts, 100);
+    }
+
+    #[tokio::test]
+    async fn queued_requests_share_writes_instead_of_one_per_request() {
+        use tokio::io::AsyncReadExt;
+        const REQUESTS: usize = 32;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (sender, peer) = tokio::join!(
+            connect_with_auth(
+                Transport::new(),
+                ServerAddr::Tcp {
+                    address: listener.local_addr().unwrap()
+                },
+                [0; 256]
+            ),
+            listener.accept()
+        );
+        let mut peer = peer.unwrap().0;
+        let (tx, rx) = queue::unbounded_channel();
+        let mut responses = Vec::new();
+        for ping_id in 0..REQUESTS as i64 {
+            let (tx_result, rx_result) = oneshot::channel();
+            tx.send(Rpc {
+                body: tl::functions::Ping { ping_id }.to_bytes().into(),
+                permit: None,
+                tx: tx_result,
+            })
+            .unwrap();
+            responses.push(rx_result);
+        }
+        let session = erase(Arc::new(
+            grammers_session::storages::MemorySession::default(),
+        ));
+        let runner = run_sender(sender.unwrap(), rx, None, 2, session, Arc::default());
+        tokio::pin!(runner);
+        // One poll frames everything; give the kernel a moment to deliver it.
+        tokio::select! { biased;
+            _ = &mut runner => panic!("open connection should remain active"),
+            _ = std::future::ready(()) => {}
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let mut bytes = vec![0; 1 << 20];
+        let read = peer.read(&mut bytes).await.unwrap();
+        // Abridged transport: a marker byte, then frames sized in 4-byte words.
+        assert_eq!(bytes[0], 0xef);
+        let (mut frames, mut at) = (0, 1);
+        while at < read {
+            at += match bytes[at] {
+                0x7f => {
+                    4 + 4 * u32::from_le_bytes([bytes[at + 1], bytes[at + 2], bytes[at + 3], 0])
+                        as usize
+                }
+                words => 1 + 4 * words as usize,
+            };
+            frames += 1;
+        }
+        assert_eq!(at, read, "complete frames only");
+        // Eight per batch needs at most five frames, plus one for a salt request.
+        assert!((1..=6).contains(&frames), "{frames} frames for {REQUESTS}");
     }
 
     #[tokio::test]
@@ -2319,6 +2519,69 @@ mod optimization_tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn mixed_service_and_account_updates_establish_provisional_login() {
+        for combined in [false, true] {
+            let session = Arc::new(RecoverySession::default());
+            session.fail_self_reads.store(true, Ordering::Relaxed);
+            let mut pool = SenderPool::new(Arc::clone(&session), 1);
+            let mut receiver = crate::UpdatesReceiver::create(
+                pool.handle.thin.clone(),
+                erase(Arc::clone(&session)),
+                pool.updates,
+                crate::UpdatesConfiguration { catch_up: true },
+            )
+            .await
+            .unwrap();
+            let UpdatesLike::Updates(tl::enums::Updates::UpdateShort(account)) =
+                inline_query_update()
+            else {
+                unreachable!()
+            };
+            let updates = vec![tl::enums::Update::LoginToken, account.update];
+            let batch = if combined {
+                tl::types::UpdatesCombined {
+                    updates,
+                    users: vec![],
+                    chats: vec![],
+                    date: 1,
+                    seq_start: 0,
+                    seq: 0,
+                }
+                .into()
+            } else {
+                tl::types::Updates {
+                    updates,
+                    users: vec![],
+                    chats: vec![],
+                    date: 1,
+                    seq: 0,
+                }
+                .into()
+            };
+            let update_tx = pool.runner.updates_tx.clone().unwrap();
+            update_tx.send(UpdatesLike::Updates(batch)).await.unwrap();
+            let first = receiver.next().await.unwrap();
+            assert_eq!(first.0.len(), 2);
+            assert_eq!(first.0[0].0, tl::enums::Update::LoginToken);
+            assert!(matches!(first.0[1].0, tl::enums::Update::BotInlineQuery(_)));
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+                tokio::join!(receiver.next(), async {
+                    expect_get_state(&mut pool.runner)
+                        .await
+                        .send(Ok(state_reply()))
+                        .unwrap();
+                    update_tx.send(config_update()).await.unwrap();
+                })
+            })
+            .await
+            .unwrap();
+            assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+            assert_eq!(session.self_reads.load(Ordering::Relaxed), 0);
+            assert!(pool.runner.request_rx.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn inferred_login_rejection_waits_for_self_without_rpc_storm() {
         for error_name in ["AUTH_KEY_UNREGISTERED", "SESSION_PASSWORD_NEEDED"] {
             let session = Arc::new(RecoverySession::default());
@@ -2382,7 +2645,38 @@ mod optimization_tests {
                 .home_failures
                 .fetch_add(1, Ordering::Release);
             cache_self_user(session.as_ref()).await;
+            // Self metadata confirms the account after a rejected inference.
+            // A second 401 must now reach the caller, never silently reject it again.
             let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+                tokio::join!(receiver.next(), async {
+                    expect_get_state(&mut pool.runner)
+                        .await
+                        .send(Err(InvocationError::Rpc(
+                            tl::types::RpcError {
+                                error_code: 401,
+                                error_message: error_name.into(),
+                            }
+                            .into(),
+                        )))
+                        .unwrap();
+                    let Request::CheckRetry { error, tx, .. } =
+                        pool.runner.request_rx.recv().await.unwrap()
+                    else {
+                        panic!("expected retry inspection")
+                    };
+                    tx.send(ControlFlow::Break(*error)).unwrap();
+                })
+            })
+            .await
+            .unwrap();
+            assert!(
+                matches!(result.unwrap_err().root_cause(), InvocationError::Rpc(rpc)
+                if rpc.code == 401 && rpc.name == error_name)
+            );
+            assert_eq!(session.self_reads.load(Ordering::Relaxed), 1);
+            assert!(pool.runner.request_rx.try_recv().is_err());
+            let paused_at = tokio::time::Instant::now();
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
                 tokio::join!(receiver.next(), async {
                     expect_get_state(&mut pool.runner)
                         .await
@@ -2394,9 +2688,728 @@ mod optimization_tests {
             .await
             .unwrap();
             assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+            assert!(paused_at.elapsed() >= Duration::from_secs(1));
             assert_eq!(session.self_reads.load(Ordering::Relaxed), 1);
             assert!(pool.runner.request_rx.try_recv().is_err());
         }
+    }
+
+    // A stream used through logout and re-login: its self metadata is stale.
+    #[tokio::test(start_paused = true)]
+    async fn confirmed_login_failures_are_paced_and_live_updates_keep_flowing() {
+        let session = Arc::new(RecoverySession::default());
+        cache_self_user(session.as_ref()).await;
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        for attempt in 0..3 {
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+                tokio::join!(receiver.next(), async {
+                    expect_get_state(&mut pool.runner)
+                        .await
+                        .send(Err(InvocationError::Rpc(
+                            tl::types::RpcError {
+                                error_code: 401,
+                                error_message: "AUTH_KEY_UNREGISTERED".into(),
+                            }
+                            .into(),
+                        )))
+                        .unwrap();
+                    let Request::CheckRetry { error, tx, .. } =
+                        pool.runner.request_rx.recv().await.unwrap()
+                    else {
+                        panic!("expected retry inspection")
+                    };
+                    tx.send(ControlFlow::Break(*error)).unwrap();
+                })
+            })
+            .await
+            .unwrap();
+            assert!(result.unwrap_err().is("AUTH_KEY_UNREGISTERED"), "{attempt}");
+            let failed_at = tokio::time::Instant::now();
+            // The pause must not hold back the push a re-login is waiting for.
+            update_tx
+                .send(UpdatesLike::Updates(tl::enums::Updates::UpdateShort(
+                    tl::types::UpdateShort {
+                        update: tl::enums::Update::LoginToken,
+                        date: 1,
+                    },
+                )))
+                .await
+                .unwrap();
+            let (updates, _, _) = receiver.next().await.unwrap();
+            assert_eq!(updates[0].0, tl::enums::Update::LoginToken);
+            assert_eq!(failed_at.elapsed(), Duration::ZERO);
+            assert!(pool.runner.request_rx.try_recv().is_err());
+            // Cancelling inside the pause neither issues an RPC nor restarts it.
+            tokio::time::timeout(Duration::from_millis(400), receiver.next())
+                .await
+                .unwrap_err();
+            assert!(pool.runner.request_rx.try_recv().is_err());
+        }
+        let retried_from = tokio::time::Instant::now();
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Ok(state_reply()))
+                    .unwrap();
+                update_tx.send(config_update()).await.unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        assert_eq!(retried_from.elapsed(), Duration::from_millis(600));
+    }
+
+    // Beyond the generated TL decoder's nesting limit, including its 2-frame story cycle.
+    fn too_deep_message() -> Vec<u8> {
+        use tl::{Identifiable, Serializable};
+        let mut bytes = tl::types::Message::CONSTRUCTOR_ID.to_bytes();
+        bytes.extend((1u32 << 9).to_bytes());
+        bytes.extend(0u32.to_bytes());
+        bytes.extend(1i32.to_bytes());
+        bytes.extend(tl::types::PeerUser::CONSTRUCTOR_ID.to_bytes());
+        bytes.extend(1i64.to_bytes());
+        bytes.extend(1i32.to_bytes());
+        b"owned".as_slice().serialize(&mut bytes);
+        for _ in 0..64 {
+            bytes.extend(tl::types::MessageMediaStory::CONSTRUCTOR_ID.to_bytes());
+            bytes.extend(1u32.to_bytes());
+            bytes.extend(tl::types::PeerUser::CONSTRUCTOR_ID.to_bytes());
+            bytes.extend(1i64.to_bytes());
+            bytes.extend(1i32.to_bytes());
+            bytes.extend(tl::types::StoryItem::CONSTRUCTOR_ID.to_bytes());
+            bytes.extend(0u32.to_bytes());
+            bytes.extend(1i32.to_bytes());
+            bytes.extend(1i32.to_bytes());
+            bytes.extend(2i32.to_bytes());
+        }
+        bytes.extend(tl::types::MessageMediaEmpty::CONSTRUCTOR_ID.to_bytes());
+        bytes
+    }
+
+    fn too_deep_vector() -> Vec<u8> {
+        use tl::Serializable;
+        let mut bytes = 0x1cb5c415u32.to_bytes();
+        bytes.extend(1u32.to_bytes());
+        bytes.extend(too_deep_message());
+        bytes
+    }
+
+    fn assert_nesting_error(error: &InvocationError) {
+        assert!(
+            matches!(
+                error.root_cause(),
+                InvocationError::Deserialize(
+                    grammers_mtproto::mtp::DeserializeError::ResourceLimit {
+                        resource: "TL nesting depth"
+                    }
+                )
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unreadable_account_difference_is_paced_and_keeps_its_position() {
+        use grammers_session::types::{UpdateState, UpdatesState};
+        use tl::{Deserializable, Identifiable, Serializable};
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        cache_self_user(session.as_ref()).await;
+        session
+            .set_update_state(UpdateState::All(UpdatesState {
+                pts: 100,
+                date: 1,
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        update_tx
+            .send(UpdatesLike::Updates(tl::enums::Updates::TooLong))
+            .await
+            .unwrap();
+        let mut unreadable = tl::types::updates::Difference::CONSTRUCTOR_ID.to_bytes();
+        unreadable.extend(too_deep_vector());
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(receiver.next(), async {
+                let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected account difference");
+                };
+                assert_eq!(
+                    tl::functions::updates::GetDifference::from_bytes(&body[4..])
+                        .unwrap()
+                        .pts,
+                    100
+                );
+                tx.send(Ok(unreadable.clone())).unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_nesting_error(&result.unwrap_err());
+        let failed_at = tokio::time::Instant::now();
+        // Nothing is retried immediately, and unrelated pushes are still delivered.
+        update_tx.send(config_update()).await.unwrap();
+        let (updates, _, _) = receiver.next().await.unwrap();
+        assert_eq!(updates[0].0, tl::enums::Update::Config);
+        assert!(pool.runner.request_rx.try_recv().is_err());
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(receiver.next(), async {
+                let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected account difference retry");
+                };
+                assert!(failed_at.elapsed() >= Duration::from_secs(1));
+                assert_eq!(
+                    tl::functions::updates::GetDifference::from_bytes(&body[4..])
+                        .unwrap()
+                        .pts,
+                    100,
+                    "the unreadable backlog is never skipped"
+                );
+                tx.send(Ok(tl::enums::updates::Difference::Empty(
+                    tl::types::updates::DifferenceEmpty { date: 2, seq: 0 },
+                )
+                .to_bytes()))
+                    .unwrap();
+                update_tx.send(config_update()).await.unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unreadable_channel_difference_does_not_block_its_sibling() {
+        use grammers_session::types::{
+            ChannelState, PeerAuth, PeerInfo, UpdateState, UpdatesState,
+        };
+        use tl::{Deserializable, Identifiable, Serializable};
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        cache_self_user(session.as_ref()).await;
+        session
+            .set_update_state(UpdateState::All(UpdatesState {
+                pts: 100,
+                date: 1,
+                channels: vec![
+                    ChannelState { id: 7, pts: 10 },
+                    ChannelState { id: 8, pts: 20 },
+                ],
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        for id in [7, 8] {
+            session
+                .cache_peer(PeerInfo::Channel {
+                    id,
+                    auth: Some(PeerAuth::from_hash(123)),
+                    kind: None,
+                })
+                .await
+                .unwrap();
+        }
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        // final, pts 15, and then the unreadable new_messages.
+        let mut unreadable = tl::types::updates::ChannelDifference::CONSTRUCTOR_ID.to_bytes();
+        unreadable.extend(1u32.to_bytes());
+        unreadable.extend(15i32.to_bytes());
+        unreadable.extend(too_deep_vector());
+        // The caller still learns about the failure, once, without losing the position.
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(receiver.next(), async {
+                answer_restored_account_difference(&mut pool.runner).await;
+                let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected channel difference");
+                };
+                let request =
+                    tl::functions::updates::GetChannelDifference::from_bytes(&body[4..]).unwrap();
+                assert_eq!(request.pts, 10);
+                tx.send(Ok(unreadable.clone())).unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_nesting_error(&result.unwrap_err());
+        let failed_at = tokio::time::Instant::now();
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(receiver.next(), async {
+                let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected sibling channel difference");
+                };
+                assert!(failed_at.elapsed() >= Duration::from_secs(1));
+                let request =
+                    tl::functions::updates::GetChannelDifference::from_bytes(&body[4..]).unwrap();
+                assert_eq!(request.pts, 20);
+                tx.send(Ok(tl::enums::updates::ChannelDifference::Difference(
+                    tl::types::updates::ChannelDifference {
+                        r#final: true,
+                        pts: 25,
+                        timeout: None,
+                        new_messages: vec![],
+                        other_updates: vec![tl::enums::Update::Config],
+                        chats: vec![],
+                        users: vec![],
+                    },
+                )
+                .to_bytes()))
+                    .unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        receiver.sync_update_state().await.unwrap();
+        let mut channels = session.updates_state().await.unwrap().channels;
+        channels.sort_by_key(|channel| channel.id);
+        assert_eq!(
+            channels,
+            vec![
+                ChannelState { id: 7, pts: 10 },
+                ChannelState { id: 8, pts: 25 }
+            ]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn repeatedly_unreadable_differences_abandon_only_their_own_backlog() {
+        use grammers_session::types::{
+            ChannelState, PeerAuth, PeerInfo, UpdateState, UpdatesState,
+        };
+        use tl::{Deserializable, Identifiable, Serializable};
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        cache_self_user(session.as_ref()).await;
+        session
+            .set_update_state(UpdateState::All(UpdatesState {
+                pts: 100,
+                date: 1,
+                channels: vec![ChannelState { id: 7, pts: 10 }],
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        session
+            .cache_peer(PeerInfo::Channel {
+                id: 7,
+                auth: Some(PeerAuth::from_hash(123)),
+                kind: None,
+            })
+            .await
+            .unwrap();
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let mut unreadable = tl::types::updates::Difference::CONSTRUCTOR_ID.to_bytes();
+        unreadable.extend(too_deep_vector());
+        // Only the account sequence is unreadable. Each failure is reported and its
+        // position holds until the retries are spent. Recovery alternates, so the
+        // healthy channel completes without waiting for the account.
+        for attempt in 0..30 {
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+                tokio::join!(receiver.next(), async {
+                    let Request::Invoke { body, tx, .. } =
+                        pool.runner.request_rx.recv().await.unwrap()
+                    else {
+                        panic!("expected account difference");
+                    };
+                    assert_eq!(
+                        tl::functions::updates::GetDifference::from_bytes(&body[4..])
+                            .unwrap()
+                            .pts,
+                        100,
+                        "attempt {attempt}"
+                    );
+                    tx.send(Ok(unreadable.clone())).unwrap();
+                })
+            })
+            .await
+            .unwrap();
+            assert_nesting_error(&result.unwrap_err());
+            if attempt == 0 {
+                let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+                    tokio::join!(receiver.next(), async {
+                        let Request::Invoke { body, tx, .. } =
+                            pool.runner.request_rx.recv().await.unwrap()
+                        else {
+                            panic!("expected channel difference");
+                        };
+                        let request =
+                            tl::functions::updates::GetChannelDifference::from_bytes(&body[4..])
+                                .unwrap();
+                        assert_eq!(request.pts, 10);
+                        tx.send(Ok(tl::enums::updates::ChannelDifference::Difference(
+                            tl::types::updates::ChannelDifference {
+                                r#final: true,
+                                pts: 12,
+                                timeout: None,
+                                new_messages: vec![],
+                                other_updates: vec![tl::enums::Update::Config],
+                                chats: vec![],
+                                users: vec![],
+                            },
+                        )
+                        .to_bytes()))
+                            .unwrap();
+                    })
+                })
+                .await
+                .unwrap();
+                assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+            }
+        }
+        // The account now starts over from fresh state; its channel position stays.
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Ok(tl::enums::updates::State::State(
+                        tl::types::updates::State {
+                            pts: 500,
+                            qts: 0,
+                            date: 3,
+                            seq: 0,
+                            unread_count: 0,
+                        },
+                    )
+                    .to_bytes()))
+                    .unwrap();
+                update_tx.send(config_update()).await.unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        receiver.sync_update_state().await.unwrap();
+        let state = session.updates_state().await.unwrap();
+        assert_eq!(state.channels, vec![ChannelState { id: 7, pts: 12 }]);
+        assert_eq!(
+            state.pts, 500,
+            "fresh account state replaced the abandoned one"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failing_to_store_fetched_state_is_paced_like_other_recovery_failures() {
+        let session = Arc::new(RecoverySession::default());
+        cache_self_user(session.as_ref()).await;
+        session.fail_state.store(true, Ordering::Relaxed);
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
+            tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Ok(state_reply()))
+                    .unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert!(result.is_err());
+        let failed_at = tokio::time::Instant::now();
+        // A caller retrying at once costs no further RPC inside the pause.
+        tokio::time::timeout(Duration::from_millis(400), receiver.next())
+            .await
+            .unwrap_err();
+        assert!(pool.runner.request_rx.try_recv().is_err());
+        session.fail_state.store(false, Ordering::Relaxed);
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(receiver.next(), async {
+                expect_get_state(&mut pool.runner)
+                    .await
+                    .send(Ok(state_reply()))
+                    .unwrap();
+                assert!(failed_at.elapsed() >= Duration::from_secs(1));
+                update_tx.send(config_update()).await.unwrap();
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+    }
+
+    // A receiver restored from saved state first catches up on its account.
+    async fn answer_restored_account_difference(runner: &mut SenderPoolRunner) {
+        use tl::{Identifiable, Serializable};
+        let Request::Invoke { body, tx, .. } = runner.request_rx.recv().await.unwrap() else {
+            panic!("expected account difference");
+        };
+        assert_eq!(
+            u32::from_le_bytes(body[..4].try_into().unwrap()),
+            tl::functions::updates::GetDifference::CONSTRUCTOR_ID
+        );
+        tx.send(Ok(tl::enums::updates::Difference::Empty(
+            tl::types::updates::DifferenceEmpty { date: 2, seq: 0 },
+        )
+        .to_bytes()))
+            .unwrap();
+    }
+
+    fn delete_channel_message(channel_id: i64, pts: i32) -> tl::enums::Update {
+        tl::types::UpdateDeleteChannelMessages {
+            channel_id,
+            messages: vec![pts],
+            pts,
+            pts_count: 1,
+        }
+        .into()
+    }
+
+    fn short_update(update: tl::enums::Update) -> UpdatesLike {
+        UpdatesLike::Updates(tl::types::UpdateShort { update, date: 2 }.into())
+    }
+
+    // Message-box deadlines follow the real clock, as in the other grace fixtures.
+    #[tokio::test]
+    async fn exhausted_channel_delivers_updates_received_during_its_grace() {
+        use grammers_session::types::{ChannelState, UpdateState, UpdatesState};
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        cache_self_user(session.as_ref()).await;
+        session
+            .set_update_state(UpdateState::All(UpdatesState {
+                pts: 100,
+                date: 1,
+                channels: vec![ChannelState { id: 7, pts: 10 }],
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        // Saved channels recover on start. Their backlog at 11 and 12 is unreachable.
+        let started = tokio::time::Instant::now();
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(60), async {
+            tokio::join!(receiver.next(), async {
+                answer_restored_account_difference(&mut pool.runner).await;
+                for pts in 13..=15 {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    assert!(pool.runner.request_rx.try_recv().is_err());
+                    update_tx
+                        .send(short_update(delete_channel_message(7, pts)))
+                        .await
+                        .unwrap();
+                }
+            })
+        })
+        .await
+        .unwrap();
+        let (updates, _, _) = result.unwrap();
+        assert!(started.elapsed() >= Duration::from_secs(30));
+        assert_eq!(
+            updates
+                .iter()
+                .map(|(update, _)| update.clone())
+                .collect::<Vec<_>>(),
+            (13..=15)
+                .map(|pts| delete_channel_message(7, pts))
+                .collect::<Vec<_>>()
+        );
+        assert!(pool.runner.request_rx.try_recv().is_err());
+        receiver.sync_update_state().await.unwrap();
+        assert_eq!(
+            session.updates_state().await.unwrap().channels,
+            vec![ChannelState { id: 7, pts: 15 }]
+        );
+    }
+
+    #[tokio::test]
+    async fn bot_tries_zero_hash_before_discarding_an_unavailable_channel() {
+        use grammers_session::types::{ChannelState, PeerInfo, UpdateState, UpdatesState};
+        use tl::{Deserializable, Serializable};
+        // Concurrent cases: each spends the complete real-time grace.
+        let case = async |accepted: bool| {
+            let session = Arc::new(grammers_session::storages::MemorySession::default());
+            session
+                .cache_peer(PeerInfo::User {
+                    id: 1,
+                    auth: None,
+                    bot: Some(true),
+                    is_self: Some(true),
+                })
+                .await
+                .unwrap();
+            session
+                .set_update_state(UpdateState::All(UpdatesState {
+                    pts: 100,
+                    date: 1,
+                    channels: vec![ChannelState { id: 7, pts: 10 }],
+                    ..Default::default()
+                }))
+                .await
+                .unwrap();
+            let mut pool = SenderPool::new(Arc::clone(&session), 1);
+            let mut receiver = crate::UpdatesReceiver::create(
+                pool.handle.thin.clone(),
+                erase(Arc::clone(&session)),
+                pool.updates,
+                crate::UpdatesConfiguration { catch_up: true },
+            )
+            .await
+            .unwrap();
+            let update_tx = pool.runner.updates_tx.clone().unwrap();
+            let too_long = || {
+                short_update(
+                    tl::types::UpdateChannelTooLong {
+                        channel_id: 7,
+                        pts: None,
+                    }
+                    .into(),
+                )
+            };
+            let started = tokio::time::Instant::now();
+            let responder = async {
+                answer_restored_account_difference(&mut pool.runner).await;
+                let Request::Invoke { body, tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected the last-resort channel difference");
+                };
+                assert!(
+                    started.elapsed() >= Duration::from_secs(30),
+                    "usable access can still appear during the normal grace"
+                );
+                let request =
+                    tl::functions::updates::GetChannelDifference::from_bytes(&body[4..]).unwrap();
+                assert_eq!((request.pts, request.limit), (10, 100_000));
+                assert!(matches!(
+                    request.channel,
+                    tl::enums::InputChannel::Channel(input)
+                        if input.channel_id == 7 && input.access_hash == 0
+                ));
+                if accepted {
+                    tx.send(Ok(tl::enums::updates::ChannelDifference::Difference(
+                        tl::types::updates::ChannelDifference {
+                            r#final: true,
+                            pts: 15,
+                            timeout: None,
+                            new_messages: vec![],
+                            other_updates: vec![tl::enums::Update::Config],
+                            chats: vec![],
+                            users: vec![],
+                        },
+                    )
+                    .to_bytes()))
+                        .unwrap();
+                    return;
+                }
+                tx.send(Err(InvocationError::Rpc(
+                    tl::types::RpcError {
+                        error_code: 400,
+                        error_message: "CHANNEL_INVALID".into(),
+                    }
+                    .into(),
+                )))
+                .unwrap();
+                let Request::CheckRetry { error, tx, .. } =
+                    pool.runner.request_rx.recv().await.unwrap()
+                else {
+                    panic!("expected retry inspection")
+                };
+                tx.send(ControlFlow::Break(*error)).unwrap();
+                update_tx
+                    .send(short_update(delete_channel_message(7, 30)))
+                    .await
+                    .unwrap();
+            };
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(60), async {
+                tokio::join!(receiver.next(), responder)
+            })
+            .await
+            .unwrap();
+            let (updates, _, _) = result.unwrap();
+            receiver.sync_update_state().await.unwrap();
+            let channels = session.updates_state().await.unwrap().channels;
+            if accepted {
+                assert_eq!(updates[0].0, tl::enums::Update::Config);
+                assert_eq!(channels, vec![ChannelState { id: 7, pts: 15 }]);
+                return;
+            }
+            // Rejected: the position is gone, live delivery resumed, and another
+            // episode retries the zero hash once rather than a further 30 seconds.
+            assert_eq!(updates[0].0, delete_channel_message(7, 30));
+            assert_eq!(channels, vec![ChannelState { id: 7, pts: 30 }]);
+            update_tx.send(too_long()).await.unwrap();
+            let retried_from = tokio::time::Instant::now();
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(25), async {
+                tokio::join!(receiver.next(), async {
+                    let Request::Invoke { tx, .. } = pool.runner.request_rx.recv().await.unwrap()
+                    else {
+                        panic!("expected an immediate last-resort attempt");
+                    };
+                    assert!(retried_from.elapsed() < Duration::from_secs(20));
+                    tx.send(Ok(tl::enums::updates::ChannelDifference::Difference(
+                        tl::types::updates::ChannelDifference {
+                            r#final: true,
+                            pts: 31,
+                            timeout: None,
+                            new_messages: vec![],
+                            other_updates: vec![tl::enums::Update::Config],
+                            chats: vec![],
+                            users: vec![],
+                        },
+                    )
+                    .to_bytes()))
+                        .unwrap();
+                })
+            })
+            .await
+            .unwrap();
+            assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
+        };
+        tokio::join!(case(true), case(false));
     }
 
     #[tokio::test]
@@ -2711,7 +3724,6 @@ mod optimization_tests {
             0,
             "ordinary live delivery does not read self metadata"
         );
-        session.fail_self_reads.store(false, Ordering::Relaxed);
         session
             .cache_peer(PeerInfo::Channel {
                 id: 7,
@@ -2734,6 +3746,16 @@ mod optimization_tests {
             ))
             .await
             .unwrap();
+        // Exercise a real storage failure before kind discovery succeeds. It
+        // must not cache a conservative user limit or clear the pending channel.
+        let error = tokio::time::timeout(Duration::from_secs(1), receiver.next())
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(matches!(error.root_cause(), InvocationError::Session(_)));
+        assert_eq!(session.self_reads.load(Ordering::Relaxed), 1);
+        assert!(pool.runner.request_rx.try_recv().is_err());
+        session.fail_self_reads.store(false, Ordering::Relaxed);
         // Cancel after kind discovery and request issuance. The retry must keep
         // both the pending position and the successfully read account kind.
         {
@@ -2749,7 +3771,7 @@ mod optimization_tests {
                 }
             }
         }
-        assert_eq!(session.self_reads.load(Ordering::Relaxed), 1);
+        assert_eq!(session.self_reads.load(Ordering::Relaxed), 2);
         session.fail_self_reads.store(true, Ordering::Relaxed);
         for pts in [10, 11] {
             let (result, ()) = tokio::time::timeout(Duration::from_secs(1), async {
@@ -2768,7 +3790,7 @@ mod optimization_tests {
             }).await.unwrap();
             assert_eq!(result.unwrap().0[0].0, tl::enums::Update::Config);
         }
-        assert_eq!(session.self_reads.load(Ordering::Relaxed), 1);
+        assert_eq!(session.self_reads.load(Ordering::Relaxed), 2);
         assert_eq!(
             session
                 .memory
@@ -3998,10 +5020,21 @@ mod optimization_tests {
             ))
             .await
             .unwrap();
-        assert_eq!(
-            receiver.next().await.unwrap().0[0].0,
-            tl::enums::Update::Config
-        );
+        // Live updates retained through the grace may still be queued ahead of it.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let (updates, _, _) = receiver.next().await.unwrap();
+                if updates[0].0 == tl::enums::Update::Config {
+                    break;
+                }
+                assert!(updates.iter().all(|(update, _)| matches!(
+                    update,
+                    tl::enums::Update::DeleteChannelMessages(_)
+                )));
+            }
+        })
+        .await
+        .unwrap();
         let producer = async {
             tokio::task::yield_now().await;
             update_tx
@@ -4471,7 +5504,8 @@ mod optimization_tests {
                     .unwrap();
                 }
             };
-            tokio::time::timeout(Duration::from_secs(1), async {
+            // The retry following a 401 is deliberately paced by about one second.
+            tokio::time::timeout(Duration::from_secs(3), async {
                 let (result, ()) = tokio::join!(receiver.next(), responder);
                 if fail {
                     assert!(result.unwrap_err().is("AUTH_KEY_UNREGISTERED"));

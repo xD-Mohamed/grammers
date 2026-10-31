@@ -1,5 +1,26 @@
 # grammers fork
 
+## Audit follow-up (2026-10-31)
+
+[REVIEW-FOLLOWUP.md](REVIEW-FOLLOWUP.md) records the status of every remaining audit
+item against `2ffd991`, current tests and measurements, residual limits and the owner's
+direction replacing second-model review with a fresh-eyes Claude subagent. Historical
+acceptance of deferrals below does not waive what it lists as unresolved.
+
+Preserve the generated-TL depth budget and RAII restoration: partial fields and decoded
+siblings must stay safe to drop on failure. It counts boxed values only, because every
+schema recursion passes through one; recheck that if bare recursive types ever appear.
+The limit of 64 is a resource policy sized from measured stack use, and an overly small
+limit wedges updates on real data, so re-measure before lowering it.
+
+A failed recovery RPC, or failing to store its result, pauses retries about a second
+while live updates keep flowing; GetState then replaces any provisional account position formed meanwhile. Releasing held
+channel updates after a temporary failure must not re-queue updates beyond a gap: that
+restarts recovery with no new traffic. Replay eviction by age must keep raising the floor
+to the highest ID that actually left. Batched requests stay charged per request, or a
+ready queue can do many times the work per poll. Grown socket buffers are released only
+when empty and idle, which replaces the older note below that grown capacity is kept.
+
 ## Acceptance review corrections (2026-10-30)
 
 The current source/tests/evidence disposition is in
@@ -36,8 +57,8 @@ Missing channel hashes may defer recovery at most 30 times (one-second receiver
 retry delays). After grace exhaustion, warn and discard that channel's backlog
 position so live updates resume, including with peer caching disabled. Exhaustion
 must survive entry removal for that receiver lifetime; only usable access or a
-successful difference clears it. First-grace updates can be lost permanently. The lost
-backlog cannot be reconstructed without access. Track pending membership and
+successful difference clears it. The lost backlog cannot be reconstructed without
+access; the 2026-10-31 follow-up retains live updates received during the grace. Track pending membership and
 ready counts directly; deadline checks must not repeatedly scan the pending queue.
 
 Replay floor means the highest actually evicted ID. Keep replay decisions stable
@@ -53,9 +74,9 @@ bounded read; cancellation cannot restart this grace. Return nonempty decoded
 update batches. Rearm after both config and key storage. Negative RPC codes are
 conservatively uncertain delivery, without changing default retry safety.
 
-Generated TL recursion remains an explicitly accepted deferral, separate from
-MTProto/gzip depth budgets; authenticated deeply nested values can overflow the
-stack. See the scope ledger and REVIEW-OPUS-ROUND2.md before publication.
+Generated TL recursion was then an accepted deferral, separate from MTProto/gzip
+depth budgets. The 2026-10-31 follow-up above bounds it; historical detail is in the
+scope ledger and REVIEW-OPUS-ROUND2.md.
 
 Historical second-Opus correction validation: 651 release workspace tests/doctests
 passed, 42 ignored; fmt/check/strict Clippy/warning-free Rustdoc passed. Optional

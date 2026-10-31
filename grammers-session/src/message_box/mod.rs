@@ -39,6 +39,7 @@ mod tests;
 
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
+use std::mem;
 use std::time::Duration;
 #[cfg(not(test))]
 use std::time::Instant;
@@ -54,6 +55,21 @@ use tracing::{debug, info, trace, warn};
 use crate::types::{ChannelState, PeerId, UpdatesState};
 
 const MAX_CHANNEL_DEFERRALS: u8 = 30;
+// Boxed, so an empty slot costs 16 bytes while the updates themselves are rare.
+const MAX_HELD_UPDATES: usize = 512;
+
+fn hold_channel_update(
+    held: &mut VecDeque<(i64, Box<tl::enums::Update>)>,
+    overflowed: &mut bool,
+    channel_id: i64,
+    update: tl::enums::Update,
+) {
+    if held.len() == MAX_HELD_UPDATES {
+        held.pop_front();
+        *overflowed = true;
+    }
+    held.push_back((channel_id, Box::new(update)));
+}
 
 fn next_updates_deadline() -> Instant {
     Instant::now() + defs::NO_UPDATES_TIMEOUT
@@ -121,6 +137,9 @@ impl MessageBoxes {
             getting_diff_for: VecDeque::new(),
             ready_diff_count: 0,
             exhausted_channels: BTreeSet::new(),
+            held_updates: VecDeque::new(),
+            held_release_ready: false,
+            held_overflowed: false,
             next_deadline: next_updates_deadline(),
         }
     }
@@ -219,6 +238,9 @@ impl MessageBoxes {
             seq: state.seq,
             getting_diff_for,
             exhausted_channels: BTreeSet::new(),
+            held_updates: VecDeque::new(),
+            held_release_ready: false,
+            held_overflowed: false,
             next_deadline: deadline,
         }
     }
@@ -364,6 +386,18 @@ impl MessageBoxes {
                 }
                 if now >= entry.effective_deadline() && !entry.recovery_pending {
                     debug!(?entry, "deadline for forcibly fetching updates met");
+                    if let (Key::Channel(channel_id), Some(gap)) =
+                        (entry.key, entry.possible_gap.take())
+                    {
+                        for update in gap.updates {
+                            hold_channel_update(
+                                &mut self.held_updates,
+                                &mut self.held_overflowed,
+                                channel_id,
+                                update,
+                            );
+                        }
+                    }
                     entry.possible_gap = None;
                     entry.recovery_deferred = false;
                     entry.recovery_pending = true;
@@ -479,12 +513,23 @@ impl MessageBoxes {
     /// Clears any previous gaps.
     fn try_begin_get_diff(&mut self, key: Key) {
         if !self.is_getting_diff(key) {
+            let mut gap = None;
             if self.update_entry(key, |entry| {
-                entry.possible_gap = None;
+                gap = entry.possible_gap.take();
                 entry.recovery_pending = true;
                 entry.recovery_deferred = false;
                 entry.recovery_deferrals = 0;
             }) {
+                if let (Key::Channel(channel_id), Some(gap)) = (key, gap) {
+                    for update in gap.updates {
+                        hold_channel_update(
+                            &mut self.held_updates,
+                            &mut self.held_overflowed,
+                            channel_id,
+                            update,
+                        );
+                    }
+                }
                 self.getting_diff_for.push_back(key);
                 self.ready_diff_count += 1;
             } else {
@@ -517,6 +562,7 @@ impl MessageBoxes {
             entry.recovery_deferrals = 0;
         });
         self.reset_deadline(key, next_updates_deadline());
+        self.held_release_ready |= matches!(key, Key::Channel(_));
 
         debug_assert!(
             self.entry(key)
@@ -531,13 +577,14 @@ impl MessageBoxes {
     /// Process an update and return what should be done with it.
     ///
     /// Updates corresponding to entries for which their difference is currently being fetched
-    /// will be ignored. While according to the [updates' documentation]:
+    /// will not be returned here. According to the [updates' documentation]:
     ///
     /// > Implementations \[have\] to postpone updates received via the socket while
     /// > filling gaps in the event and `Update` sequences, as well as avoid filling
     /// > gaps in the same sequence.
     ///
-    /// In practice, these updates should have also been retrieved through getting difference.
+    /// A successful difference normally delivers them. Channel updates are also retained,
+    /// bounded, in case that recovery fails: see [`Self::take_released_updates`].
     ///
     /// [updates' documentation]: https://core.telegram.org/api/updates
     pub fn process_updates(&mut self, updates: UpdatesLike) -> Result<UpdateAndPeers, Gap> {
@@ -692,8 +739,17 @@ impl MessageBoxes {
             }
             if self.is_getting_diff(info.key) {
                 // Socket updates cannot advance or deliver a sequence whose
-                // backlog is being fetched. Difference will deliver them once.
+                // backlog is being fetched. Difference will deliver them once;
+                // if it cannot, channel updates are released when recovery ends.
                 have_unresolved_gaps = true;
+                if let Key::Channel(channel_id) = info.key {
+                    hold_channel_update(
+                        &mut self.held_updates,
+                        &mut self.held_overflowed,
+                        channel_id,
+                        update,
+                    );
+                }
                 continue;
             }
             if info.key == Key::Secondary && self.entry(Key::Common).is_none() {
@@ -796,6 +852,63 @@ impl MessageBoxes {
         }
 
         Ok((result, users, chats))
+    }
+
+    /// Process channel socket updates postponed during recoveries which have since
+    /// ended, or return `None` if there are none.
+    ///
+    /// Call this after applying or ending a channel difference, and after
+    /// [`Self::defer_channel_difference`]. Updates the channel's position already
+    /// covers are skipped as a socket update would be, so a successful difference
+    /// does not deliver them twice, except that count-0 updates at the position apply. Later
+    /// ones pass the usual ordering checks and contiguous updates establish a fresh
+    /// position after discarded state. After a temporary failure, updates beyond the
+    /// retained position's gap are dropped instead: a later difference delivers them,
+    /// and re-queueing them would retry a failing recovery with no new traffic.
+    /// At most 512 updates are retained across all
+    /// channels, oldest evicted first; callers that never release them simply lose
+    /// them to eviction, as the socket updates of a recovery were previously lost.
+    pub fn take_released_updates(&mut self) -> Option<UpdateAndPeers> {
+        if !mem::take(&mut self.held_release_ready) {
+            return None;
+        }
+        if mem::take(&mut self.held_overflowed) {
+            warn!(
+                limit = MAX_HELD_UPDATES,
+                "channel recovery postponed more socket updates than can be retained"
+            );
+        }
+        let mut released = Vec::new();
+        for (channel_id, update) in mem::take(&mut self.held_updates) {
+            let key = Key::Channel(channel_id);
+            if self.is_getting_diff(key) {
+                self.held_updates.push_back((channel_id, update));
+            } else if !self.entry(key).is_some_and(|entry| {
+                // As for a socket update: count-0 updates at the position still apply.
+                PtsInfo::from_update(&update).is_some_and(|info| {
+                    i64::from(entry.pts) + i64::from(info.count) > i64::from(info.pts)
+                })
+            }) {
+                released.push(*update);
+            }
+        }
+        if released.is_empty() {
+            return None;
+        }
+        self.process_updates_inner(
+            UpdatesLike::Updates(
+                tl::types::Updates {
+                    updates: released,
+                    users: Vec::new(),
+                    chats: Vec::new(),
+                    date: NO_DATE,
+                    seq: NO_SEQ,
+                }
+                .into(),
+            ),
+            &[],
+        )
+        .ok()
     }
 }
 
@@ -1141,11 +1254,12 @@ impl MessageBoxes {
 
     /// Postpone the first ready channel difference for a bounded retry grace.
     ///
-    /// Socket PTS updates remain suppressed during at most 30 deferrals while
-    /// other channels may recover. A further deferral warns and discards the
-    /// unavailable channel's saved position, allowing later socket updates to
-    /// start fresh; its unrecovered backlog is lost. Successful recovery resets
-    /// the allowance, as does learning usable access through
+    /// Socket PTS updates stay postponed during at most 30 deferrals while other
+    /// channels may recover. A further deferral warns and discards the unavailable
+    /// channel's saved position; its postponed socket updates are then released (see
+    /// [`Self::take_released_updates`]), establishing a fresh position. The backlog
+    /// from before them cannot be reconstructed without access and is lost. Successful
+    /// recovery resets the allowance, as does learning usable access through
     /// [`Self::channel_difference_accessible`]. Exhaustion survives entry removal:
     /// later gaps with no usable access discard their backlog on the first miss.
     /// The receiver retries missing hashes every second, giving
@@ -1190,6 +1304,28 @@ impl MessageBoxes {
         self.next_deadline = self.next_deadline.min(deadline);
     }
 
+    /// Mark the first ready channel exhausted if it has spent its missing-access
+    /// grace, returning whether it is exhausted. As with
+    /// [`Self::defer_channel_difference`], only usable access or a successful
+    /// difference clears that.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no channel difference is ready to be fetched.
+    pub fn try_exhaust_channel_grace(&mut self) -> bool {
+        let (key, channel_id) = self
+            .channel_in_diff()
+            .expect("checking channel grace requires a ready channel");
+        let exhausted = self.exhausted_channels.contains(&channel_id)
+            || self
+                .entry(key)
+                .is_some_and(|entry| entry.recovery_deferrals >= MAX_CHANNEL_DEFERRALS);
+        if exhausted {
+            self.exhausted_channels.insert(channel_id);
+        }
+        exhausted
+    }
+
     /// Reset missing-access grace for the first ready channel after usable access
     /// is found. Successful channel differences reset the same state automatically.
     ///
@@ -1214,12 +1350,56 @@ impl MessageBoxes {
             PrematureEndReason::TemporaryServerIssues => {
                 self.update_entry(key, |entry| entry.possible_gap = None);
                 self.try_end_get_diff(key);
+                if let Some(pts) = self.entry(key).map(|entry| entry.pts) {
+                    self.retain_contiguous_held_updates(channel_id, pts);
+                }
             }
             PrematureEndReason::Banned => {
                 self.update_entry(key, |entry| entry.possible_gap = None);
                 self.try_end_get_diff(key);
                 self.pop_entry(key);
             }
+        }
+    }
+}
+
+impl MessageBoxes {
+    /// Keep only the channel's held updates that directly follow its position. Others
+    /// are dropped: releasing them would open a gap whose timer restarts recovery.
+    fn retain_contiguous_held_updates(&mut self, channel_id: i64, mut pts: i32) {
+        let mut channel = Vec::new();
+        let mut others = VecDeque::new();
+        for (id, update) in mem::take(&mut self.held_updates) {
+            if id == channel_id {
+                channel.push(update);
+            } else {
+                others.push_back((id, update));
+            }
+        }
+        channel.sort_by_key(|update| update_sort_key(update));
+        self.held_updates = others;
+        for update in channel {
+            let Some(info) = PtsInfo::from_update(&update) else {
+                continue;
+            };
+            match (i64::from(pts) + i64::from(info.count)).cmp(&i64::from(info.pts)) {
+                Ordering::Equal => {
+                    pts = info.pts;
+                    self.held_updates.push_back((channel_id, update));
+                }
+                Ordering::Greater => {}
+                Ordering::Less => break,
+            }
+        }
+    }
+
+    /// Discard the account position, its backlog and any pending account recovery.
+    /// Saved channel positions are kept. Account state must be fetched again, see
+    /// [`Self::has_primary_state`] and [`Self::set_state`].
+    pub fn discard_account_state(&mut self) {
+        for key in [Key::Common, Key::Secondary] {
+            self.try_end_get_diff(key);
+            self.pop_entry(key);
         }
     }
 }

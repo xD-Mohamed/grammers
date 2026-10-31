@@ -7,12 +7,13 @@
 // except according to those terms.
 
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use std::{borrow::Cow, collections::VecDeque, mem};
+use std::{borrow::Cow, mem};
 
 use grammers_crypto::{AuthKey, DequeBuffer, decrypt_data_v2, encrypt_data_v2};
 use grammers_tl_types::{self as tl, Cursor, Deserializable, Identifiable, Serializable};
 use tracing::{info, warn};
 
+use super::replay::ReplayIds;
 use super::{
     DecodeLimits, Deserialization, DeserializationFailure, DeserializeError, Mtp, RpcResult,
     RpcResultError,
@@ -113,8 +114,9 @@ pub struct Builder {
 ///
 /// [Mobile Transport Protocol]: https://core.telegram.org/mtproto
 pub struct Encrypted {
-    // Allocated on use, bounded to 1024 server envelopes per session.
-    received_ids: VecDeque<i64>,
+    // Allocated on use, bounded per session to 1024 server envelopes and five
+    // minutes of server time.
+    received_ids: ReplayIds,
     // Highest ID actually evicted, not the smallest currently cached ID.
     received_floor: i64,
     decode_limits: DecodeLimits,
@@ -237,7 +239,7 @@ impl Builder {
         let mut session_id = [0; 8];
         fill(&mut session_id)?;
         Ok(Encrypted {
-            received_ids: VecDeque::new(),
+            received_ids: ReplayIds::new(),
             received_floor: 0,
             decode_limits: self.decode_limits,
             auth_key: AuthKey::from_bytes(auth_key),
@@ -601,8 +603,7 @@ impl Encrypted {
             if !in_container {
                 Self::validate_header(&message)?;
             }
-            if (self.received_ids.back().is_some_and(|last| *last >= msg_id)
-                && self.received_ids.binary_search(&msg_id).is_ok())
+            if self.received_ids.contains(&msg_id)
                 || budget
                     .pending_received
                     .as_ref()
@@ -720,21 +721,10 @@ impl Encrypted {
     }
 
     fn remember_received(&mut self, msg_id: i64) {
-        // Retain the highest 1024 IDs without temporarily growing the cache.
-        // A delayed lower ID is itself evicted, preserving a monotonic floor.
-        if self.received_ids.len() == 1024 {
-            let oldest = self.received_ids[0];
-            if msg_id < oldest {
-                self.received_floor = self.received_floor.max(msg_id);
-                return;
-            }
-            self.received_ids.pop_front();
-            self.received_floor = self.received_floor.max(oldest);
-        }
-        if self.received_ids.back().is_none_or(|id| *id < msg_id) {
-            self.received_ids.push_back(msg_id);
-        } else if let Err(index) = self.received_ids.binary_search(&msg_id) {
-            self.received_ids.insert(index, msg_id);
+        // A delayed ID which cannot be retained is itself evicted, preserving a
+        // monotonic floor at the highest ID that actually left the history.
+        if let Some(evicted) = self.received_ids.remember(msg_id) {
+            self.received_floor = self.received_floor.max(evicted);
         }
     }
 
@@ -1934,7 +1924,7 @@ mod tests {
             ));
         }
         assert_eq!(mtp.pending_ack.len(), ack_count + 2);
-        let retained_id = mtp.received_ids[0];
+        let retained_id = mtp.received_ids.values()[0];
         assert!(
             mtp.process_plaintext(&plaintext(session, retained_id, 16))
                 .unwrap()
@@ -1964,10 +1954,7 @@ mod tests {
                 1
             );
         }
-        assert_eq!(
-            mtp.received_ids.iter().copied().collect::<Vec<_>>(),
-            [3, 7, 11]
-        );
+        assert_eq!(mtp.received_ids.values(), [3, 7, 11]);
         let body = container_body(
             [11, 15, 15, 7]
                 .into_iter()
@@ -1985,10 +1972,7 @@ mod tests {
             results.as_slice(),
             [Deserialization::RpcResult(r)] if r.msg_id == MsgId(60)
         ));
-        assert_eq!(
-            mtp.received_ids.iter().copied().collect::<Vec<_>>(),
-            [3, 7, 11, 15, 19]
-        );
+        assert_eq!(mtp.received_ids.values(), [3, 7, 11, 15, 19]);
         assert_eq!(mtp.pending_ack, [11, 3, 7, 11, 15, 15, 7]);
         assert!(
             mtp.process_plaintext(&plaintext(session, 15, 16))
@@ -2040,6 +2024,51 @@ mod tests {
             mtp.process_plaintext(&plaintext(mtp.session_id, index * 4 + 11, 16))
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn age_evicted_ids_stay_stale_while_later_messages_remain_usable() {
+        const SECOND: i64 = 1 << 32;
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let session = mtp.session_id;
+        let first = 0x6500_0000 * SECOND + 3;
+        let update = replay_updates();
+        let plain_update = |session, msg_id| plaintext_body(session, msg_id, 1, update.clone(), 16);
+        assert_eq!(
+            mtp.process_plaintext(&plain_update(session, first))
+                .unwrap()
+                .len(),
+            1
+        );
+        // A single newer server ID ages the first out of the retained window.
+        let later = first + 301 * SECOND;
+        assert_eq!(
+            mtp.process_plaintext(&plain_update(session, later))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(mtp.received_ids.values(), [later]);
+        assert_eq!(mtp.received_floor, first);
+        // Replaying it is suppressed although it is no longer stored, but a delayed
+        // reply below the floor still completes its pending caller.
+        assert!(
+            mtp.process_plaintext(&plain_update(session, first))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            mtp.process_plaintext(&plaintext(session, first, 16))
+                .unwrap()
+                .as_slice(),
+            [Deserialization::RpcResult(_)]
+        ));
+        assert_eq!(
+            mtp.process_plaintext(&plain_update(session, later + SECOND))
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]

@@ -17,6 +17,9 @@ pub enum Error {
     /// implies there is not enough data to complete the deserialization.
     UnexpectedEof,
 
+    /// Generated TL decoding exceeded its fixed nesting limit.
+    DepthLimitExceeded,
+
     /// The error type indicating an unexpected constructor was found,
     /// for example, when reading data that doesn't represent the
     /// correct type (e.g. reading a `bool` when we expect a `Vec`).
@@ -42,6 +45,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Self::UnexpectedEof => write!(f, "unexpected eof"),
+            Self::DepthLimitExceeded => write!(f, "TL nesting limit exceeded"),
             Self::UnexpectedConstructor { id } => write!(f, "unexpected constructor: {id:08x}"),
         }
     }
@@ -52,12 +56,52 @@ impl fmt::Display for Error {
 pub struct Cursor<'a> {
     buf: &'a [u8],
     pos: usize,
+    depth: u8,
+}
+
+// Count nested generated boxed values. Every recursive schema cycle passes through
+// one, so this also bounds ordinary drop glue if a later field fails. The worst
+// decoder measured 4.1 KiB of stack per level in release and 18.6 KiB unoptimized,
+// plus the fixed Updates/Message prefix: well under a default 2 MiB thread stack.
+// Schema-valid content without repeated self-nesting reaches at most 23 levels.
+const MAX_DEPTH: u8 = 64;
+
+// Internal scope used by generated deserializers to restore depth on all exits.
+pub(crate) struct DepthGuard<'a, 'b> {
+    cursor: &'a mut Cursor<'b>,
+}
+
+impl<'b> DepthGuard<'_, 'b> {
+    pub(crate) fn cursor(&mut self) -> &mut Cursor<'b> {
+        self.cursor
+    }
+}
+
+impl Drop for DepthGuard<'_, '_> {
+    fn drop(&mut self) {
+        self.cursor.depth -= 1;
+    }
 }
 
 impl<'a> Cursor<'a> {
     /// Constructors a cursor from a slice of bytes.
     pub fn from_slice(buf: &'a [u8]) -> Self {
-        Self { buf, pos: 0 }
+        Self {
+            buf,
+            pos: 0,
+            depth: 0,
+        }
+    }
+
+    // Enters a generated boxed value. Siblings reuse the budget; the guard restores
+    // depth on success, errors and unwinding.
+    #[inline]
+    pub(crate) fn enter(&mut self) -> Result<DepthGuard<'_, 'a>> {
+        if self.depth == MAX_DEPTH {
+            return Err(Error::DepthLimitExceeded);
+        }
+        self.depth += 1;
+        Ok(DepthGuard { cursor: self })
     }
 
     // TODO not a fan we need to expose this (and a way to create `Cursor`),
@@ -141,6 +185,15 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// This trait allows for data serialized according to the
 /// [Binary Data Serialization] to be deserialized into concrete instances.
+///
+/// Generated implementations bound nesting to 64 boxed values and return
+/// [`Error::DepthLimitExceeded`] beyond that. Sibling values reuse this budget. This
+/// is a library resource policy, not a protocol validity limit: a schema-valid value
+/// nested deeper than this is rejected. It also bounds recursive drop, clone and
+/// formatting of decoded values, including partial values on error. Arbitrarily
+/// deep values constructed by applications, serde, or third-party implementations
+/// are outside this guarantee, as are custom thread stacks well below 2 MiB. That
+/// includes unoptimized builds on a 1 MiB stack, such as the Windows main thread.
 ///
 /// [Binary Data Serialization]: https://core.telegram.org/mtproto/serialize
 pub trait Deserializable {
@@ -756,3 +809,7 @@ mod borrowed_bytes_tests {
         );
     }
 }
+
+#[cfg(all(test, feature = "tl-api"))]
+#[path = "depth_tests.rs"]
+mod depth_tests;

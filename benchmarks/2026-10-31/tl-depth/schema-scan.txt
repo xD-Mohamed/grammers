@@ -1,0 +1,13 @@
+types 649
+recursive SCCs [(1, ['InputPeer']), (1, ['RichText']), (3, ['PageBlock', 'PageListItem', 'PageListOrderedItem']), (9, ['InputMedia', 'MessageExtendedMedia', 'MessageMedia', 'Poll', 'PollAnswer', 'PollResults', 'StoryItem', 'WebPage', 'WebPageAttribute']), (1, ['SecureRequiredType']), (2, ['JSONObjectValue', 'JSONValue'])]
+Updates upper-bound TL levels with each SCC member once 23
+updates.Difference upper-bound TL levels with each SCC member once 23
+updates.ChannelDifference upper-bound TL levels with each SCC member once 23
+messages.Messages upper-bound TL levels with each SCC member once 22
+messages.WebPage upper-bound TL levels with each SCC member once 20
+WebPage upper-bound TL levels with each SCC member once 19
+Page upper-bound TL levels with each SCC member once 10
+RichText upper-bound TL levels with each SCC member once 4
+PageBlock upper-bound TL levels with each SCC member once 9
+help.AppConfig upper-bound TL levels with each SCC member once 3
+JSONValue upper-bound TL levels with each SCC member once 2

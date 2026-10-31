@@ -10,9 +10,28 @@ responder and are not an equivalent-work memory ratio or per-bot estimate.
 See [retained scenario evidence](benchmarks/2026-10-30/final/performance/post-acceptance-round1/README.md)
 and the current measurements linked from [final evidence](benchmarks/2026-10-30/final/README.md).
 
-## Current QR and account-kind correction (2026-10-30)
+## Audit follow-up (2026-10-31)
 
-[Current source and raw measurements](benchmarks/2026-10-30/final/performance/post-qr-correction/README.md)
+[Complete tables, raw logs and reproduction](benchmarks/2026-10-31/README.md). Twelve
+paired runs against the published `2ffd991` show no resolved closed-loop change: plain
++2.59% [-0.89%, +9.42%], gzip -0.97% [-7.16%, +6.98%]. Up to 8 ready requests now share
+a write, charged per request: overload completion +9.27% [+7.63%, +10.86%], busy p99
+-19.07% [-22.30%, -14.17%], quiet p50 +4.74% [+1.67%, +5.61%], quiet p95 +5.19%
+[+3.18%, +9.01%], quiet p99 +2.82% [-5.19%, +9.26%]. Against `7774ed6`, overload
+completion is +1.27% [+0.18%, +6.88%] where `2ffd991` measures -6.45% [-8.29%, -4.98%],
+busy p99 is +96.45%, quiet p99 -43.87%, and plain throughput -4.23% [-8.23%, +4.81%].
+**No general speedup is established.**
+
+Client heap after a burst of 1100 replies falls from 16,079 to 14,031 B/session against
+7,911 at `7774ed6`, and to 8,079 B/session at one reply per 10 seconds of server time.
+One 1 MiB reply now holds 1,063,646 B/session instead of 2,104,038, and 7,926 from the
+first transfer 60 s later instead of 2,104,070. Peak process RSS in the 1 MiB scenarios
+has not improved.
+Sections below are historical, including the note that grown buffer capacity is kept.
+
+## Historical QR and account-kind correction (2026-10-30)
+
+[Historical source and raw measurements](benchmarks/2026-10-30/final/performance/post-qr-correction/README.md)
 bind to 689 passing release workspace tests/doctests (44 ignored).
 Twelve paired runs measure plain throughput -3.15% [-7.23%, -1.53%], gzip
 -3.97% [-6.24%, -2.27%], plain CPU/RPC +3.40% [+1.73%, +7.84%], and overload

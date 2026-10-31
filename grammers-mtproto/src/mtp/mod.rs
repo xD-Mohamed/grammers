@@ -18,6 +18,7 @@
 
 mod encrypted;
 mod plain;
+mod replay;
 
 use std::fmt;
 
@@ -185,6 +186,9 @@ impl From<tl::deserialize::Error> for DeserializeError {
 
         match error {
             Err::UnexpectedEof => DeserializeError::MessageBufferTooSmall,
+            Err::DepthLimitExceeded => DeserializeError::ResourceLimit {
+                resource: "TL nesting depth",
+            },
             Err::UnexpectedConstructor { id } => DeserializeError::UnexpectedConstructor { id },
         }
     }

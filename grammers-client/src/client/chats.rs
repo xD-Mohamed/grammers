@@ -414,6 +414,9 @@ impl Client {
     /// This call stores self-user login metadata in the session even when
     /// [`ClientConfiguration::auto_cache_peers`](crate::client::ClientConfiguration::auto_cache_peers)
     /// is disabled.
+    /// A successful call also lets an update stream resume account recovery after
+    /// a rejected provisional login (`updates.getState` returned 401). Discovery
+    /// uses the stream's paced self-metadata check, so resumption is not immediate.
     pub async fn get_me(&self) -> Result<User, InvocationError> {
         let mut res = self
             .invoke(&tl::functions::users::GetUsers {

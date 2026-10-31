@@ -271,6 +271,8 @@ fn write_deserializable<W: Write>(
         "{indent}    fn deserialize(buf: crate::deserialize::Buffer) -> crate::deserialize::Result<Self> {{"
     )?;
     writeln!(file, "{indent}        use crate::Identifiable;")?;
+    writeln!(file, "{indent}        let mut depth = buf.enter()?;")?;
+    writeln!(file, "{indent}        let buf = depth.cursor();")?;
     writeln!(file, "{indent}        let id = u32::deserialize(buf)?;")?;
     writeln!(file, "{indent}        Ok(match id {{")?;
     for d in metadata.defs_with_type(ty) {

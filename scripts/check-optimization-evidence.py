@@ -13,6 +13,7 @@ import re
 import shlex
 import statistics
 import subprocess
+import sys
 import tempfile
 
 
@@ -430,10 +431,16 @@ def check_receiver_logs(final, metadata):
 def completion_message(privacy_checked):
     if privacy_checked:
         return 'PASS: staged evidence and supplied privacy checks are complete; review acceptance and publication require separate receipts'
-    return 'INCOMPLETE: structural evidence checks passed; privacy scan is required before acceptance or publication'
+    return 'INCOMPLETE: no evidence checks ran; --privacy-patterns is required for a complete result'
 
 
 def main():
+    # This checker deliberately uses assertions. Never let Python strip them,
+    # including when -E ignores an explicitly configured optimization variable.
+    if sys.flags.optimize or os.environ.get('PYTHONOPTIMIZE'):
+        print('INCOMPLETE: Python optimization disables evidence checks; unset PYTHONOPTIMIZE and omit -O/-OO',
+              file=sys.stderr)
+        return 2
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--expect-worktree', help='Require this exact candidate checkout')
     parser.add_argument('--expect-branch', help='Require this candidate branch')
@@ -447,7 +454,13 @@ def main():
     parser.add_argument('--candidate-binary', type=Path, help='Verify retained candidate executable')
     args = parser.parse_args()
     assert bool(args.baseline_binary) == bool(args.candidate_binary), 'supply both executables'
+    if args.privacy_patterns is None:
+        print(completion_message(False))
+        return 2
+    return check_evidence(args)
 
+
+def check_evidence(args):
     repo = Path(__file__).resolve().parents[1]
 
     def git(*args):
@@ -574,13 +587,10 @@ def main():
         print('upstream: canonical objects verified' if args.verify_upstream
               else 'upstream: saved artifact hashes checked; Git object verification not requested')
 
-        if args.privacy_patterns:
-            scanned = check_privacy(root, tracked, json.loads(args.privacy_patterns.read_text()))
-            print(f'privacy: {scanned} tracked text files checked with external patterns')
-        else:
-            print('privacy: external patterns not supplied; privacy scan not performed')
-        print(completion_message(args.privacy_patterns is not None))
-        return 0 if args.privacy_patterns is not None else 2
+        scanned = check_privacy(root, tracked, json.loads(args.privacy_patterns.read_text()))
+        print(f'privacy: {scanned} tracked text files checked with external patterns')
+        print(completion_message(True))
+        return 0
 
 
 if __name__ == '__main__':

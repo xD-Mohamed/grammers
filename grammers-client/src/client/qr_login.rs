@@ -210,6 +210,13 @@ impl Client {
     /// requires updates to be enabled; clients without updates can explicitly
     /// check under their own schedule. This method starts no task or polling loop.
     ///
+    /// After logout, cached self metadata and existing update-stream state remain.
+    /// Prefer starting a fresh update stream after login completes. If using an
+    /// update stream to wait for QR notifications during re-login, keep consuming it
+    /// after account recovery RPC errors with code 401 until login/2FA completes: the
+    /// stream retries them at most about once per second and delivers live updates
+    /// in between. Alternatively, check the token explicitly under your own schedule.
+    ///
     /// `except_ids` excludes already logged-in user IDs. A successful login uses
     /// the ordinary session persistence path. 2FA returns the existing
     /// [`SignInError::PasswordRequired`] token for [`Client::check_password`].

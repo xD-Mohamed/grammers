@@ -1,0 +1,9 @@
+PROBE richtext: ok=true frames=202 boxed=101 stack=134456B per_frame=665 per_boxed=1331
+PROBE json: ok=true frames=201 boxed=101 stack=24000B per_frame=119 per_boxed=237
+PROBE cover: ok=true frames=201 boxed=101 stack=267200B per_frame=1329 per_boxed=2645
+PROBE details: ok=true frames=202 boxed=101 stack=411200B per_frame=2035 per_boxed=4071
+PROBE story: ok=true frames=201 boxed=101 stack=362400B per_frame=1802 per_boxed=3588
+PROBE webpage: ok=true frames=201 boxed=101 stack=313200B per_frame=1558 per_boxed=3100
+PROBE poll: ok=true frames=200 boxed=100 stack=336336B per_frame=1681 per_boxed=3363
+PROBE updates0: ok=true frames=13 boxed=9 stack=51216B per_frame=3939 per_boxed=5690
+PROBE updates100: ok=true frames=214 boxed=109 stack=462416B per_frame=2160 per_boxed=4242

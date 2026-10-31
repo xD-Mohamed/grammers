@@ -61,6 +61,11 @@ impl<T: Copy + Default> DequeBuffer<T> {
         self.buffer.push(value)
     }
 
+    /// Returns the total allocated capacity, including the front space.
+    pub fn capacity(&self) -> usize {
+        self.buffer.capacity()
+    }
+
     /// Returns `true` if the buffer is empty.
     pub fn is_empty(&self) -> bool {
         self.head == self.buffer.len()

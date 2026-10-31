@@ -619,9 +619,14 @@ impl Client {
 
     /// Signs out of the account authorized by this client's session.
     ///
-    /// If the client was not logged in, this method returns false.
+    /// If the client was not logged in, the server may return an authorization error.
     ///
     /// The client is not disconnected after signing out.
+    /// Cached self metadata and update-stream state are not cleared. Stop consuming
+    /// the old stream and create a fresh one after re-login. A stream used before
+    /// login completes can return account recovery errors with code 401, at most
+    /// about once per second, and still delivers live updates between them. See the
+    /// QR-login guidance when using that optional feature.
     ///
     /// Note that after using this method you will have to sign in again. If all you want to do
     /// is disconnect, simply [`drop`] the [`Client`] instance.

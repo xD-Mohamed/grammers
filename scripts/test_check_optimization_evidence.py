@@ -1,6 +1,10 @@
 """Offline regression tests for candidate identity and evidence membership."""
 import importlib.util
 import json
+import os
+import sys
+import io
+from contextlib import redirect_stdout
 from pathlib import Path
 import subprocess
 import tempfile
@@ -577,6 +581,56 @@ class ScenarioAndRetryChecks(unittest.TestCase):
             with self.assertRaises(AssertionError): evidence.check_privacy(self.root, {'public.txt'}, patterns)
         self.assertEqual(evidence.check_privacy(self.root, {'public.txt'}, [{'label': 'private', 'regex': 'secret'}]), 1)
         with self.assertRaises(AssertionError): evidence.check_privacy(self.root, {'public.txt'}, [{'label': 'private', 'regex': 'content'}])
+
+
+class CliChecks(unittest.TestCase):
+    def cli(self, *arguments, python_flags=(), optimize=None):
+        environment = os.environ.copy()
+        environment.pop('PYTHONOPTIMIZE', None)
+        if optimize is not None:
+            environment['PYTHONOPTIMIZE'] = optimize
+        return subprocess.run(
+            [sys.executable, *python_flags, SPEC.origin, *arguments],
+            env=environment, capture_output=True, text=True, check=False)
+
+    def test_real_cli_refuses_optimization_before_checks_or_help(self):
+        for flags, value in [(('-O',), None), (('-OO',), None),
+                             ((), '1'), ((), '2'), (('-E',), '1')]:
+            with self.subTest(flags=flags, value=value):
+                result = self.cli('--help', python_flags=flags, optimize=value)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('Python optimization disables evidence checks', result.stderr)
+                self.assertNotIn('PASS:', result.stdout)
+
+    def test_real_cli_missing_privacy_is_incomplete(self):
+        result = self.cli()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertTrue(result.stdout.startswith('INCOMPLETE: no evidence checks ran'), result.stdout)
+        self.assertNotIn('PASS:', result.stdout)
+
+    def test_real_cli_wrong_candidate_fails(self):
+        result = self.cli('--privacy-patterns', 'unused.json', '--expect-head', 'invalid-head')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('wrong candidate HEAD', result.stderr)
+        self.assertNotIn('PASS:', result.stdout)
+
+    def test_main_propagates_validation_result_and_failure(self):
+        # Exercise the real main dispatcher without manufacturing a full benchmark
+        # history. Individual validation checks have fixtures above; this is not
+        # a receipt claiming acceptance of the current working tree.
+        with patch.dict(os.environ, {}, clear=True), patch.object(sys, 'argv',
+                [SPEC.origin, '--privacy-patterns', 'patterns.json']), \
+                patch.object(evidence, 'check_evidence', return_value=0) as check:
+            self.assertEqual(evidence.main(), 0)
+            self.assertEqual(check.call_args.args[0].privacy_patterns, Path('patterns.json'))
+            check.side_effect = AssertionError('invalid evidence')
+            with self.assertRaisesRegex(AssertionError, 'invalid evidence'):
+                evidence.main()
+        with patch.dict(os.environ, {}, clear=True), patch.object(sys, 'argv', [SPEC.origin]), \
+                patch.object(evidence, 'check_evidence') as check, redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(evidence.main(), 2)
+            check.assert_not_called()
+            self.assertTrue(output.getvalue().startswith('INCOMPLETE:'))
 
 
 if __name__ == '__main__':

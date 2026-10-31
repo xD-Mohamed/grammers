@@ -101,6 +101,14 @@ pub struct MessageBoxes {
     /// Survives entry removal; usable access or successful recovery clears it.
     pub(super) exhausted_channels: BTreeSet<i64>,
 
+    /// Channel socket updates postponed while that channel's recovery is pending,
+    /// oldest first. Bounded across channels, allocated on use and not persisted.
+    pub(super) held_updates: VecDeque<(i64, Box<tl::enums::Update>)>,
+    /// A channel recovery ended since held updates were last released.
+    pub(super) held_release_ready: bool,
+    /// Held updates had to be evicted since they were last released.
+    pub(super) held_overflowed: bool,
+
     /// Optimization field holding the closest deadline instant.
     pub(super) next_deadline: Instant,
 }

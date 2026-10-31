@@ -336,6 +336,10 @@ impl ServerKey {
     }
 }
 
+static MSG_ID_STEP_MS: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| {
+    std::env::var("LOOPBACK_MSG_ID_STEP_MS").map_or(0, |value| value.parse().unwrap())
+});
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Payload {
     Plain,
@@ -545,8 +549,15 @@ impl Responder {
             let ping_id = i64::from_le_bytes(body[4..12].try_into().unwrap());
             return Some(tl::enums::Pong::Pong(tl::types::Pong { msg_id: 0, ping_id }).to_bytes());
         }
+        let mut at = 0;
         if constructor == INVOKE_WITHOUT_UPDATES {
             constructor = read_u32(body, 4);
+            at = 4;
+        }
+        // A deliberately small reply, whatever the responder's payload is.
+        if constructor == tl::functions::Ping::CONSTRUCTOR_ID {
+            let ping_id = i64::from_le_bytes(body[at + 4..at + 12].try_into().unwrap());
+            return Some(tl::enums::Pong::Pong(tl::types::Pong { msg_id: 0, ping_id }).to_bytes());
         }
         Some(if constructor == INVOKE_WITH_LAYER {
             self.config.clone()
@@ -561,7 +572,10 @@ impl Responder {
             .unwrap()
             .as_secs();
         let n = self.sequence.fetch_add(1, Relaxed) & 0x3fff_ffff;
-        ((secs << 32) | (n << 2) | 1) as i64
+        // Optional simulated server time per reply: a census cannot wait real hours.
+        // Whole seconds stay above bit 32; the sequence keeps IDs unique and odd.
+        let simulated_secs = n * *MSG_ID_STEP_MS / 1000;
+        (((secs + simulated_secs) << 32) | (n << 2) | 1) as i64
     }
 
     async fn serve(self: Arc<Self>, stream: TcpStream) {
@@ -832,6 +846,45 @@ fn silent_dc_does_not_block_a_healthy_cold_dc() {
         .await
         .unwrap();
     });
+}
+
+#[test]
+#[ignore = "local loopback retention after a large reply; waits over a minute"]
+fn loopback_large_reply_retention() {
+    const SESSIONS: usize = 32;
+    let address = start_responder(Payload::LargeFile, 2);
+    let large = request_body();
+    let small: RequestBody = tl::functions::Ping { ping_id: 1 }.to_bytes().into();
+    let (mut base, mut after_large, mut after_idle) = (
+        HeapSnapshot::empty(),
+        HeapSnapshot::empty(),
+        HeapSnapshot::empty(),
+    );
+    let mut clients = Vec::with_capacity(SESSIONS);
+    TRACK.store(true, Relaxed);
+    client_runtime().block_on(async {
+        let warm = open_client(address);
+        call(&warm, &large).await;
+        call(&warm, &small).await;
+        base.take();
+        for _ in 0..SESSIONS {
+            clients.push(open_client(address));
+        }
+        for client in &clients {
+            call(client, &large).await;
+            call(client, &small).await;
+        }
+        after_large.take();
+        tokio::time::sleep(Duration::from_secs(61)).await;
+        for client in &clients {
+            call(client, &small).await;
+        }
+        after_idle.take();
+    });
+    TRACK.store(false, Relaxed);
+    println!("{SESSIONS} sessions, one 1 MiB reply each, then small replies");
+    after_large.report(&base, SESSIONS, "right after the large reply");
+    after_idle.report(&base, SESSIONS, "61 seconds later, after one small reply");
 }
 
 #[test]

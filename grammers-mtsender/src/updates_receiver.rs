@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,6 +25,10 @@ use crate::{InvocationError, SenderPoolHandle, UpdatesConfiguration};
 // See https://core.telegram.org/method/updates.getChannelDifference.
 const BOT_CHANNEL_DIFF_LIMIT: i32 = 100000;
 const USER_CHANNEL_DIFF_LIMIT: i32 = 100;
+const RECOVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
+// Consecutive unreadable replies before a backlog is abandoned so that its sequence
+// is not wedged for good. Nothing else can make such a reply readable.
+const MAX_UNREADABLE_DIFFERENCES: u8 = 30;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Authorization {
@@ -84,6 +88,9 @@ pub struct UpdatesReceiver {
     authorization: Authorization,
     is_bot: Option<bool>,
     next_self_check: tokio::time::Instant,
+    recovery_paused_until: tokio::time::Instant,
+    // Keyed by channel; `None` is the account sequence.
+    unreadable_differences: BTreeMap<Option<i64>, u8>,
 }
 
 async fn prepare_channel_difference(
@@ -118,6 +125,17 @@ async fn prepare_channel_difference(
             USER_CHANNEL_DIFF_LIMIT
         };
         trace!(?request, "requesting");
+        Ok(Some(request))
+    } else if is_bot && message_box.try_exhaust_channel_grace() {
+        // The skeleton request carries a zero hash, which bots can use to address
+        // channels they are allowed to read (TDLib's get_input_channel does this).
+        // Try it before abandoning the backlog. A rejection takes the ordinary
+        // channel-error paths and exhaustion persists, so this cannot loop quickly.
+        warn!(
+            channel_id = ?id,
+            "missing channel hash after grace; trying the bot zero-hash form before discarding its backlog",
+        );
+        request.limit = BOT_CHANNEL_DIFF_LIMIT;
         Ok(Some(request))
     } else {
         warn!(
@@ -164,6 +182,8 @@ impl UpdatesReceiver {
             authorization: Authorization::Unknown,
             is_bot: None,
             next_self_check: tokio::time::Instant::now(),
+            recovery_paused_until: tokio::time::Instant::now(),
+            unreadable_differences: BTreeMap::new(),
         })
     }
 
@@ -187,6 +207,9 @@ impl UpdatesReceiver {
                 self.process_socket_updates(UpdatesLike::ConnectionClosed)
                     .await;
                 self.home_failure_generation = generation;
+            }
+            if let Some((updates, users, chats)) = self.message_box.take_released_updates() {
+                self.extend_update_queue(updates, users, chats);
             }
             if let Some(update) = self.buffer.pop_front() {
                 return Ok(update);
@@ -219,27 +242,41 @@ impl UpdatesReceiver {
             }
             self.should_get_state |=
                 self.authorization.can_recover() && !self.message_box.has_primary_state();
-            if self.should_get_state {
+            // A failure can repeat until login, access or the schema change, and must
+            // not turn a caller's retry loop into an RPC loop. Live updates still flow,
+            // including the service pushes a re-login may be waiting for.
+            let recovery_paused = tokio::time::Instant::now() < self.recovery_paused_until;
+            if self.should_get_state && !recovery_paused {
                 match self.invoke(&tl::functions::updates::GetState {}).await {
                     Ok(tl::enums::updates::State::State(state)) => {
                         // Validate before persisting or changing the in-memory
                         // state. A rejected reply must leave recovery armed.
                         if state.pts < 0 || state.qts < 0 || state.date < 0 || state.seq < 0 {
-                            return Err(grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
+                            let error = grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
                                 reason: "invalid account update state",
                             }
-                            .into());
+                            .into();
+                            self.pause_recovery();
+                            return Err(error);
                         }
-                        session
+                        let channels = self.message_box.session_state().channels;
+                        if let Err(error) = session
                             .clone()
                             .set_update_state(UpdateState::All(UpdatesState {
                                 pts: state.pts,
                                 qts: state.qts,
                                 date: state.date,
                                 seq: state.seq,
-                                channels: self.message_box.session_state().channels,
+                                channels,
                             }))
-                            .await?;
+                            .await
+                        {
+                            self.pause_recovery();
+                            return Err(error.into());
+                        }
+                        // Live updates may have established a provisional position
+                        // while a paced GetState waited. This reply supersedes it.
+                        self.message_box.discard_account_state();
                         self.message_box.set_state(state);
                         self.authorization = Authorization::Confirmed;
                         // Cancellation or storage failure must leave recovery armed.
@@ -249,6 +286,11 @@ impl UpdatesReceiver {
                         if self.authorization == Authorization::Inferred
                             && matches!(error.root_cause(), InvocationError::Rpc(rpc) if rpc.code == 401) =>
                     {
+                        warn!(
+                            rpc = "updates.getState",
+                            %error,
+                            "provisional login rejected; account recovery is paused until confirmed self metadata is cached (complete login or call Client::get_me successfully)"
+                        );
                         // An account-shaped push is only provisional proof. During
                         // login/2FA, wait for cached self metadata instead of exposing
                         // a premature authorization error or retrying on every next().
@@ -262,6 +304,7 @@ impl UpdatesReceiver {
                         // can advance the home generation and spin through
                         // repeated GetState attempts inside this same next() call.
                         self.should_get_state = true;
+                        self.pause_recovery();
                         return Err(error);
                     }
                 }
@@ -271,6 +314,7 @@ impl UpdatesReceiver {
             // in the receiver so returning a batch or cancelling next() cannot
             // reset it and let a busy, deliverable socket stream starve catch-up.
             let recovery_ready = self.authorization.can_recover()
+                && !recovery_paused
                 && (self.message_box.get_difference().is_some()
                     || self.message_box.get_channel_difference().is_some());
             if let Some(Ok(update)) =
@@ -285,13 +329,14 @@ impl UpdatesReceiver {
                 let deadline = self.message_box.check_deadlines();
                 // Saved state alone is not evidence of a current login.
                 let can_recover = self.authorization.can_recover();
+                let may_recover = can_recover && !recovery_paused;
                 (
                     deadline,
-                    self.message_box.get_difference().filter(|_| can_recover),
+                    self.message_box.get_difference().filter(|_| may_recover),
                     match self
                         .message_box
                         .get_channel_difference()
-                        .filter(|_| can_recover)
+                        .filter(|_| may_recover)
                     {
                         Some(gd) => {
                             // Resolve account kind once on recovery, never on ordinary
@@ -337,16 +382,24 @@ impl UpdatesReceiver {
                 get_diff.filter(|_| get_channel_diff.is_none() || !self.prefer_channel)
             {
                 self.prefer_channel = true;
-                let response = self.invoke(&request).await?;
+                let response = match self.invoke(&request).await {
+                    Ok(response) => response,
+                    Err(error) => return Err(self.account_recovery_failed(error)),
+                };
                 self.prefer_live = true;
-                let (updates, users, chats) = self
-                    .message_box
-                    .try_apply_difference(response)
-                    .map_err(
-                        |_| grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
-                            reason: "invalid account difference or missing pending state",
-                        },
-                    )?;
+                let (updates, users, chats) = match self.message_box.try_apply_difference(response)
+                {
+                    Ok(applied) => applied,
+                    Err(_) => {
+                        return Err(self.account_recovery_failed(
+                            grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
+                                reason: "invalid account difference or missing pending state",
+                            }
+                            .into(),
+                        ));
+                    }
+                };
+                self.unreadable_differences.remove(&None);
                 self.extend_update_queue(updates, users, chats);
                 continue;
             }
@@ -355,6 +408,14 @@ impl UpdatesReceiver {
                 self.prefer_channel = false;
                 let maybe_response = self.invoke(&request).await;
                 self.prefer_live = true;
+                // Only consecutive unreadable replies count towards abandoning it.
+                if let (Err(error), tl::enums::InputChannel::Channel(channel)) =
+                    (&maybe_response, &request.channel)
+                    && !matches!(error.root_cause(), InvocationError::Deserialize(_))
+                {
+                    self.unreadable_differences
+                        .remove(&Some(channel.channel_id));
+                }
 
                 let response = match maybe_response {
                     Ok(r) => r,
@@ -367,6 +428,7 @@ impl UpdatesReceiver {
                             || e.is("API_ID_*")
                             || matches!(e.root_cause(), InvocationError::Rpc(rpc) if matches!(rpc.code, 401 | 420 | 429)) =>
                     {
+                        self.pause_recovery();
                         return Err(e);
                     }
                     Err(e) if e.is("PERSISTENT_TIMESTAMP_OUTDATED") => {
@@ -415,6 +477,10 @@ impl UpdatesReceiver {
                         }
                         continue;
                     }
+                    // One channel's unreadable reply must not block its siblings.
+                    Err(e) if matches!(e.root_cause(), InvocationError::Deserialize(_)) => {
+                        return Err(self.channel_difference_unreadable(&request, e));
+                    }
                     Err(e) if matches!(e.root_cause(), InvocationError::Rpc(rpc_error) if matches!(rpc_error.code, 400 | 403 | 406 | 500)) =>
                     {
                         warn!(error = ?e.root_cause(), "channel recovery deferred with its saved position intact");
@@ -424,17 +490,29 @@ impl UpdatesReceiver {
                         }
                         continue;
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => {
+                        self.pause_recovery();
+                        return Err(e);
+                    }
                 };
 
-                let (updates, users, chats) = self
-                    .message_box
-                    .try_apply_channel_difference(response)
-                    .map_err(
-                        |_| grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
-                            reason: "invalid channel difference or missing pending state",
-                        },
-                    )?;
+                let (updates, users, chats) =
+                    match self.message_box.try_apply_channel_difference(response) {
+                        Ok(applied) => applied,
+                        Err(_) => {
+                            return Err(self.channel_difference_unreadable(
+                                &request,
+                                grammers_mtproto::mtp::DeserializeError::InvalidEnvelope {
+                                    reason: "invalid channel difference or missing pending state",
+                                }
+                                .into(),
+                            ));
+                        }
+                    };
+                if let tl::enums::InputChannel::Channel(channel) = &request.channel {
+                    self.unreadable_differences
+                        .remove(&Some(channel.channel_id));
+                }
                 self.extend_update_queue(updates, users, chats);
                 continue;
             }
@@ -445,6 +523,8 @@ impl UpdatesReceiver {
             let deadline = tokio::time::Instant::from_std(deadline);
             let deadline = if !can_recover && needs_authorization {
                 self.next_self_check
+            } else if recovery_paused {
+                self.recovery_paused_until
             } else {
                 deadline
             };
@@ -472,6 +552,56 @@ impl UpdatesReceiver {
             .set_update_state(UpdateState::All(self.message_box.session_state()))
             .await?;
         Ok(())
+    }
+
+    fn pause_recovery(&mut self) {
+        self.recovery_paused_until = tokio::time::Instant::now() + RECOVERY_RETRY_DELAY;
+    }
+
+    fn difference_unreadable(&mut self, sequence: Option<i64>) -> bool {
+        let count = self.unreadable_differences.entry(sequence).or_insert(0);
+        *count += 1;
+        let abandon = *count >= MAX_UNREADABLE_DIFFERENCES;
+        if abandon {
+            self.unreadable_differences.remove(&sequence);
+        }
+        abandon
+    }
+
+    fn account_recovery_failed(&mut self, error: InvocationError) -> InvocationError {
+        self.pause_recovery();
+        if !matches!(error.root_cause(), InvocationError::Deserialize(_)) {
+            // Only consecutive unreadable replies count towards abandoning it.
+            self.unreadable_differences.remove(&None);
+        } else if self.difference_unreadable(None) {
+            warn!(%error, "abandoning account backlog after repeated unreadable differences; those updates are lost");
+            self.message_box.discard_account_state();
+        }
+        error
+    }
+
+    fn channel_difference_unreadable(
+        &mut self,
+        request: &tl::functions::updates::GetChannelDifference,
+        error: InvocationError,
+    ) -> InvocationError {
+        let channel = match &request.channel {
+            tl::enums::InputChannel::Channel(channel) => Some(channel.channel_id),
+            _ => None,
+        };
+        let abandon = self.difference_unreadable(channel);
+        if abandon {
+            warn!(%error, ?channel, "abandoning channel backlog after repeated unreadable differences; those updates are lost");
+        } else {
+            warn!(%error, ?channel, "channel recovery deferred with its saved position intact");
+        }
+        self.message_box.end_channel_difference(if abandon {
+            PrematureEndReason::Banned
+        } else {
+            PrematureEndReason::TemporaryServerIssues
+        });
+        self.pause_recovery();
+        error
     }
 
     async fn invoke<R: tl::RemoteCall>(&self, request: &R) -> Result<R::Return, InvocationError> {

@@ -16,7 +16,7 @@ use super::defs::{
     Gap, MessageBox, MessageBoxes, NO_DATE, NO_PTS, NO_SEQ, NO_UPDATES_TIMEOUT, State,
     UpdateAndPeers,
 };
-use super::{PrematureEndReason, next_updates_deadline};
+use super::{MAX_HELD_UPDATES, PrematureEndReason, next_updates_deadline};
 use crate::message_box::POSSIBLE_GAP_TIMEOUT;
 use crate::message_box::defs::UpdatesLike;
 use crate::types::{ChannelState, UpdatesState};
@@ -955,6 +955,423 @@ fn test_next_raw_update_flow_channel_timeout() {
             ..message_boxes.session_state()
         }
     );
+}
+
+#[test]
+fn failed_channel_recovery_allows_contiguous_live_updates_without_skipping_gaps() {
+    reset_time();
+    let mut boxes = MessageBoxes::load(UpdatesState {
+        channels: vec![
+            ChannelState { id: 7, pts: 10 },
+            ChannelState { id: 8, pts: 20 },
+        ],
+        ..Default::default()
+    });
+    boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+    assert_eq!(
+        boxes.get_channel_difference(),
+        Some(get_channel_difference(8, 20))
+    );
+    boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+    // A rejected attempt retains PTS. Contiguous delivery can resume without
+    // skipping backlog that still requires an unavailable channel difference.
+    let contiguous = boxes
+        .process_updates(channel_updates(7, 0, 0, 11))
+        .unwrap()
+        .0;
+    assert_eq!(contiguous.len(), 1);
+    assert_eq!(contiguous[0].0, channel_update(7, 11));
+    assert!(
+        boxes
+            .process_updates(channel_updates(7, 0, 0, 13))
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    assert_eq!(
+        boxes.get_channel_difference(),
+        Some(get_channel_difference(7, 11))
+    );
+    boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+    let mut channels = boxes.session_state().channels;
+    channels.sort_by_key(|channel| channel.id);
+    assert_eq!(
+        channels,
+        vec![
+            ChannelState { id: 7, pts: 11 },
+            ChannelState { id: 8, pts: 20 }
+        ]
+    );
+    let sibling = boxes
+        .process_updates(channel_updates(8, 0, 0, 21))
+        .unwrap()
+        .0;
+    assert_eq!(sibling.len(), 1);
+    assert_eq!(sibling[0].0, channel_update(8, 21));
+    let contiguous = boxes
+        .process_updates(channel_updates(7, 0, 0, 12))
+        .unwrap()
+        .0;
+    assert_eq!(contiguous.len(), 1);
+    assert_eq!(contiguous[0].0, channel_update(7, 12));
+    let mut channels = boxes.session_state().channels;
+    channels.sort_by_key(|channel| channel.id);
+    assert_eq!(
+        channels,
+        vec![
+            ChannelState { id: 7, pts: 12 },
+            ChannelState { id: 8, pts: 21 }
+        ]
+    );
+}
+
+fn delivered_channel_pts(batch: Option<UpdateAndPeers>) -> Vec<i32> {
+    batch
+        .map(|(updates, _, _)| updates)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(update, state)| match state.message_box {
+            Some(MessageBox::Channel { pts, .. }) => {
+                assert_eq!(update, channel_update(7, pts));
+                pts
+            }
+            other => panic!("expected channel state: {other:?}"),
+        })
+        .collect()
+}
+
+#[test]
+fn failed_recovery_releases_postponed_channel_updates_without_skipping_gaps() {
+    reset_time();
+    let mut boxes = MessageBoxes::load(UpdatesState {
+        channels: vec![ChannelState { id: 7, pts: 10 }],
+        ..Default::default()
+    });
+    // 13 opens a gap and starts recovery; 11 arrives while recovery is pending.
+    assert!(
+        boxes
+            .process_updates(channel_updates(7, 0, 0, 13))
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    assert_eq!(
+        boxes.get_channel_difference(),
+        Some(get_channel_difference(7, 10))
+    );
+    assert!(
+        boxes
+            .process_updates(channel_updates(7, 0, 0, 11))
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    assert_eq!(
+        delivered_channel_pts(boxes.take_released_updates()),
+        Vec::<i32>::new()
+    );
+    boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+    // 11 is contiguous. 13 is beyond the gap at 12: it must not skip that gap, and
+    // re-queueing it would keep retrying a failing recovery with no new traffic.
+    assert_eq!(delivered_channel_pts(boxes.take_released_updates()), [11]);
+    assert_eq!(boxes.session_state().channels[0].pts, 11);
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    assert_eq!(boxes.get_channel_difference(), None);
+    // New traffic resumes both delivery and recovery.
+    let contiguous = boxes.process_updates(channel_updates(7, 0, 0, 12)).unwrap();
+    assert_eq!(delivered_channel_pts(Some(contiguous)), [12]);
+    assert!(
+        boxes
+            .process_updates(channel_updates(7, 0, 0, 14))
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    assert_eq!(
+        boxes.get_channel_difference(),
+        Some(get_channel_difference(7, 12))
+    );
+}
+
+#[test]
+fn releasing_one_channel_keeps_updates_held_for_another_pending_channel() {
+    reset_time();
+    let mut boxes = MessageBoxes::load(UpdatesState {
+        channels: vec![
+            ChannelState { id: 7, pts: 10 },
+            ChannelState { id: 8, pts: 20 },
+        ],
+        ..Default::default()
+    });
+    for (channel, pts) in [(7, 12), (8, 22)] {
+        assert!(
+            boxes
+                .process_updates(channel_updates(channel, 0, 0, pts))
+                .unwrap()
+                .0
+                .is_empty()
+        );
+    }
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    for (channel, pts) in [(7, 11), (8, 21)] {
+        assert!(
+            boxes
+                .process_updates(channel_updates(channel, 0, 0, pts))
+                .unwrap()
+                .0
+                .is_empty()
+        );
+    }
+    assert_eq!(boxes.held_updates.len(), 4);
+    boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+    assert_eq!(
+        delivered_channel_pts(boxes.take_released_updates()),
+        [11, 12]
+    );
+    assert_eq!(boxes.held_updates.len(), 2);
+    assert_eq!(
+        boxes.get_channel_difference(),
+        Some(get_channel_difference(8, 20))
+    );
+    boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+    let released = boxes.take_released_updates().unwrap().0;
+    assert_eq!(released.len(), 2);
+    assert_eq!(released[0].0, channel_update(8, 21));
+    assert_eq!(released[1].0, channel_update(8, 22));
+    assert!(boxes.held_updates.is_empty());
+}
+
+#[test]
+fn abandoned_account_difference_keeps_channel_positions() {
+    reset_time();
+    let mut boxes = MessageBoxes::load(UpdatesState {
+        pts: 100,
+        qts: 5,
+        date: 1,
+        seq: 0,
+        channels: vec![ChannelState { id: 7, pts: 10 }],
+    });
+    assert!(boxes.get_difference().is_some());
+    boxes.discard_account_state();
+    assert!(!boxes.has_primary_state());
+    assert_eq!(boxes.get_difference(), None);
+    let state = boxes.session_state();
+    assert_eq!((state.pts, state.qts), (NO_PTS, NO_PTS));
+    assert_eq!(state.channels, vec![ChannelState { id: 7, pts: 10 }]);
+    // No queue accounting is left behind, and fresh account state works normally.
+    boxes.set_state(tl::types::updates::State {
+        pts: 200,
+        qts: 6,
+        date: 2,
+        seq: 3,
+        unread_count: 0,
+    });
+    assert!(boxes.has_primary_state());
+    assert_eq!(boxes.get_difference(), None);
+}
+
+#[test]
+fn exhausted_grace_releases_held_updates_and_starts_a_fresh_position() {
+    reset_time();
+    let mut boxes = MessageBoxes::load(UpdatesState {
+        channels: vec![ChannelState { id: 7, pts: 10 }],
+        ..Default::default()
+    });
+    // The update beyond the gap itself is retained, not only later arrivals.
+    assert!(
+        boxes
+            .process_updates(channel_updates(7, 0, 0, 13))
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    for deferral in 0..30 {
+        boxes.defer_channel_difference(Duration::from_secs(1));
+        assert!(boxes.take_released_updates().is_none());
+        if deferral == 3 {
+            for pts in [14, 15] {
+                assert!(
+                    boxes
+                        .process_updates(channel_updates(7, 0, 0, pts))
+                        .unwrap()
+                        .0
+                        .is_empty()
+                );
+            }
+        }
+        advance_time_by(Duration::from_secs(1));
+        boxes.check_deadlines();
+    }
+    boxes.defer_channel_difference(Duration::from_secs(1));
+    assert_eq!(boxes.session_state().channels, Vec::new());
+    assert_eq!(
+        delivered_channel_pts(boxes.take_released_updates()),
+        [13, 14, 15]
+    );
+    assert_eq!(boxes.session_state().channels[0].pts, 15);
+    assert!(boxes.held_updates.is_empty());
+    assert_eq!(boxes.held_updates.capacity(), 0);
+}
+
+#[test]
+fn successful_difference_supersedes_held_updates_without_delivering_them_twice() {
+    reset_time();
+    let mut boxes = MessageBoxes::load(UpdatesState {
+        channels: vec![ChannelState { id: 7, pts: 10 }],
+        ..Default::default()
+    });
+    assert!(
+        boxes
+            .process_updates(channel_updates(7, 0, 0, 13))
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    for pts in [11, 15, 16] {
+        assert!(
+            boxes
+                .process_updates(channel_updates(7, 0, 0, pts))
+                .unwrap()
+                .0
+                .is_empty()
+        );
+    }
+    // A partial page keeps recovery pending and everything held.
+    boxes.apply_channel_difference(tl::enums::updates::ChannelDifference::Difference(
+        tl::types::updates::ChannelDifference {
+            r#final: false,
+            pts: 12,
+            timeout: None,
+            new_messages: vec![],
+            other_updates: vec![],
+            chats: vec![],
+            users: vec![],
+        },
+    ));
+    assert!(boxes.take_released_updates().is_none());
+    assert_eq!(boxes.held_updates.len(), 4);
+    boxes.apply_channel_difference(tl::enums::updates::ChannelDifference::Difference(
+        tl::types::updates::ChannelDifference {
+            r#final: true,
+            pts: 15,
+            timeout: None,
+            new_messages: vec![],
+            other_updates: vec![],
+            chats: vec![],
+            users: vec![],
+        },
+    ));
+    // 11, 13 and 15 are covered by the difference. Only 16 is new.
+    assert_eq!(delivered_channel_pts(boxes.take_released_updates()), [16]);
+    assert_eq!(boxes.session_state().channels[0].pts, 16);
+}
+
+#[test]
+fn held_count_zero_update_at_the_position_is_released_as_a_socket_update_would_apply() {
+    reset_time();
+    let mut boxes = MessageBoxes::load(UpdatesState {
+        channels: vec![ChannelState { id: 7, pts: 10 }],
+        ..Default::default()
+    });
+    assert!(
+        boxes
+            .process_updates(channel_updates(7, 0, 0, 12))
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    let read_inbox: tl::enums::Update = tl::types::UpdateReadChannelInbox {
+        folder_id: None,
+        channel_id: 7,
+        max_id: 1,
+        still_unread_count: 0,
+        pts: 10,
+    }
+    .into();
+    assert!(
+        boxes
+            .process_updates(UpdatesLike::Updates(
+                tl::types::UpdateShort {
+                    update: read_inbox.clone(),
+                    date: 1,
+                }
+                .into()
+            ))
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    boxes.end_channel_difference(PrematureEndReason::TemporaryServerIssues);
+    let released = boxes.take_released_updates().unwrap().0;
+    assert_eq!(released.len(), 1);
+    assert_eq!(released[0].0, read_inbox);
+}
+
+#[test]
+fn held_updates_are_bounded_across_channels_and_exclude_account_state() {
+    reset_time();
+    let mut boxes = MessageBoxes::load(UpdatesState {
+        pts: 100,
+        qts: 0,
+        date: 1,
+        seq: 0,
+        channels: vec![ChannelState { id: 7, pts: 10 }],
+    });
+    boxes
+        .process_updates(UpdatesLike::ConnectionClosed)
+        .unwrap_err();
+    assert!(
+        boxes
+            .process_updates(updates(0, 0, 105))
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    assert!(boxes.held_updates.is_empty());
+    boxes
+        .process_updates(UpdatesLike::Updates(
+            tl::types::UpdateShort {
+                update: tl::types::UpdateChannelTooLong {
+                    channel_id: 7,
+                    pts: None,
+                }
+                .into(),
+                date: 1,
+            }
+            .into(),
+        ))
+        .unwrap();
+    for pts in 11..11 + 600 {
+        assert!(
+            boxes
+                .process_updates(channel_updates(7, 0, 0, pts))
+                .unwrap()
+                .0
+                .is_empty()
+        );
+    }
+    assert_eq!(boxes.held_updates.len(), MAX_HELD_UPDATES);
+    assert!(boxes.held_overflowed);
+    boxes.end_channel_difference(PrematureEndReason::Banned);
+    let pts = delivered_channel_pts(boxes.take_released_updates());
+    assert_eq!(pts.len(), MAX_HELD_UPDATES);
+    assert_eq!(pts.first(), Some(&(11 + 600 - MAX_HELD_UPDATES as i32)));
+    assert_eq!(pts.last(), Some(&610));
+    assert!(!boxes.held_overflowed);
 }
 
 #[test]

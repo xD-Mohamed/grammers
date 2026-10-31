@@ -1,0 +1,60 @@
+
+running 1 test
+test loopback_large_reply_retention ... 32 sessions, one 1 MiB reply each, then small replies
+right after the large reply: 1063646 B/session live client heap
+     16384+ B x   1.00/session =   16384 B
+      1280 B x   1.00/session =    1280 B
+      1096 B x   1.00/session =    1096 B
+       512 B x   2.00/session =    1024 B
+       256 B x   3.00/session =     768 B
+       384 B x   1.00/session =     384 B
+       352 B x   1.00/session =     352 B
+       280 B x   1.00/session =     280 B
+       224 B x   1.00/session =     224 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       168 B x   1.00/session =     168 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+61 seconds later, after one small reply: 7926 B/session live client heap
+      1280 B x   1.00/session =    1280 B
+      1096 B x   1.00/session =    1096 B
+       512 B x   2.00/session =    1024 B
+      1024 B x   1.00/session =    1024 B
+       256 B x   3.00/session =     768 B
+       384 B x   1.00/session =     384 B
+       352 B x   1.00/session =     352 B
+       280 B x   1.00/session =     280 B
+       224 B x   1.00/session =     224 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       168 B x   1.00/session =     168 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 62.12s
+
+	Command being timed: "timeout 150 <binary>/candidate --exact loopback_large_reply_retention --ignored --nocapture --test-threads=1"
+	User time (seconds): 0.78
+	System time (seconds): 0.33
+	Percent of CPU this job got: 1%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:02.12
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 77948
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 107797
+	Voluntary context switches: 1403
+	Involuntary context switches: 624
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 16
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

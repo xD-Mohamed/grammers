@@ -43,9 +43,13 @@ use crate::net::{NetStream, ServerAddr};
 /// kilobytes to the maximum data size.
 const MAXIMUM_DATA: usize = (1024 * 1024) + (8 * 1024);
 /// Initial socket buffers. Typical requests and replies fit; larger packets grow
-/// them (receive up to [`MAXIMUM_DATA`]) and the grown capacity is kept.
+/// them (receive up to [`MAXIMUM_DATA`]). Grown capacity is kept while transfers
+/// above [`RETAINED_BUFFER_SIZE`] continue and released after [`BUFFER_RELEASE_DELAY`]
+/// without one, so one large reply does not cost an idle session a megabyte for life.
 const INITIAL_READ_BUFFER_SIZE: usize = 1024;
 const INITIAL_WRITE_BUFFER_SIZE: usize = 1024;
+const RETAINED_BUFFER_SIZE: usize = 16 * 1024;
+const BUFFER_RELEASE_DELAY: Duration = Duration::from_secs(60);
 
 /// How much leading space should be reserved in a buffer to avoid moving memory.
 const LEADING_BUFFER_SPACE: usize = mtp::MAX_TRANSPORT_HEADER_LEN
@@ -172,6 +176,7 @@ pub struct Sender<T: Transport, M: Mtp> {
     read_tail: usize,
     write_buffer: DequeBuffer<u8>,
     write_head: usize,
+    last_large_transfer: Instant,
 }
 
 struct Request {
@@ -243,6 +248,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 LEADING_BUFFER_SPACE,
             ),
             write_head: 0,
+            last_large_transfer: Instant::now(),
         })
     }
 
@@ -482,6 +488,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 )));
             }
             let next = (self.read_buffer.len() * 2).min(MAXIMUM_DATA);
+            // Exact: amortized growth would reserve 2 MiB to hold the 1 MiB limit.
+            self.read_buffer
+                .reserve_exact(next - self.read_buffer.len());
             self.read_buffer.resize(next, 0);
         }
         Ok(())
@@ -584,10 +593,33 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             }
         }
 
+        let used = self.read_tail;
         self.read_buffer.copy_within(next_offset..self.read_tail, 0);
         self.read_tail -= next_offset;
+        self.release_idle_buffers(used);
 
         Ok(updates)
+    }
+
+    // Only buffers holding no pending bytes are replaced. Keepalive replies
+    // guarantee a later visit, so this also applies to otherwise idle sessions.
+    fn release_idle_buffers(&mut self, used: usize) {
+        if used > RETAINED_BUFFER_SIZE {
+            self.last_large_transfer = Instant::now();
+        } else if (self.read_buffer.len() > RETAINED_BUFFER_SIZE
+            || self.write_buffer.capacity() > RETAINED_BUFFER_SIZE + LEADING_BUFFER_SPACE)
+            && self.last_large_transfer.elapsed() >= BUFFER_RELEASE_DELAY
+        {
+            if self.read_tail == 0 && self.read_buffer.len() > RETAINED_BUFFER_SIZE {
+                self.read_buffer = vec![0; INITIAL_READ_BUFFER_SIZE];
+            }
+            if self.write_buffer.is_empty()
+                && self.write_buffer.capacity() > RETAINED_BUFFER_SIZE + LEADING_BUFFER_SPACE
+            {
+                self.write_buffer =
+                    DequeBuffer::with_capacity(INITIAL_WRITE_BUFFER_SIZE, LEADING_BUFFER_SPACE);
+            }
+        }
     }
 
     /// Handle `n` more written bytes being ready to process by the transport.
@@ -610,8 +642,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             return Ok(());
         }
 
+        let used = self.write_buffer.len();
         self.write_buffer.clear();
         self.write_head = 0;
+        self.release_idle_buffers(used);
         for req in self.requests.iter_mut() {
             match &req.state {
                 RequestState::NotSerialized | RequestState::Sent(_) => {}
@@ -981,6 +1015,7 @@ pub async fn generate_auth_key<T: Transport>(
         read_tail: sender.read_tail,
         write_buffer: sender.write_buffer,
         write_head: sender.write_head,
+        last_large_transfer: sender.last_large_transfer,
         addr: sender.addr,
     })
 }
@@ -1411,6 +1446,150 @@ mod optimization_tests {
             ));
             assert_eq!(receivers.next().unwrap().await.unwrap().unwrap(), reply);
         }
+    }
+
+    #[tokio::test]
+    async fn idle_grown_socket_buffers_are_released_without_touching_pending_bytes() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        tokio::time::pause();
+        let grow = |sender: &mut Sender<transport::Full, mtp::Encrypted>| {
+            sender.read_buffer.resize(MAXIMUM_DATA, 0);
+            for byte in std::iter::repeat_n(1, MAXIMUM_DATA) {
+                sender.write_buffer.push(byte);
+            }
+            sender.write_buffer.clear();
+        };
+        grow(&mut sender);
+        sender.release_idle_buffers(RETAINED_BUFFER_SIZE + 1);
+        // Active transfers keep their capacity, however small the transfer between.
+        tokio::time::advance(BUFFER_RELEASE_DELAY - Duration::from_secs(1)).await;
+        sender.release_idle_buffers(1);
+        assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
+        assert!(sender.write_buffer.capacity() >= MAXIMUM_DATA);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        // Bytes of a partial packet survive, and read and write release separately.
+        sender.read_tail = 5;
+        sender.read_buffer[..5].copy_from_slice(b"parts");
+        sender.write_buffer.push(9);
+        sender.release_idle_buffers(1);
+        assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
+        assert_eq!(&sender.read_buffer[..5], b"parts");
+        assert!(sender.write_buffer.capacity() >= MAXIMUM_DATA);
+        assert_eq!(&sender.write_buffer[..], [9]);
+        sender.write_buffer.clear();
+        sender.release_idle_buffers(1);
+        assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
+        assert!(sender.write_buffer.capacity() <= RETAINED_BUFFER_SIZE);
+        sender.read_tail = 0;
+        sender.release_idle_buffers(1);
+        assert_eq!(sender.read_buffer.len(), INITIAL_READ_BUFFER_SIZE);
+        // Ordinary traffic reaches this through the network paths, and buffers can
+        // grow again afterwards. The loopback retention census exercises real reads.
+        grow(&mut sender);
+        tokio::time::advance(BUFFER_RELEASE_DELAY).await;
+        sender.on_net_write(0).unwrap();
+        assert_eq!(sender.read_buffer.len(), INITIAL_READ_BUFFER_SIZE);
+        assert!(sender.write_buffer.capacity() <= RETAINED_BUFFER_SIZE);
+    }
+
+    #[tokio::test]
+    async fn read_buffer_growth_stops_exactly_at_the_receive_limit() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        while sender.read_buffer.len() < MAXIMUM_DATA {
+            sender.read_tail = sender.read_buffer.len();
+            sender.prepare_read_buffer().unwrap();
+        }
+        assert_eq!(sender.read_buffer.capacity(), MAXIMUM_DATA);
+        sender.read_tail = MAXIMUM_DATA;
+        assert!(sender.prepare_read_buffer().is_err());
+    }
+
+    #[tokio::test]
+    async fn network_read_releases_an_idle_buffer_after_a_complete_packet() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        let session = {
+            let tracker = crate::InvocationTracker::default();
+            let (tx, _rx) = oneshot::channel();
+            sender.enqueue_tracked_body(
+                tl::functions::Ping { ping_id: 1 }.to_bytes().into(),
+                tx,
+                tracker.try_acquire(),
+            );
+            sender.try_fill_write();
+            let plain = client_frame_plaintext(&sender.write_buffer[..]);
+            sender.on_net_write(sender.write_buffer.len()).unwrap();
+            i64::from_le_bytes(plain[8..16].try_into().unwrap())
+        };
+        tokio::time::pause();
+        sender.read_buffer.resize(MAXIMUM_DATA, 0);
+        tokio::time::advance(BUFFER_RELEASE_DELAY).await;
+        let ack = tl::enums::MsgsAck::Ack(tl::types::MsgsAck { msg_ids: vec![] }).to_bytes();
+        let encrypted = zero_key_server_packet(session, 13, 0, &ack);
+        let mut frame = DequeBuffer::with_capacity(encrypted.len(), LEADING_BUFFER_SPACE);
+        frame.extend(encrypted);
+        transport::Full::new().pack(&mut frame);
+        // Part of a packet is not complete: its bytes stay in the grown buffer.
+        sender.read_buffer[..frame.len()].copy_from_slice(&frame[..]);
+        assert!(sender.on_net_read(frame.len() - 1).unwrap().is_empty());
+        assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
+        assert_eq!(sender.read_tail, frame.len() - 1);
+        assert!(sender.on_net_read(1).unwrap().is_empty());
+        assert_eq!(sender.read_tail, 0);
+        assert_eq!(sender.read_buffer.len(), INITIAL_READ_BUFFER_SIZE);
+    }
+
+    #[tokio::test]
+    async fn excessively_nested_update_is_a_gap_not_a_connection_failure() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        let session = {
+            let tracker = crate::InvocationTracker::default();
+            let (tx, _rx) = oneshot::channel();
+            sender.enqueue_tracked_body(
+                tl::functions::Ping { ping_id: 1 }.to_bytes().into(),
+                tx,
+                tracker.try_acquire(),
+            );
+            sender.try_fill_write();
+            let plain = client_frame_plaintext(&sender.write_buffer[..]);
+            i64::from_le_bytes(plain[8..16].try_into().unwrap())
+        };
+        let mut body = tl::types::UpdateShort::CONSTRUCTOR_ID.to_bytes();
+        body.extend(tl::types::UpdateServiceNotification::CONSTRUCTOR_ID.to_bytes());
+        body.extend(4u32.to_bytes());
+        for field in ["type", "message"] {
+            field.as_bytes().serialize(&mut body);
+        }
+        for _ in 0..64 {
+            body.extend(tl::types::MessageMediaStory::CONSTRUCTOR_ID.to_bytes());
+            body.extend(1u32.to_bytes());
+            body.extend(tl::types::PeerUser::CONSTRUCTOR_ID.to_bytes());
+            body.extend(1i64.to_bytes());
+            body.extend(1i32.to_bytes());
+            body.extend(tl::types::StoryItem::CONSTRUCTOR_ID.to_bytes());
+            body.extend(0u32.to_bytes());
+            body.extend(1i32.to_bytes());
+            body.extend(1i32.to_bytes());
+            body.extend(2i32.to_bytes());
+        }
+        body.extend(tl::types::MessageMediaEmpty::CONSTRUCTOR_ID.to_bytes());
+        assert_eq!(
+            deserialize_updates_like(body.clone()).err(),
+            Some(tl::deserialize::Error::DepthLimitExceeded)
+        );
+        let mut updates = Vec::new();
+        for id in [13, 17] {
+            let results = sender
+                .mtp
+                .deserialize(&mut zero_key_server_packet(session, id, 1, &body))
+                .unwrap();
+            sender.process_mtp_buffer(results, &mut updates).unwrap();
+        }
+        assert_eq!(updates.len(), 2);
+        assert!(
+            updates
+                .iter()
+                .all(|update| matches!(update, UpdatesLike::MalformedUpdates))
+        );
     }
 
     #[tokio::test]

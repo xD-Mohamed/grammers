@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased audit follow-up
+
+See the [follow-up ledger](REVIEW-FOLLOWUP.md) for the status of every remaining
+audit item, and [its measurements](benchmarks/2026-10-31/README.md).
+
+- Generated TL deserialization rejects values nested beyond 64 boxed levels with
+  `deserialize::Error::DepthLimitExceeded`, replacing a process-aborting stack
+  overflow. This is a library resource policy and can reject schema-valid values
+  nested deeper. Exhaustive matches on that enum need a new arm; generated code now
+  requires a cursor with `enter()`. Too-deep socket updates are treated as a gap.
+- A failed update-recovery RPC, or failing to store its result, pauses retries for
+  about one second. Errors still reach the caller, and live updates keep flowing.
+- A difference reply that cannot be decoded no longer wedges its sequence: after 30
+  consecutive failures its backlog is discarded with a warning. Those updates are
+  lost. One channel's unreadable reply does not block its siblings.
+- Socket updates received during a failed channel recovery are retained (at most 512
+  across channels) and delivered when it ends, instead of being lost. Call the new
+  `MessageBoxes::take_released_updates` if using message boxes directly.
+- Bots try the zero-hash channel form before discarding a backlog with no cached
+  access. This follows TDLib and has not been observed against Telegram.
+- Copying authorization to a DC with no key creates the key first with one
+  `help.getNearestDc`, so the import is attributed to a known key.
+- Up to 8 already-queued requests now share a write, charging the cooperative budget
+  per request. Local overload completion is +9.27% with busy p99 -19.07%; quiet p50 and
+  p95 are about +5%. Closed-loop throughput shows no resolved change.
+- Replay history stores 6 bytes per ID and also evicts IDs over 300 seconds of server
+  time older than the newest, so quiet sessions keep far less. Socket buffers grown
+  beyond 16 KiB are released after 60 seconds without a larger transfer, and read
+  buffer growth stops exactly at the receive limit instead of reserving 2 MiB.
+- The evidence checker refuses Python optimization and reports that no checks ran when
+  privacy patterns are absent (status 2).
+
 ## 2026-10-30: protocol limits, initialization and recovery
 
 - Bound handshake factorization and gzip expansion/work/nesting; validate DH inputs
@@ -37,7 +69,8 @@
   Remember exhaustion for that receiver lifetime so later recovery episodes do
   not repeat the grace; usable access or a successful difference resets it.
   The first grace suppresses live channel PTS updates and may lose them permanently
-  when no hash becomes available, including with `auto_cache_peers: false`.
+  when no hash becomes available, including with `auto_cache_peers: false`. (The
+  follow-up above now retains those received during the grace.)
 - Avoid repeated pending-queue scans during catch-up deadline checks.
 - Deliver delayed RPC replies below the actual replay floor without replaying own
   updates or discarding valid siblings. Keep container replay decisions stable.
@@ -68,23 +101,27 @@
 
 ### Known limitations and measured costs
 
-Generated TL recursion is an explicit deferral. A deeply nested value in an
-authenticated Telegram response, including content influenced by remote users,
-can cause a **process-aborting stack overflow**. Every bot sharing that process
-can stop. MTProto/gzip depth and work limits do not bound generated TL recursion,
-and checked runners cannot contain a non-unwinding abort.
+Generated TL decoding is bounded to 64 boxed levels, so an authenticated deep value
+is rejected instead of overflowing the stack. Values built by applications, serde or
+third-party code are outside this, as are stacks well below 2 MiB, including
+unoptimized builds on a 1 MiB Windows main thread.
 
-Cooperative sender budgeting currently counts more than the receive arm.
-Receive-arm-only placement remains unevaluated and deferred. No stack profile
-was obtained because `perf` was unavailable; socket/runtime/thread controls do
-not establish that Tokio is a bottleneck or justify replacing it.
+Receive-arm-only budget placement was measured and rejected for its quiet-pool cost.
+No stack profile was obtained because `perf` was unavailable; socket/runtime/thread
+controls do not establish that Tokio is a bottleneck or justify replacing it.
 
-Local correctness costs are material, not a general optimization claim.
-The current twelve-pair comparison measures plain throughput -3.15% [-7.23%, -1.53%]
-and overload completion -0.91% [-6.17%, +3.65%]. Busy p99 is
-+124.27% and quiet p99 -45.47%.
-Saturated heap remains 7,911 to 16,079 B/session; dedicated heap-run process RSS
-changes +29.55%. These local intervals do not explain historical losses.
+Correctness costs against the historical baseline are still material, and no general
+speedup is established. Against `7774ed6`, plain throughput is -4.23% [-8.23%, +4.81%],
+overload completion +1.27% [+0.18%, +6.88%], busy p99 +96.45% and quiet p99 -43.87%.
+Heap after a burst of 1100 replies is 7,911 to 14,031 B/session, and falls towards the
+baseline as traffic slows. See the
+[current measurements](benchmarks/2026-10-31/README.md).
+The figures below describe the published `2ffd991` and earlier. At `2ffd991`, twelve
+pairs measured plain throughput -3.15% [-7.23%, -1.53%], overload completion -0.91%
+[-6.17%, +3.65%], busy p99 +124.27%, quiet p99 -45.47% and saturated heap 7,911 to
+16,079 B/session, with dedicated heap-run process RSS +29.55%. Such figures vary between
+sessions: a rerun with the current harness measured `2ffd991` at plain +2.16% and
+overload -6.45%.
 The historical post-Opus2 comparison measured plain throughput -5.80%,
 CPU/RPC +5.94%, overload completion -3.58%, busy p99 +115.73% and quiet p99 -45.69%.
 Saturated client heap rose from 7,911 to 16,079 B/session; heap-run whole-process
@@ -98,29 +135,47 @@ whole-process max RSS versus 15,052 KiB baseline at 100 offered calls/s, and
 353,152 versus 71,652 KiB at 2,000/s. The baseline failed about half its calls because
 it could not accept the valid large replies, so these are not equivalent-work
 memory comparisons. The absolute candidate memory footprint matters for many
-bots in one process; these figures include the local responder. Current reruns measure 92,388/15,056 KiB
-at 100 calls/s and 372,304/71,924 KiB at 2,000/s, with the same
-baseline-failure caveat. Full scope is linked above.
+bots in one process; these figures include the local responder. Reruns at `2ffd991`
+measured 92,388/15,056 KiB at 100 calls/s and 372,304/71,924 KiB at 2,000/s, with the
+same baseline-failure caveat. Peak figures have not improved, because they are dominated
+by traffic in flight. One 1 MiB reply no longer pins memory: a session holds about 1.06
+MB right after it, and about 7.9 KB from the first transfer 60 s after it. Keepalive
+replies provide that transfer, so an idle session releases within about two minutes.
 
 Obfuscation and encrypted-packet padding still panic if operating-system entropy
 fails. Fallible handshake and EncryptedBuilder setup do not cover those paths.
 
 Pre-login service pushes, including QR login-token notifications, are delivered
 without starting account recovery. Account updates provide provisional login
-proof; a rejected initial GetState (401) returns to paced self-metadata discovery.
+proof; a rejected initial GetState (401) warns with the RPC name and returns to
+paced self-metadata discovery. It does not retry account recovery until confirmed
+self metadata is cached by completing login or a successful explicit `get_me()`.
+That call caches self metadata even with automatic peer caching disabled. A revoked
+key will not recover merely by waiting; a failed `get_me()` surfaces its error.
 Errors after cached-self or successful GetState confirmation still propagate.
+
+Logout retains cached self metadata and existing stream state. Prefer a fresh
+update stream after re-login. A stream used during QR/re-login can therefore return
+account recovery 401 errors until login/2FA completes, at most about once per second,
+and it delivers live updates between them. Tokens can also be checked explicitly on
+your own schedule.
 Ordinary live delivery does not read self metadata. If account kind is unknown,
 the first channel recovery reads it once: cached bots retain limit 100,000;
 missing metadata uses the valid conservative limit of 100 for that receiver.
 
 Unknown channel-difference errors (400/403/406) preserve the channel's PTS and
-allow sibling channels to recover. Live PTS updates for the affected channel
-remain withheld while recovery keeps failing; the failure is logged as a warning.
+allow sibling channels to recover. Contiguous live PTS updates resume after a failed
+attempt, including those received during it. Updates beyond a remaining PTS gap stay
+withheld until that gap is recovered: if Telegram keeps rejecting recovery they stay
+withheld, rather than silently skipping data. The failure is logged as a warning.
 
-Missing-hash grace can suppress about 30 seconds of channel updates on the first
-recovery episode, or longer under scheduling delays. The unavailable backlog is
-discarded. Exhaustion memory is per receiver, grows with distinct exhausted
-channels, and is not persisted. New receivers can therefore encounter a new grace.
+Missing-hash grace postpones about 30 seconds of channel updates on the first recovery
+episode, or longer under scheduling delays. Those received during it are retained, up
+to 512 across channels, and delivered when it ends. Known bots then try the zero-hash
+form. Otherwise, the backlog from before them is discarded and cannot be reconstructed
+without access; user accounts have no fallback here. Exhaustion memory is per receiver,
+grows with distinct exhausted channels, and is not persisted. New receivers can
+therefore encounter a new grace.
 Peer caching is required for reliable channel catch-up. Cancelled peer-cache work
 is retained and retried on the next stream call before buffered updates are delivered.
 
