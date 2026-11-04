@@ -1,0 +1,8 @@
+    Checking grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+ Documenting grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+ Documenting grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+    Checking grammers-client v0.10.0 (/root/grammers/grammers-client)
+ Documenting grammers-client v0.10.0 (/root/grammers/grammers-client)
+ Documenting grammers v0.1.0 (/root/grammers/grammers)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.23s
+   Generated /root/grammers/target/doc/grammers/index.html and 8 other files

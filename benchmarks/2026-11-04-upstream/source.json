@@ -1,0 +1,340 @@
+{
+  "date_utc": "2026-11-04",
+  "upstream_url": "https://codeberg.org/Lonami/grammers.git",
+  "default_ref": "refs/heads/master",
+  "checked_tip": "7b414b1d28537f4c354629c3ceeabe771a86f3b4",
+  "integrated_ancestor": "633d7fe4ecc829beec492d745bbbfe5911010623",
+  "previous_review_tip": "1e31e73cd9797790905bbea82cd75adcbe6f1242",
+  "fork_start": "37ca7a06db50520d6384e79b169a92e9d0b19288",
+  "observed_origin_main_at_start": "37ca7a06db50520d6384e79b169a92e9d0b19288",
+  "comparison_commits": 20,
+  "new_commits_since_previous_review": 3,
+  "commands": [
+    "git ls-remote --symref https://codeberg.org/Lonami/grammers.git HEAD",
+    "git fetch --no-tags --no-write-fetch-head https://codeberg.org/Lonami/grammers.git refs/heads/master:refs/remotes/upstream/master",
+    "git merge-base HEAD refs/remotes/upstream/master",
+    "git log --reverse --format=%H 633d7fe..upstream/master"
+  ],
+  "commits": [
+    {
+      "commit": "6ce4c54c0ad712a6f91f6344119f58be105f9533",
+      "new_since_previous_review": false,
+      "subject": "Make ttl behaviour a bit more sensible",
+      "parents": [
+        "633d7fe4ecc829beec492d745bbbfe5911010623"
+      ],
+      "tree": "26986ccf73da5891c048e9e6d9fda11bdd59da2c",
+      "changed_paths": [
+        "grammers-client/src/media/input_media.rs"
+      ],
+      "git_show_fuller_binary_sha256": "04639f79d4463f26ef85b78bc7d232d193fd6790e635e13586d14c8903c83535"
+    },
+    {
+      "commit": "5b8007925bc0ab58e7af92058960c1f585ab1e19",
+      "new_since_previous_review": false,
+      "subject": "Bump all dependencies",
+      "parents": [
+        "6ce4c54c0ad712a6f91f6344119f58be105f9533"
+      ],
+      "tree": "611bbfb56902b36e7ea01f6c0de2b2625aef0779",
+      "changed_paths": [
+        "grammers-client/Cargo.toml",
+        "grammers-crypto/Cargo.toml",
+        "grammers-mtproto/Cargo.toml",
+        "grammers-mtsender/Cargo.toml",
+        "grammers-session/Cargo.toml",
+        "grammers-tl-gen/Cargo.toml",
+        "grammers-tl-parser/Cargo.toml",
+        "grammers-tl-types/Cargo.toml"
+      ],
+      "git_show_fuller_binary_sha256": "cb1a6644b73f7bb872dd18fd7c493922dabe1f38ad04cfca9abd4ea545e32179"
+    },
+    {
+      "commit": "15b7afa46a9c6853aa9d8efc9d70a0f46b1781c3",
+      "new_since_previous_review": false,
+      "subject": "Bump to v0.11.0",
+      "parents": [
+        "5b8007925bc0ab58e7af92058960c1f585ab1e19"
+      ],
+      "tree": "f5205657aa038a1d2eb7ee2a96a9314aa40b0cbd",
+      "changed_paths": [
+        "grammers-client/Cargo.toml",
+        "grammers-crypto/Cargo.toml",
+        "grammers-mtproto/Cargo.toml",
+        "grammers-mtsender/Cargo.toml",
+        "grammers-session/Cargo.toml",
+        "grammers-tl-gen/Cargo.toml",
+        "grammers-tl-types/Cargo.toml",
+        "grammers/Cargo.toml"
+      ],
+      "git_show_fuller_binary_sha256": "891407e33a14740275e7ab235b78676a2cebaeb01510c992abebeb93c529bf0b"
+    },
+    {
+      "commit": "dfffb7144f8a57aeda4dcd041ebb5a71a0ed63ef",
+      "new_since_previous_review": false,
+      "subject": "Update to layer 232",
+      "parents": [
+        "15b7afa46a9c6853aa9d8efc9d70a0f46b1781c3"
+      ],
+      "tree": "6bfca49bde7f41cb3dc3b07a9c2946b7ff3a663a",
+      "changed_paths": [
+        "grammers-client/src/client/messages.rs",
+        "grammers-client/src/message/message.rs",
+        "grammers-client/src/peer/channel.rs",
+        "grammers-session/src/message_box/adaptor.rs",
+        "grammers-tl-types/tl/api.tl"
+      ],
+      "git_show_fuller_binary_sha256": "1a3a036b88350fb8a46a32db8614d212cc5e83b54cc62c3b55681c84d105ba2b"
+    },
+    {
+      "commit": "a984cac0be35871e943a307a7fd0b300eeb32bb9",
+      "new_since_previous_review": false,
+      "subject": "Factor sans-io bits out of mtsender",
+      "parents": [
+        "dfffb7144f8a57aeda4dcd041ebb5a71a0ed63ef"
+      ],
+      "tree": "13fd679b47df8c7fd09d4945cfdac1615ac11b74",
+      "changed_paths": [
+        "grammers-mtproto/src/connection.rs",
+        "grammers-mtproto/src/lib.rs",
+        "grammers-mtproto/src/mtp/mod.rs",
+        "grammers-mtsender/src/errors.rs",
+        "grammers-mtsender/src/sender.rs",
+        "grammers-session/src/updates.rs",
+        "grammers-tl-types/src/deserialize.rs"
+      ],
+      "git_show_fuller_binary_sha256": "b733c7ca59d9349e5255e658a340f8c181a1a74c55726c3aa9ae66518cf360c9"
+    },
+    {
+      "commit": "e564eefacb7feb5bde1c59ecd90a8f0552556847",
+      "new_since_previous_review": false,
+      "subject": "Add extend_back fast-path for slices to DequeBuffer (#85)",
+      "parents": [
+        "a984cac0be35871e943a307a7fd0b300eeb32bb9"
+      ],
+      "tree": "0e973d3563f98406e101eebc7dcda389e847911a",
+      "changed_paths": [
+        "grammers-crypto/src/deque_buffer.rs",
+        "grammers-crypto/src/lib.rs"
+      ],
+      "git_show_fuller_binary_sha256": "8c19d2209884ac8167c1636ce6371a7506be0c7f5cee22ba56daa5168e9f20e3"
+    },
+    {
+      "commit": "4101f5e9931eede7118b3b29efd52cc3a22883b5",
+      "new_since_previous_review": false,
+      "subject": "Support dynamically-configured Transport in SenderPool (#84)",
+      "parents": [
+        "e564eefacb7feb5bde1c59ecd90a8f0552556847"
+      ],
+      "tree": "5016254e650479a86cf6d42dc01dea3ef50453fb",
+      "changed_paths": [
+        "grammers-mtproto/src/connection.rs",
+        "grammers-mtproto/src/transport/mod.rs",
+        "grammers-mtsender/src/configuration.rs",
+        "grammers-mtsender/src/sender_pool.rs"
+      ],
+      "git_show_fuller_binary_sha256": "dd518eea564e0de97c5343e17f4a16a938b431f99a93a150a3d2a77491a69d38"
+    },
+    {
+      "commit": "c8d69796606882117d259df46f8c28f5d9ba951d",
+      "new_since_previous_review": false,
+      "subject": "Support converting MsgId into_inner",
+      "parents": [
+        "4101f5e9931eede7118b3b29efd52cc3a22883b5"
+      ],
+      "tree": "b6b6832099cf8ec36632a7d90b30e25fb93f5319",
+      "changed_paths": [
+        "grammers-mtproto/src/lib.rs"
+      ],
+      "git_show_fuller_binary_sha256": "02e318936b0574780315b772ea017df1fb8658978a8bfbc863678bc30bd69e7f"
+    },
+    {
+      "commit": "07b51abe53e6db99dbe8791d6562ea9b00ce9c8d",
+      "new_since_previous_review": false,
+      "subject": "Fix typo in logging message",
+      "parents": [
+        "c8d69796606882117d259df46f8c28f5d9ba951d"
+      ],
+      "tree": "d63e66c625e842918e121b0894084fc6db0b29f6",
+      "changed_paths": [
+        "grammers-mtsender/src/sender.rs"
+      ],
+      "git_show_fuller_binary_sha256": "e2b625f420e804fd6c1114b857455e4d9be2f5408b563f228fe343748bcafb39"
+    },
+    {
+      "commit": "98b7b88dd485d5a8f348a721d37007a70c04c135",
+      "new_since_previous_review": false,
+      "subject": "Derive Debug for Deserialization",
+      "parents": [
+        "07b51abe53e6db99dbe8791d6562ea9b00ce9c8d"
+      ],
+      "tree": "f8a6e21183f6ebe4d36c5a094492c2f572fed181",
+      "changed_paths": [
+        "grammers-mtproto/src/mtp/mod.rs"
+      ],
+      "git_show_fuller_binary_sha256": "2e98581e6b03204b861a290a824fb1983923f0c42b887fa4dfb601f167b35be9"
+    },
+    {
+      "commit": "dad55819798b572bbde7a6fbeae35297891b98c4",
+      "new_since_previous_review": false,
+      "subject": "Delete unused -crypto dependency from -mtsender",
+      "parents": [
+        "98b7b88dd485d5a8f348a721d37007a70c04c135"
+      ],
+      "tree": "b98b88b9164d7262573dd2595cf1e0a9a3d1df47",
+      "changed_paths": [
+        "grammers-mtsender/Cargo.toml",
+        "grammers-mtsender/DEPS.md"
+      ],
+      "git_show_fuller_binary_sha256": "8d40677db177ddd502453caff06d7691b86159802315cc81c08660c9ce96eaa1"
+    },
+    {
+      "commit": "84cfb99e89456daf79ffd7d82879f73063ca193d",
+      "new_since_previous_review": false,
+      "subject": "Remove DequeBuffer usages from grammers-crypto",
+      "parents": [
+        "dad55819798b572bbde7a6fbeae35297891b98c4"
+      ],
+      "tree": "9f253e92bc22b17b4c961bb3979f101025fad1bc",
+      "changed_paths": [
+        "grammers-crypto/src/auth_key.rs",
+        "grammers-crypto/src/lib.rs",
+        "grammers-mtproto/src/mtp/encrypted.rs"
+      ],
+      "git_show_fuller_binary_sha256": "5b9c072c48629826040cb5d9c4263446e2545514cc6f65ddbb72a5545c692edc"
+    },
+    {
+      "commit": "d654b0450e9d45bb98697f5131472d242af28bea",
+      "new_since_previous_review": false,
+      "subject": "Move DequeBuffer to grammers-mtproto",
+      "parents": [
+        "84cfb99e89456daf79ffd7d82879f73063ca193d"
+      ],
+      "tree": "aa47943826d6e0c59854b59397f92675daa28cc4",
+      "changed_paths": [
+        "grammers-crypto/src/deque_buffer.rs",
+        "grammers-crypto/src/lib.rs",
+        "grammers-mtproto/src/connection.rs",
+        "grammers-mtproto/src/deque_buffer.rs",
+        "grammers-mtproto/src/lib.rs",
+        "grammers-mtproto/src/mtp/encrypted.rs",
+        "grammers-mtproto/src/mtp/mod.rs",
+        "grammers-mtproto/src/mtp/plain.rs",
+        "grammers-mtproto/src/transport/abridged.rs",
+        "grammers-mtproto/src/transport/full.rs",
+        "grammers-mtproto/src/transport/intermediate.rs",
+        "grammers-mtproto/src/transport/mod.rs",
+        "grammers-mtproto/src/transport/obfuscated.rs"
+      ],
+      "git_show_fuller_binary_sha256": "ce0aadf86a34b68eb06802f30d908c1534a80c21f068a76d8c13feac9fc6faad"
+    },
+    {
+      "commit": "4ca2263e5678d2e85414aa8c2f469c1341d3a143",
+      "new_since_previous_review": false,
+      "subject": "Add missing doc-comment for extend_back",
+      "parents": [
+        "d654b0450e9d45bb98697f5131472d242af28bea"
+      ],
+      "tree": "f70b046a41c072b7a8c03fb59644301312adb2da",
+      "changed_paths": [
+        "grammers-mtproto/src/deque_buffer.rs"
+      ],
+      "git_show_fuller_binary_sha256": "990245fe02eb0db74c8b7c2ae53634d8f4532ad1eefcb872a124679eb7b40c8a"
+    },
+    {
+      "commit": "58f7bd1e3c17113c62b5fa19362726f7f9185887",
+      "new_since_previous_review": false,
+      "subject": "Make upload_media public and avoid redundant clone (#86)",
+      "parents": [
+        "4ca2263e5678d2e85414aa8c2f469c1341d3a143"
+      ],
+      "tree": "96d9125850592687a00eba3fc8d90762a6db1d22",
+      "changed_paths": [
+        "grammers-client/src/client/messages.rs"
+      ],
+      "git_show_fuller_binary_sha256": "fcdb791491fb1530ab93fec68031bd300a2df57b946de61662fbb913f056b885"
+    },
+    {
+      "commit": "ad7b4725f7ad62a93ddd251035405b628e1bed1e",
+      "new_since_previous_review": false,
+      "subject": "Reevaluate sizes of and refactor buffers to prevent connection reset loops",
+      "parents": [
+        "58f7bd1e3c17113c62b5fa19362726f7f9185887"
+      ],
+      "tree": "f159a11ce2f1e426a57116cecb70af151cddf79d",
+      "changed_paths": [
+        "grammers-crypto/src/lib.rs",
+        "grammers-mtproto/src/lib.rs",
+        "grammers-mtproto/src/manual_tl.rs",
+        "grammers-mtproto/src/mtp/encrypted.rs",
+        "grammers-mtproto/src/transport/mod.rs"
+      ],
+      "git_show_fuller_binary_sha256": "52bb38bc7590fbd709d6b1e20c3296510878507cb44bade61267948c6c2205f4"
+    },
+    {
+      "commit": "1e31e73cd9797790905bbea82cd75adcbe6f1242",
+      "new_since_previous_review": false,
+      "subject": "Return request too large error to user instead of panic",
+      "parents": [
+        "ad7b4725f7ad62a93ddd251035405b628e1bed1e"
+      ],
+      "tree": "b6a848cab4195dd926806330668e97b852a18fc9",
+      "changed_paths": [
+        "grammers-mtsender/src/sender.rs",
+        "grammers-mtsender/src/sender_pool.rs"
+      ],
+      "git_show_fuller_binary_sha256": "72eeaa1ce312d55cf27c98dcc78ad47f0516f3501835a9366b445f77033a9737"
+    },
+    {
+      "commit": "d2c6e84cf19c83fe8d0676febaef42b7877d8af0",
+      "new_since_previous_review": true,
+      "subject": "Add safe check for dh_prime and g in auth key generation step3 (#89)",
+      "parents": [
+        "1e31e73cd9797790905bbea82cd75adcbe6f1242"
+      ],
+      "tree": "9ef04081a7b64990a8682111d5efb3e3918076d3",
+      "changed_paths": [
+        "grammers-crypto/src/lib.rs",
+        "grammers-mtproto/src/authentication.rs"
+      ],
+      "git_show_fuller_binary_sha256": "657493e5f4b50a24555fed819c69e80d0d87bf7b42f50807f71a82b14783c759"
+    },
+    {
+      "commit": "3122892a965a0c9d3a06b8eb291129a9899d3c71",
+      "new_since_previous_review": true,
+      "subject": "Use extend_from_slice in serialize for perf improvement (#88)",
+      "parents": [
+        "d2c6e84cf19c83fe8d0676febaef42b7877d8af0"
+      ],
+      "tree": "483a9e1152478845239543d59d8b88cdcab417aa",
+      "changed_paths": [
+        "grammers-mtproto/src/manual_tl.rs",
+        "grammers-mtproto/src/mtp/encrypted.rs",
+        "grammers-mtproto/src/mtp/plain.rs",
+        "grammers-mtproto/src/utils.rs",
+        "grammers-tl-gen/src/enums.rs",
+        "grammers-tl-gen/src/structs.rs",
+        "grammers-tl-types/src/serialize.rs"
+      ],
+      "git_show_fuller_binary_sha256": "ab0496c32fac4ed4d3c41973c399acfd67ed329e17c79d231adc8d9873220bd5"
+    },
+    {
+      "commit": "7b414b1d28537f4c354629c3ceeabe771a86f3b4",
+      "new_since_previous_review": true,
+      "subject": "Delete now-redundant Extend impls",
+      "parents": [
+        "3122892a965a0c9d3a06b8eb291129a9899d3c71"
+      ],
+      "tree": "4d9d7dd26323d9740213f56b7b11a179c8971bd8",
+      "changed_paths": [
+        "grammers-mtproto/src/deque_buffer.rs",
+        "grammers-mtproto/src/mtp/plain.rs",
+        "grammers-mtproto/src/transport/abridged.rs",
+        "grammers-mtproto/src/transport/full.rs",
+        "grammers-mtproto/src/transport/intermediate.rs",
+        "grammers-mtproto/src/utils.rs"
+      ],
+      "git_show_fuller_binary_sha256": "0e245e16be6d41598a1ad4505018b31327b48aa5880e92962d8d9edd65f93c5f"
+    }
+  ]
+}

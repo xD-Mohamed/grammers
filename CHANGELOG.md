@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased: reviewed Codeberg upstream through 7b414b1
+
+- Add `MsgId::into_inner()` to correlate protocol identifiers with external
+  diagnostics and custom transport integrations (upstream `c8d6979`).
+- Add `Client::upload_media()` to resolve input media without sending a message
+  (adapted from upstream `58f7bd1`). Albums use the same helper and continue to
+  reject empty/incomplete inputs and unsupported upload responses explicitly.
+- Review all 20 commits since the last full upstream integration, including three
+  newer than the previous review. DH safety checks are already present; retain
+  the existing serialization, crypto and transport APIs. Layer 230 is unchanged.
+  [Disposition and local validation](benchmarks/2026-11-04-upstream/README.md).
+
 ## Unreleased: proxy transports
 
 - The existing `proxy` feature, `ClientBuilder::proxy` and
