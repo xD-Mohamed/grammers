@@ -834,15 +834,9 @@ impl Client {
                     | tl::enums::InputMedia::UploadedDocument(_)
                     | tl::enums::InputMedia::DocumentExternal(_)
             ) {
-                let uploaded = self
-                    .invoke(&tl::functions::messages::UploadMedia {
-                        business_connection_id: None,
-                        peer: peer.into(),
-                        media: raw_media,
-                    })
-                    .await?;
+                let uploaded = self.upload_media(peer, raw_media).await?;
                 media.media = Some(
-                    Media::from_raw(uploaded)
+                    uploaded
                         .and_then(|media| media.to_raw_input_media())
                         .ok_or_else(|| {
                             std::io::Error::new(
@@ -891,6 +885,28 @@ impl Client {
             .await?;
 
         Ok(map_random_ids_to_messages(self, peer, &random_ids, sent_update_parts(updates)).await?)
+    }
+
+    /// Uploads or resolves input media into reusable Telegram media without sending a message.
+    ///
+    /// This invokes `messages.uploadMedia`; local file bytes must first be uploaded with
+    /// [`Client::upload_file`] or [`Client::upload_stream`]. Returns `None` for empty or
+    /// unsupported media responses. RPC and deserialization errors are propagated.
+    ///
+    /// See also [`Client::send_album`], which rejects unsupported album media.
+    pub async fn upload_media<P: Into<PeerRef>, M: Into<tl::enums::InputMedia>>(
+        &self,
+        peer: P,
+        input_media: M,
+    ) -> Result<Option<Media>, InvocationError> {
+        let media = self
+            .invoke(&tl::functions::messages::UploadMedia {
+                business_connection_id: None,
+                peer: peer.into().into(),
+                media: input_media.into(),
+            })
+            .await?;
+        Ok(Media::from_raw(media))
     }
 
     /// Edits an existing message.
@@ -1459,6 +1475,175 @@ mod response_mapping_tests {
     use grammers_session::Session;
     use grammers_session::storages::MemorySession;
     use std::sync::Arc;
+
+    fn media_client(mode: u8, calls: Arc<std::sync::Mutex<Vec<u32>>>) -> Client {
+        use tl::{Deserializable, Identifiable, Serializable};
+
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 1);
+        let mut client = Client::new(pool.handle);
+        drop(pool.runner);
+        Arc::get_mut(&mut client.0).unwrap().rpc_responder = Some(Arc::new(move |_, body| {
+            let constructor = u32::from_le_bytes(body[..4].try_into().unwrap());
+            calls.lock().unwrap().push(constructor);
+            if constructor == tl::functions::messages::SendMultiMedia::CONSTRUCTOR_ID {
+                assert_eq!(mode, 0, "invalid uploads must prevent album delivery");
+                let request =
+                    tl::functions::messages::SendMultiMedia::from_bytes(&body[4..]).unwrap();
+                assert_eq!(request.multi_media.len(), 2);
+                for item in request.multi_media {
+                    let tl::enums::InputSingleMedia::Media(item) = item;
+                    assert_eq!(item.message, "caption");
+                    assert!(matches!(item.media, tl::enums::InputMedia::Photo(_)));
+                }
+                return Ok(tl::enums::Updates::TooLong.to_bytes());
+            }
+            assert_eq!(
+                constructor,
+                tl::functions::messages::UploadMedia::CONSTRUCTOR_ID
+            );
+            let request = tl::functions::messages::UploadMedia::from_bytes(&body[4..]).unwrap();
+            assert_eq!(
+                request.peer,
+                PeerId::user(7).unwrap().to_ambient_ref().into()
+            );
+            assert!(request.business_connection_id.is_none());
+            let tl::enums::InputMedia::PhotoExternal(input) = request.media else {
+                panic!("external photo was not forwarded intact");
+            };
+            assert_eq!(input.url, "https://example.invalid/photo");
+            let response: tl::enums::MessageMedia = match mode {
+                0 => tl::types::MessageMediaPhoto {
+                    spoiler: false,
+                    live_photo: false,
+                    photo: Some(
+                        tl::types::Photo {
+                            has_stickers: false,
+                            id: 9,
+                            access_hash: 77,
+                            file_reference: vec![1, 2, 3],
+                            date: 1,
+                            sizes: Vec::new(),
+                            video_sizes: None,
+                            dc_id: 2,
+                        }
+                        .into(),
+                    ),
+                    ttl_seconds: Some(5),
+                    video: None,
+                }
+                .into(),
+                1 => tl::enums::MessageMedia::Empty,
+                2 => tl::enums::MessageMedia::Unsupported,
+                3 => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "upload rejected",
+                    )
+                    .into());
+                }
+                4 => return Ok(vec![0; 4]),
+                _ => unreachable!(),
+            };
+            Ok(response.to_bytes())
+        }));
+        client
+    }
+
+    #[tokio::test]
+    async fn upload_media_preserves_requests_responses_and_errors() {
+        use tl::Identifiable;
+        let peer = PeerId::user(7).unwrap().to_ambient_ref();
+        for mode in 0..5 {
+            let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let client = media_client(mode, Arc::clone(&calls));
+            let result = client
+                .upload_media(
+                    peer,
+                    tl::types::InputMediaPhotoExternal {
+                        spoiler: false,
+                        url: "https://example.invalid/photo".into(),
+                        ttl_seconds: None,
+                    },
+                )
+                .await;
+            match mode {
+                0 => {
+                    let input = result.unwrap().unwrap().to_raw_input_media().unwrap();
+                    let tl::enums::InputMedia::Photo(input) = input else {
+                        panic!("missing photo")
+                    };
+                    let tl::enums::InputPhoto::Photo(photo) = input.id else {
+                        panic!("missing photo identity")
+                    };
+                    assert_eq!((photo.id, photo.access_hash), (9, 77));
+                    assert_eq!(photo.file_reference, [1, 2, 3]);
+                    assert_eq!(input.ttl_seconds, Some(5));
+                }
+                1 | 2 => assert!(result.unwrap().is_none()),
+                3 => assert!(matches!(result, Err(InvocationError::Io(e))
+                    if e.kind() == std::io::ErrorKind::PermissionDenied)),
+                4 => assert!(result.is_err()),
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                *calls.lock().unwrap(),
+                [tl::functions::messages::UploadMedia::CONSTRUCTOR_ID]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn albums_keep_cardinality_and_reject_failed_or_missing_media() {
+        use tl::Identifiable;
+        let peer = PeerId::user(7).unwrap().to_ambient_ref();
+        for mode in 0..5 {
+            let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let client = media_client(mode, Arc::clone(&calls));
+            for invalid in [vec![], vec![InputMedia::new()]] {
+                assert!(matches!(client.send_album(peer, invalid).await,
+                    Err(InvocationError::Io(e)) if e.kind() == std::io::ErrorKind::InvalidInput));
+            }
+            assert!(calls.lock().unwrap().is_empty());
+            let result = client
+                .send_album(
+                    peer,
+                    (0..2)
+                        .map(|_| {
+                            InputMedia::new()
+                                .caption("caption")
+                                .photo_url("https://example.invalid/photo")
+                        })
+                        .collect(),
+                )
+                .await;
+            if mode == 0 {
+                let messages = result.unwrap();
+                assert_eq!(messages.len(), 2);
+                assert!(messages.iter().all(Option::is_none));
+                assert_eq!(
+                    *calls.lock().unwrap(),
+                    [
+                        tl::functions::messages::UploadMedia::CONSTRUCTOR_ID,
+                        tl::functions::messages::UploadMedia::CONSTRUCTOR_ID,
+                        tl::functions::messages::SendMultiMedia::CONSTRUCTOR_ID,
+                    ]
+                );
+            } else {
+                match mode {
+                    1 | 2 => assert!(matches!(result, Err(InvocationError::Io(e))
+                        if e.kind() == std::io::ErrorKind::InvalidData)),
+                    3 => assert!(matches!(result, Err(InvocationError::Io(e))
+                        if e.kind() == std::io::ErrorKind::PermissionDenied)),
+                    4 => assert!(result.is_err()),
+                    _ => unreachable!(),
+                }
+                assert_eq!(
+                    *calls.lock().unwrap(),
+                    [tl::functions::messages::UploadMedia::CONSTRUCTOR_ID]
+                );
+            }
+        }
+    }
 
     #[tokio::test]
     async fn unmappable_send_responses_preserve_input_cardinality() {

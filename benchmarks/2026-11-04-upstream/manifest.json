@@ -1,0 +1,77 @@
+{
+  "files": {
+    "CHANGELOG.md": {
+      "sha256": "0b097da8ac7c0cf02c1a5830cf5cba2ae2536a647463d4443c6799b196290d73",
+      "bytes": 24209
+    },
+    "UPSTREAM.md": {
+      "sha256": "875e08c91a96f2dc47ca6e60bafcfed084ee2855e3ed3d2983df98f75d27ee1e",
+      "bytes": 8624
+    },
+    "benchmarks/2026-11-04-upstream/README.md": {
+      "sha256": "5796ae9b55827f3225c2a7cf4752107844d7d3f03076d38874ad73b82061dca5",
+      "bytes": 9663
+    },
+    "benchmarks/2026-11-04-upstream/slice-probe.csv": {
+      "sha256": "c6bc08a7852838e2dbcce90e5a387080301b56f976d821219d20446b32cd197e",
+      "bytes": 1276
+    },
+    "benchmarks/2026-11-04-upstream/slice-probe.rs": {
+      "sha256": "40794cfc51e423be8417d76d8600a400d08deb063cf5d46fd60f577f3fdf47ad",
+      "bytes": 4186
+    },
+    "benchmarks/2026-11-04-upstream/source.json": {
+      "sha256": "a3fd1d1e8381bd27c91c7b250115a98c9d9cb9806aafefe40034c51c83da0f14",
+      "bytes": 13547
+    },
+    "benchmarks/2026-11-04-upstream/validation.json": {
+      "sha256": "ac5e0e4c6f06cea3fb01e5f42f3138939d4027bda5cba1a50c6cba8fb6b9cc2e",
+      "bytes": 9028
+    },
+    "benchmarks/2026-11-04-upstream/validation/check.log": {
+      "sha256": "c5013d3352ac2e1f447d82e16bce03b00cfb42138513330265011868b3385de3",
+      "bytes": 343
+    },
+    "benchmarks/2026-11-04-upstream/validation/client-minimal.log": {
+      "sha256": "822055892790f7ecad2498f188310810f96c59eaf4bdd09cd0b08409114b18db",
+      "bytes": 6032
+    },
+    "benchmarks/2026-11-04-upstream/validation/clippy.log": {
+      "sha256": "c5a20bb6e42a0ed8857c8cb47fe0408ea290cc2ba5e617760da288e9f4f35f67",
+      "bytes": 343
+    },
+    "benchmarks/2026-11-04-upstream/validation/fmt.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "benchmarks/2026-11-04-upstream/validation/rustdoc.log": {
+      "sha256": "3e63152d427f0179a0990a0795051f1036124ec9c49391439c9cd1b5bfd87ed1",
+      "bytes": 564
+    },
+    "benchmarks/2026-11-04-upstream/validation/session-import.log": {
+      "sha256": "fa0c55f8275df110f745451401e88940afaebbb62aa19e8356c179de92ff8a44",
+      "bytes": 9530
+    },
+    "benchmarks/2026-11-04-upstream/validation/session-memory.log": {
+      "sha256": "5365cd5aec2493a81256d41d9c2cab9208026b44be2c0bc42819f892081c42b7",
+      "bytes": 8017
+    },
+    "benchmarks/2026-11-04-upstream/validation/workspace.log": {
+      "sha256": "bdf167dd4cb356edb5cb11fc82de0ce5e897db2385ac8538ec6da0599ca1f22e",
+      "bytes": 79429
+    },
+    "grammers-client/src/client/messages.rs": {
+      "sha256": "2f583519b21db0619cd1054c7be17361e338732554ae7ee6eae84c29329e6217",
+      "bytes": 71519
+    },
+    "grammers-mtproto/src/lib.rs": {
+      "sha256": "9fdd9a2e1342e609514e5ff4a3233f92c0c4ef3ba74f74550eea053ee30b4d42",
+      "bytes": 1512
+    },
+    "grammers-mtproto/tests/message_id.rs": {
+      "sha256": "ad64a9281b1b1ce1d288196900daabb72e5a9af4341eed91d4287ecb2455c76e",
+      "bytes": 917
+    }
+  },
+  "excludes": "manifest.json itself"
+}

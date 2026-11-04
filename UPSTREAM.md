@@ -2,6 +2,18 @@
 
 Canonical upstream: https://codeberg.org/Lonami/grammers
 
+Review intake (2026-11-04): verified the default branch as `refs/heads/master`
+through the canonical Git endpoint and fetched tip
+`7b414b1d28537f4c354629c3ceeabe771a86f3b4`. Reviewed all 20 commits after
+integrated ancestor `633d7fe`, including three new commits after the previous
+review tip `1e31e73`. Cherry-picked `c8d6979` (`MsgId::into_inner`) and adapted
+the public `Client::upload_media` helper from `58f7bd1`, keeping explicit album
+errors and result cardinality. The new DH validation fix is already covered by
+the fork's stricter validation; the serialization/trait cleanup would break
+public APIs and is not imported. See the [complete dispositions, source hashes,
+local probe and validation](benchmarks/2026-11-04-upstream/README.md).
+This is selective intake: the integration ancestor and layer 230 remain unchanged.
+
 Review intake (2026-10-30): inspected canonical upstream through
 `1e31e73cd9797790905bbea82cd75adcbe6f1242`. The current implementation adapts
 encrypted-packet accounting from `ad7b4725f7ad62a93ddd251035405b628e1bed1e`
