@@ -1,0 +1,37 @@
+   Compiling grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+   Compiling grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Finished `release` profile [optimized] target(s) in 36.46s
+     Running unittests src/lib.rs (target/release/deps/grammers_mtsender-8c9b9745c6c7867e)
+
+running 29 tests
+test net::mtproxy::faketls_tests::mtproxy_faketls_hello_authenticates_sni_and_timestamp ... ok
+test net::mtproxy::faketls_tests::mtproxy_faketls_hmac_matches_rfc4231 ... ok
+test net::mtproxy::faketls_tests::mtproxy_faketls_rejects_bad_auth_malformed_and_short_greetings ... ok
+test net::mtproxy::faketls_tests::mtproxy_faketls_split_greeting_and_bidirectional_records ... ok
+test net::mtproxy::faketls_tests::mtproxy_faketls_record_eof_and_full_u16_length_are_supported ... ok
+test net::mtproxy::faketls_tests::mtproxy_faketls_zero_nonempty_write_is_an_error ... ok
+test net::mtproxy::tests::mtproxy_padded_malformed_lengths_and_statuses_are_rejected ... ok
+test net::mtproxy::tests::mtproxy_partial_reply_keeps_decryption_position_and_removes_padding ... ok
+test net::mtproxy::tests::mtproxy_raw_and_padded_handshakes_embed_tag_dc_and_stream_counters ... ok
+test net::mtproxy::tests::mtproxy_secrets_and_links_are_bounded_and_redacted ... ok
+test net::mtproxy::faketls_tests::mtproxy_local_sender_invokes_through_classic_dd_and_ee_tunnels ... ok
+test net::proxy_tests::http_basic_auth_decodes_url_credentials_and_formats_ipv6_target ... ok
+test net::mtproxy::faketls_tests::mtproxy_faketls_setup_cancellation_drops_socket ... ok
+test net::mtproxy::faketls_tests::mtproxy_faketls_cancelled_headers_resume_without_duplicate_plaintext ... ok
+test net::proxy_tests::http_bounds_header_bytes_count_and_informational_responses ... ok
+test net::proxy_tests::http_tunnel_preserves_coalesced_bytes_and_bidirectional_io ... ok
+test net::proxy_tests::invalid_proxy_configuration_is_redacted_and_never_connects ... ok
+test net::proxy_tests::socks4_local_handshake_and_aliases ... ok
+test net::proxy_tests::socks5_local_handshakes_still_support_anonymous_and_password_auth ... ok
+test net::proxy_transport::tests::mtproxy_tags_follow_the_selected_dc_and_test_endpoint ... ok
+test net::tcp::tests::connections_disable_nagle ... ok
+test net::tcp::tests::invalid_proxy_urls_preserve_error_kind_and_context_without_connecting ... ok
+test net::tls_proxy::tests::cancelling_flush_retains_partial_write_and_never_replays_it ... ok
+test net::tls_proxy::tests::cancelling_tls_handshake_closes_the_socket ... ok
+test net::tls_proxy::tests::tls_rejects_untrusted_certificate_and_wrong_server_name ... ok
+test net::tls_proxy::tests::verified_https_connect_preserves_tunnel_bytes_and_flushes_writes ... ok
+test net::proxy_tests::http_setup_timeout_and_cancellation_close_the_proxy_socket ... ok
+test net::proxy_tests::http_rejects_errors_eof_and_malformed_responses_without_leaking_credentials ... ok
+test net::proxy_tests::http_response_handles_every_split_and_informational_headers ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 156 filtered out; finished in 0.15s

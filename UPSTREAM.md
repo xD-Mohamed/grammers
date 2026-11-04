@@ -9,8 +9,13 @@ integrated ancestor `633d7fe`, including three new commits after the previous
 review tip `1e31e73`. Cherry-picked `c8d6979` (`MsgId::into_inner`) and adapted
 the public `Client::upload_media` helper from `58f7bd1`, keeping explicit album
 errors and result cardinality. The new DH validation fix is already covered by
-the fork's stricter validation; the serialization/trait cleanup would break
-public APIs and is not imported. See the [complete dispositions, source hashes,
+the fork's stricter validation. A focused continuation adapts `3122892`'s local
+stack-buffer cursor optimization within the existing serialization trait, and
+`6ce4c54`'s overflow-safety purpose as optional fallible TTL setters. Existing
+serialization/extension APIs, TTL signatures and wire meanings stay intact;
+the upstream trait replacement/deletions are not needed. See the
+[compatible adaptations and measurements](benchmarks/2026-11-04-upstream/compatible-ideas.md)
+and [complete dispositions, source hashes,
 local probe and validation](benchmarks/2026-11-04-upstream/README.md).
 This is selective intake: the integration ancestor and layer 230 remain unchanged.
 

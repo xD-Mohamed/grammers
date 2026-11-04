@@ -1,0 +1,11 @@
+   Compiling grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+   Compiling grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+   Compiling grammers-client v0.10.0 (/root/grammers/grammers-client)
+    Finished `release` profile [optimized] target(s) in 12.98s
+     Running tests/api_compatibility.rs (target/release/deps/api_compatibility-fad2275c91d88478)
+
+running 2 tests
+test downstream_serializers_sinks_and_deque_extensions_remain_compatible ... ok
+test legacy_ttl_call_patterns_and_conversion_remain_available ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

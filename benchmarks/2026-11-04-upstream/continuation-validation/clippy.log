@@ -1,0 +1,5 @@
+    Checking grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+    Checking grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Checking grammers-client v0.10.0 (/root/grammers/grammers-client)
+    Checking grammers v0.1.0 (/root/grammers/grammers)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.31s

@@ -1,0 +1,238 @@
+{
+  "baseline": "b48890ddf5186632ff7cb7835a51000e619337bb",
+  "scope": "Focused offline tests; localhost proxy tests; no ignored or live tests.",
+  "checks": [
+    {
+      "name": "ttl",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-client",
+        "--all-features",
+        "--lib",
+        "media::input_media::tests"
+      ],
+      "exit_code": 0,
+      "seconds": 33.99,
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0,
+      "log": "continuation-validation/ttl.log",
+      "sha256": "2df19cf20052bbd66f54a1c3016fceeddadf51b591048517eb67da0632466bd5",
+      "raw_sha256": "818a8d006f3d8e112ea8ca19d771d1a80bae9b669168ca89e3bceaa60fae1940"
+    },
+    {
+      "name": "api",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-client",
+        "--all-features",
+        "--test",
+        "api_compatibility"
+      ],
+      "exit_code": 0,
+      "seconds": 8.67,
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "log": "continuation-validation/api.log",
+      "sha256": "fe6ec87312ea77db33f16ceaafe6721988d23799c790206060e220d0f4aa23b5",
+      "raw_sha256": "5fd41919663c95b5ea7a3fb55298d0e65673ef4ba84e0fb17e810e74ccf1c9fe"
+    },
+    {
+      "name": "protocol",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-mtproto",
+        "--all-features",
+        "--lib"
+      ],
+      "exit_code": 0,
+      "seconds": 6.44,
+      "passed": 116,
+      "failed": 0,
+      "ignored": 6,
+      "log": "continuation-validation/protocol.log",
+      "sha256": "0eab1b1a684c5126f19345253e0ee57138f7fa221580ae4f3ee3b354c3d9a801",
+      "raw_sha256": "afb0d85de1de7e35497b5dfdc441db939ae5a77fe0ccef2b77db251b81501765"
+    },
+    {
+      "name": "network",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-mtsender",
+        "--all-features",
+        "--lib",
+        "net::"
+      ],
+      "exit_code": 0,
+      "seconds": 36.66,
+      "passed": 29,
+      "failed": 0,
+      "ignored": 0,
+      "log": "continuation-validation/network.log",
+      "sha256": "4c39ff0527a231c539de23b15a7d0da47e3ca319f76715874aaf36a8535b40fa",
+      "raw_sha256": "26cd79fed99f936353abcb66a5c9f032f2963f47cc180ec415d0590b0d187fdd"
+    },
+    {
+      "name": "media",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-client",
+        "--all-features",
+        "--lib",
+        "response_mapping_tests"
+      ],
+      "exit_code": 0,
+      "seconds": 0.93,
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0,
+      "log": "continuation-validation/media.log",
+      "sha256": "63c37337823d023e63278879c3b97910fe3592052a4d816f825a235b6b6015ee",
+      "raw_sha256": "56d0de3d3761b4be41b8fc7f168818e5df78708ebf3e31f2d8efeaf5f33ea6db"
+    },
+    {
+      "name": "minimal-api",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-client",
+        "--no-default-features",
+        "--test",
+        "api_compatibility"
+      ],
+      "exit_code": 0,
+      "seconds": 13.03,
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "log": "continuation-validation/minimal-api.log",
+      "sha256": "5df9abb9f541ca7abcf39af25b01891cea4b2dbe741e16140ceeba46068a97e3",
+      "raw_sha256": "cc4617a0cdfa2fa6f3129f4b96f3667709094dc75b43774a270a4c7395421ab2"
+    },
+    {
+      "name": "minimal-ttl",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "grammers-client",
+        "--no-default-features",
+        "--lib",
+        "media::input_media::tests"
+      ],
+      "exit_code": 0,
+      "seconds": 16.42,
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0,
+      "log": "continuation-validation/minimal-ttl.log",
+      "sha256": "82f37f2dbad21e87d2dbceebf8d45841a29d76445a0d0cd5913b0a1379f5eaa0",
+      "raw_sha256": "8ba6547ecf4cbfc4b1de746072138e8d51b1f649608506e15dbc023b401202f0"
+    },
+    {
+      "name": "fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "seconds": 0.55,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0,
+      "log": "continuation-validation/fmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "check",
+      "command": [
+        "cargo",
+        "check",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features"
+      ],
+      "exit_code": 0,
+      "seconds": 2.76,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0,
+      "log": "continuation-validation/check.log",
+      "sha256": "c9605803be8691060cef50b289050037f817a53abce236e247899f4384ae4b1d",
+      "raw_sha256": "c9605803be8691060cef50b289050037f817a53abce236e247899f4384ae4b1d"
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--workspace",
+        "--all-targets",
+        "--all-features",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "seconds": 3.39,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0,
+      "log": "continuation-validation/clippy.log",
+      "sha256": "ebee444f8558f0ac0ec2398e228b134324e1c62ffb17a2f3e79e86541aa97bb5",
+      "raw_sha256": "ebee444f8558f0ac0ec2398e228b134324e1c62ffb17a2f3e79e86541aa97bb5"
+    },
+    {
+      "name": "rustdoc",
+      "command": [
+        "cargo",
+        "doc",
+        "--locked",
+        "--workspace",
+        "--all-features",
+        "--no-deps"
+      ],
+      "exit_code": 0,
+      "seconds": 5.25,
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0,
+      "log": "continuation-validation/rustdoc.log",
+      "sha256": "8f3a1ef6b8fecd3f77064dfe3ecd456602a2089400a29d158ac4b3945de59e5b",
+      "raw_sha256": "8f3a1ef6b8fecd3f77064dfe3ecd456602a2089400a29d158ac4b3945de59e5b"
+    }
+  ],
+  "log_normalization": "Trim trailing blank lines for git; raw_sha256 retains the original tool-output hash."
+}

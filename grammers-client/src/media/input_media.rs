@@ -388,9 +388,24 @@ impl InputMedia {
     /// # Panics
     ///
     /// Panics if the given [`TimeToLive::Duration`] is longer than [`i32::MAX`] seconds.
+    /// Use [`Self::try_media_ttl`] to handle this as an error.
     pub fn media_ttl(mut self, ttl: Option<TimeToLive>) -> Self {
         self.media_ttl = ttl.map(|t| t.try_into().unwrap());
         self
+    }
+
+    /// Fallible version of [`Self::media_ttl`], with the same TTL meanings and ordering.
+    ///
+    /// `None` omits the TTL, [`TimeToLive::Unlimited`] encodes zero, and
+    /// [`TimeToLive::ViewableOnce`] encodes [`i32::MAX`]. Durations are not clamped.
+    /// Call this before setting the media, just like [`Self::media_ttl`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the duration's whole seconds do not fit in [`i32`].
+    pub fn try_media_ttl(mut self, ttl: Option<TimeToLive>) -> Result<Self, TryFromIntError> {
+        self.media_ttl = ttl.map(i32::try_from).transpose()?;
+        Ok(self)
     }
 
     /// Change the media's mime type.
@@ -621,9 +636,20 @@ impl InputVideo {
     /// # Panics
     ///
     /// Panics if the given [`TimeToLive::Duration`] is longer than [`i32::MAX`] seconds.
+    /// Use [`Self::try_ttl`] to handle this as an error.
     pub fn ttl(mut self, ttl: Option<TimeToLive>) -> Self {
         self.ttl = ttl.map(|t| t.try_into().unwrap());
         self
+    }
+
+    /// Fallible version of [`Self::ttl`], preserving its TTL meanings without clamping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the duration's whole seconds do not fit in [`i32`].
+    pub fn try_ttl(mut self, ttl: Option<TimeToLive>) -> Result<Self, TryFromIntError> {
+        self.ttl = ttl.map(i32::try_from).transpose()?;
+        Ok(self)
     }
 
     /// Attached stickers.
@@ -774,6 +800,96 @@ mod tests {
             }
             .into(),
         )
+    }
+
+    #[test]
+    fn fallible_ttl_preserves_legacy_wire_values_and_builder_fields() {
+        use tl::Serializable;
+
+        for (ttl, expected) in [
+            (None, None),
+            (Some(TimeToLive::Unlimited), Some(0)),
+            (Some(TimeToLive::ViewableOnce), Some(i32::MAX)),
+            (Some(TimeToLive::Duration(Duration::ZERO)), Some(0)),
+            (
+                Some(TimeToLive::Duration(Duration::from_millis(1999))),
+                Some(1),
+            ),
+            (
+                Some(TimeToLive::Duration(Duration::from_secs(
+                    i32::MAX as u64 - 1,
+                ))),
+                Some(i32::MAX - 1),
+            ),
+            (
+                Some(TimeToLive::Duration(Duration::from_secs(i32::MAX as u64))),
+                Some(i32::MAX),
+            ),
+        ] {
+            let legacy = InputMedia::new().media_ttl(ttl.clone()).photo(uploaded());
+            let checked = InputMedia::new()
+                .caption("retained caption")
+                .reply_to(Some(42))
+                .try_media_ttl(ttl.clone())
+                .unwrap()
+                .photo(uploaded());
+            assert_eq!(checked.caption, "retained caption");
+            assert_eq!(checked.reply_to, Some(42));
+            assert_eq!(checked.media_ttl, expected);
+            assert_eq!(
+                checked.media.unwrap().to_bytes(),
+                legacy.media.unwrap().to_bytes()
+            );
+
+            let legacy: tl::enums::InputMedia = InputVideo::new(uploaded())
+                .spoiler(true)
+                .size(640, 480)
+                .ttl(ttl.clone())
+                .into();
+            let checked: tl::enums::InputMedia = InputVideo::new(uploaded())
+                .spoiler(true)
+                .size(640, 480)
+                .try_ttl(ttl)
+                .unwrap()
+                .into();
+            assert_eq!(checked.to_bytes(), legacy.to_bytes());
+            let tl::enums::InputMedia::UploadedDocument(doc) = checked else {
+                panic!("expected document");
+            };
+            assert_eq!(doc.ttl_seconds, expected);
+        }
+
+        assert_eq!(
+            InputMedia::new()
+                .media_ttl(Some(TimeToLive::ViewableOnce))
+                .try_media_ttl(None)
+                .unwrap()
+                .media_ttl,
+            None
+        );
+        assert_eq!(
+            InputVideo::new(uploaded())
+                .ttl(Some(TimeToLive::ViewableOnce))
+                .try_ttl(None)
+                .unwrap()
+                .ttl,
+            None
+        );
+    }
+
+    #[test]
+    fn fallible_ttl_returns_overflow_without_clamping_or_panicking() {
+        for duration in [Duration::from_secs(i32::MAX as u64 + 1), Duration::MAX] {
+            let ttl = Some(TimeToLive::Duration(duration));
+            assert!(InputMedia::new().try_media_ttl(ttl.clone()).is_err());
+            assert!(InputVideo::new(uploaded()).try_ttl(ttl).is_err());
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn legacy_video_ttl_still_rejects_overflow() {
+        InputVideo::new(uploaded()).ttl(Some(TimeToLive::Duration(Duration::MAX)));
     }
 
     #[test]

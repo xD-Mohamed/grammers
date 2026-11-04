@@ -2,6 +2,12 @@
 
 ## Unreleased: reviewed Codeberg upstream through 7b414b1
 
+- Add `InputMedia::try_media_ttl` and `InputVideo::try_ttl` to report TTL overflow
+  without panicking or clamping. Existing setters, `Option<TimeToLive>`, integer
+  conversions and wire values remain unchanged (purpose adapted from `6ce4c54`).
+- Improve private stack-header writes with a local cursor (from `3122892`),
+  retaining `Serializable::serialize` and both public `DequeBuffer::Extend` impls.
+  [Compatible adaptations and local measurements](benchmarks/2026-11-04-upstream/compatible-ideas.md).
 - Add `MsgId::into_inner()` to correlate protocol identifiers with external
   diagnostics and custom transport integrations (upstream `c8d6979`).
 - Add `Client::upload_media()` to resolve input media without sending a message
