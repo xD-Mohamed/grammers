@@ -1,0 +1,16 @@
+   Compiling grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+   Compiling grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+   Compiling grammers-client v0.10.0 (/root/grammers/grammers-client)
+    Finished `release` profile [optimized] target(s) in 33.99s
+     Running unittests src/lib.rs (target/release/deps/grammers_client-b8812a44f1cd4c3a)
+
+running 7 tests
+test media::input_media::tests::audio_builder_preserves_attributes_and_thumbnail ... ok
+test media::input_media::tests::fallible_ttl_returns_overflow_without_clamping_or_panicking ... ok
+test media::input_media::tests::typed_media_ttl_maps_all_variants ... ok
+test media::input_media::tests::legacy_video_ttl_still_rejects_overflow - should panic ... ok
+test media::input_media::tests::typed_media_ttl_rejects_overflow - should panic ... ok
+test media::input_media::tests::video_builder_preserves_flags_attributes_and_ttl ... ok
+test media::input_media::tests::fallible_ttl_preserves_legacy_wire_values_and_builder_fields ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 117 filtered out; finished in 0.00s

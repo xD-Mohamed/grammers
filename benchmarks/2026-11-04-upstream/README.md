@@ -13,6 +13,12 @@ after that ancestor, **three new since the 2026-10-30 review** at
 fork-only work. [source.json](source.json) inventories all 20 with full hashes,
 parents, trees, changed paths and hashes of the attributed Git patches.
 
+The owner clarified acceptance after that intake: judge the idea and implement
+useful behavior within this fork's APIs. The [focused continuation](compatible-ideas.md)
+supersedes the original TTL/serialization dispositions. It adapts the private
+stack cursor optimization and adds fallible TTL setters; the original full-suite
+receipts below remain the receipts for `b48890d`, not a rerun of this continuation.
+
 ## Applied changes
 
 - **`c8d6979`** is cherry-picked with `-x` as `61cc9ff`. Its stable patch ID,
@@ -35,26 +41,26 @@ HBcao and Lonami Exo in its commit message. Apache-2.0/MIT licenses are unchange
 
 | Upstream commit | Current disposition and reason |
 |---|---|
-| `6ce4c54` | Skip the TTL signature/semantic change: it replaces `Option<TimeToLive>`, removes `TryFrom`, changes Unlimited from 0 to absent, and clamps durations. Preserve the fork's public contract. |
+| `6ce4c54` | **Adapt overflow safety:** add `try_media_ttl`/`try_ttl` returning the existing conversion error. Keep old setters and their panic contract, optional TTLs, `TryFrom`, Unlimited=0 and exact duration mapping. Avoid upstream's silent clamping. |
 | `5b80079` | Skip a blanket dependency refresh. The fork already has its tested dependency graph, including stable glass_pumpkin and newer Tokio; upstream also changes libsql's minor version. No dependency change is needed for the selected additions. |
 | `15b7afa` | Skip upstream v0.11 package labels and inter-crate version changes; this fork is not that crates.io release. |
 | `dfffb71` | Defer layer 232: nine changed existing constructors and 25 added constructors/methods require generated public API migration and regenerated method documentation. A layer-number-only change would be invalid. See the [earlier concrete schema analysis](../2026-10-30/final/upstream/README.md). |
-| `a984cac` | Defer sans-I/O connection extraction: moves framing/buffers and removes `ReadError::Transport`, requiring a public compatibility design and revalidation of cancellation, permits, fairness and uncertain delivery. Its independent boxed-deserialization/update helpers are not needed by this intake. Do not replace the fork's hardened sender. |
+| `a984cac` | Keep current separation: its purpose is reusable I/O-independent framing/testability. The fork already exposes generic MTP/Transport and tests synthetic/local I/O; moving the hardened reactor adds no identified protocol capability or measured gain here. Its parsing helpers already have equivalent constructor checks/update decoding in `sender.rs`. A future alternate-I/O consumer could justify a separate design. |
 | `e564eef` | Defer explicit `DequeBuffer::extend_back`: current generic extension already delegates to Vec, and the padding call differs in this fork. No production replacement is justified by this intake's probe. |
-| `4101f5e` | Defer dynamically boxed transport factories: depends on the connection redesign, adds a public configuration field and changes sender representation. Current proxy routing uses the fork's static `ProxyTransport` and must retain raw/dd/ee framing. |
+| `4101f5e` | Keep static high-level routing: useful purpose is runtime custom framing. Generic low-level `connect`/`connect_with_auth` already accept custom transports; high-level built-in/proxy selection covers our current protocols. An opt-in custom pool could be additive, but no additional framing protocol is required here. Do not impose boxing/indirection on ordinary pools or bypass secret-bound MTProxy construction. |
 | `c8d6979` | **Import exactly:** additive raw `MsgId` accessor; no connection or wire-format change. Previously deferred to an API intake; included now. |
 | `07b51ab` | Skip standalone log-spelling churn; no behavioral fix. |
 | `98b7b88` | Skip derived Debug on body-bearing responses/updates; would expose payloads in diagnostics. |
 | `dad5581` | Inapplicable: the fork's sender still directly uses crypto for authentication, framing and proxy support. Removing that dependency breaks the build. |
-| `84cfb99` | Defer public crypto buffer/signature changes. `encrypt_data_v2` changes from a `DequeBuffer` mutator to an already-padded slice function returning the message key. Current public callers and minimal-padding behavior must be preserved. |
+| `84cfb99` | Keep crypto ownership: upstream separates padding/encryption from buffer prepend operations for modularity. Our AES backend already encrypts the existing contiguous buffer in place, without a staging copy, and uses valid minimal padding. Moving padding/prepends to callers adds no missing behavior or measured benefit; a duplicate slice API is not needed. |
 | `d654b04` | Defer buffer relocation with `84cfb99`; moving it alone introduces a crypto/MTProto dependency cycle and removes a public crypto export. The move itself has no measured runtime benefit. |
 | `4ca2263` | Skip documentation for the unadopted buffer method alongside its deferred introduction. |
 | `58f7bd1` | **Adapt:** public upload helper and shared conversion; retain explicit album failure/cardinality behavior. Do not import filtering or claim clone/performance improvements. |
 | `ad7b472` | Already adapted in the previous intake: packet ceilings include actual padding/update-wrapper overhead; retain deferred ACKs and independent inbound/expanded limits instead of the upstream assertions. |
 | `1e31e73` | Already adapted: early request validation uses the fork's existing constructor/alignment checks, shared/tracked APIs, and typed errors. |
 | `d2c6e84` (new) | Already covered more strictly: `do_step3` calls `check_p_and_g` before unsigned conversion/arithmetic, validates exact prime size, generator range/residues, and safe primality. The published prime skips only primality; subgroup checks still run. Entropy failure rejects validation, whereas upstream calls `unwrap()`. Existing authenticated DH fixtures independently exercise invalid generators/composite primes and pass. Do not duplicate the public crypto helper or add error variants. |
-| `3122892` (new) | Defer the public serialization redesign: changes `Serializable::serialize(&mut impl Extend<u8>)` into an `FnMut(&[u8])` sink, breaking both callers and downstream implementations. Generated TL/manual serializers change with it. The isolated slice probe below has mixed results and does not justify an API break or new duplicate serialization machinery. |
-| `7b414b1` (new) | Skip deletion of public `DequeBuffer` `Extend<T>`/`Extend<&T>` implementations; they remain required by the compatible serialization API and downstream users. The private StackBuffer cleanup is coupled to the preceding sink change. |
+| `3122892` (new) | **Adapt the useful header optimization:** keeping the stack cursor local lets LLVM combine byte stores, through the unchanged `Extend<u8>` API. Paired release header measurements are in the continuation. Bulk byte-string output already delegates to Vec; the original full sink probe has mixed results. No trait replacement or second serializer is needed. |
+| `7b414b1` (new) | No independent behavior to add: deletes traits made redundant only by upstream's sink redesign. Both public `DequeBuffer` extension impls and the private stack-buffer extension remain useful here. Preserve arbitrary/borrowed iterators; the local cursor obtains the measured header benefit without deleting them. |
 
 The upstream DH changes are covered by `published_prime_still_checks_every_generator`,
 `authenticated_dh_fixture_reaches_each_validation_gate`,
@@ -83,8 +89,9 @@ are ns per operation, including black-box/function-call overhead.
 This probe is limited to components on one host, without generated-object,
 allocation-heavy, encryption or network workloads. It is not an end-to-end
 library comparison or a confidence interval. Compiler code layout can affect
-such small measurements. No slice optimization is retained, and no universal
-speedup or regression is inferred.
+such small measurements. No sink-based serializer is retained, and no universal
+speedup or regression is inferred. The continuation separately measures and
+retains the compatible cursor optimization using the existing serializers.
 
 ```sh
 rustc --edition=2024 -O benchmarks/2026-11-04-upstream/slice-probe.rs -o /tmp/grammers-slice-probe

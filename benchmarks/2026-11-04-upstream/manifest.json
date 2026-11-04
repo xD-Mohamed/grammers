@@ -1,16 +1,80 @@
 {
   "files": {
     "CHANGELOG.md": {
-      "sha256": "0b097da8ac7c0cf02c1a5830cf5cba2ae2536a647463d4443c6799b196290d73",
-      "bytes": 24209
+      "sha256": "44930b63c79703acfb15a0acd5133743b1645b2254a4bc69fd42d4cd155a1746",
+      "bytes": 24716
     },
     "UPSTREAM.md": {
-      "sha256": "875e08c91a96f2dc47ca6e60bafcfed084ee2855e3ed3d2983df98f75d27ee1e",
-      "bytes": 8624
+      "sha256": "42280f9f23c6b7be52f27dd88c819eb043c5e8939c2fa23969adbd528bdb7e6d",
+      "bytes": 8983
     },
     "benchmarks/2026-11-04-upstream/README.md": {
-      "sha256": "5796ae9b55827f3225c2a7cf4752107844d7d3f03076d38874ad73b82061dca5",
-      "bytes": 9663
+      "sha256": "f336ee38c143064b19bf2d40a59282f90a112bac8e7f11c6cfbac171bc04c6d6",
+      "bytes": 10690
+    },
+    "benchmarks/2026-11-04-upstream/compatible-ideas.md": {
+      "sha256": "5b682b6c4ccd6be261e7a3ab2193dbf4e7e546140c9a50c319090d122a4cf062",
+      "bytes": 9144
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation.json": {
+      "sha256": "847c3b3b8adcdd7a9f254e96eadf27e24cab796d1c900063dcc5c8a89f9dffe0",
+      "bytes": 6385
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation/api.log": {
+      "sha256": "fe6ec87312ea77db33f16ceaafe6721988d23799c790206060e220d0f4aa23b5",
+      "bytes": 490
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation/check.log": {
+      "sha256": "c9605803be8691060cef50b289050037f817a53abce236e247899f4384ae4b1d",
+      "bytes": 343
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation/clippy.log": {
+      "sha256": "ebee444f8558f0ac0ec2398e228b134324e1c62ffb17a2f3e79e86541aa97bb5",
+      "bytes": 343
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation/fmt.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation/media.log": {
+      "sha256": "63c37337823d023e63278879c3b97910fe3592052a4d816f825a235b6b6015ee",
+      "bytes": 816
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation/minimal-api.log": {
+      "sha256": "5df9abb9f541ca7abcf39af25b01891cea4b2dbe741e16140ceeba46068a97e3",
+      "bytes": 637
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation/minimal-ttl.log": {
+      "sha256": "82f37f2dbad21e87d2dbceebf8d45841a29d76445a0d0cd5913b0a1379f5eaa0",
+      "bytes": 964
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation/network.log": {
+      "sha256": "4c39ff0527a231c539de23b15a7d0da47e3ca319f76715874aaf36a8535b40fa",
+      "bytes": 3082
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation/protocol.log": {
+      "sha256": "0eab1b1a684c5126f19345253e0ee57138f7fa221580ae4f3ee3b354c3d9a801",
+      "bytes": 10925
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation/rustdoc.log": {
+      "sha256": "8f3a1ef6b8fecd3f77064dfe3ecd456602a2089400a29d158ac4b3945de59e5b",
+      "bytes": 564
+    },
+    "benchmarks/2026-11-04-upstream/continuation-validation/ttl.log": {
+      "sha256": "2df19cf20052bbd66f54a1c3016fceeddadf51b591048517eb67da0632466bd5",
+      "bytes": 1111
+    },
+    "benchmarks/2026-11-04-upstream/header-codegen.txt": {
+      "sha256": "7c320e1dce2bb52b4652781a146c6f9be6d8298f42a188b49391d0e52d538baa",
+      "bytes": 2047
+    },
+    "benchmarks/2026-11-04-upstream/header-probe.csv": {
+      "sha256": "dd904794484d76124fbfee81d137893115f75cf6ba0da0a5d3e2e0327fb015e0",
+      "bytes": 949
+    },
+    "benchmarks/2026-11-04-upstream/header-probe.rs": {
+      "sha256": "d1bddd0f18676f707be51c220b9224a086071200213f9c685a9f1b7afac39aa5",
+      "bytes": 3581
     },
     "benchmarks/2026-11-04-upstream/slice-probe.csv": {
       "sha256": "c6bc08a7852838e2dbcce90e5a387080301b56f976d821219d20446b32cd197e",
@@ -64,9 +128,21 @@
       "sha256": "2f583519b21db0619cd1054c7be17361e338732554ae7ee6eae84c29329e6217",
       "bytes": 71519
     },
+    "grammers-client/src/media/input_media.rs": {
+      "sha256": "7da707e4a33c562db566825bb4b66158025f6f7bf15ace500c9e33e7bcfbd436",
+      "bytes": 31354
+    },
+    "grammers-client/tests/api_compatibility.rs": {
+      "sha256": "57e49b1c807eada94f667ee71387ebd1d49baa310eb7dcf071046e1a584e4bc9",
+      "bytes": 1694
+    },
     "grammers-mtproto/src/lib.rs": {
       "sha256": "9fdd9a2e1342e609514e5ff4a3233f92c0c4ef3ba74f74550eea053ee30b4d42",
       "bytes": 1512
+    },
+    "grammers-mtproto/src/utils.rs": {
+      "sha256": "5f4b507aeea02d5c583b1483892ddbcd41c3b28fe3d841ceddd1a948d92234d9",
+      "bytes": 1472
     },
     "grammers-mtproto/tests/message_id.rs": {
       "sha256": "ad64a9281b1b1ce1d288196900daabb72e5a9af4341eed91d4287ecb2455c76e",

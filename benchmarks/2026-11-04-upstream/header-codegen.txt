@@ -1,0 +1,96 @@
+Rust 1.99.1 / LLVM 23.1.1, x86_64-unknown-linux-gnu
+Command: rustc --edition=2024 -O --emit=asm benchmarks/2026-11-04-upstream/header-probe.rs -o /tmp/grammers-header-probe.s
+
+Function bodies from the final probe; CFI directives/local end labels omitted.
+The baseline packet routine calls the byte serializer twice; the current routine uses two wide stores.
+
+baseline_packet:
+	pushq	%r15
+	pushq	%r14
+	pushq	%rbx
+	subq	$32, %rsp
+	movq	%rdx, %rbx
+	movq	%rdi, %r14
+	xorps	%xmm0, %xmm0
+	movaps	%xmm0, (%rsp)
+	movq	$0, 16(%rsp)
+	movq	%rsp, %r15
+	movq	%rsi, %rdi
+	movq	%r15, %rsi
+	callq	_RINvXs1_NtCsiwR3YP3kTYl_12header_probe9serializexNtB6_12Serializable9serializeINtB8_8BaselineKj10_EEB8_
+	movq	%rbx, %rdi
+	movq	%r15, %rsi
+	callq	_RINvXs1_NtCsiwR3YP3kTYl_12header_probe9serializexNtB6_12Serializable9serializeINtB8_8BaselineKj10_EEB8_
+	movaps	(%rsp), %xmm0
+	movups	%xmm0, (%r14)
+	movq	%r14, %rax
+	addq	$32, %rsp
+	popq	%rbx
+	popq	%r14
+	popq	%r15
+	retq
+
+current_packet:
+	movq	%rdi, %rax
+	movq	%rsi, (%rdi)
+	movq	%rdx, 8(%rdi)
+	retq
+
+baseline_container:
+	pushq	%rbx
+	movl	%ecx, %ebx
+	movq	%rsi, %rcx
+	movq	%rdi, %rax
+	movq	%rsi, %rdi
+	movq	%rsi, %r11
+	movq	%rsi, %r9
+	movq	%rsi, %r10
+	movb	%cl, (%rax)
+	movb	%ch, 1(%rax)
+	shrl	$16, %ecx
+	movb	%cl, 2(%rax)
+	shrl	$24, %esi
+	movb	%sil, 3(%rax)
+	shrq	$32, %rdi
+	movb	%dil, 4(%rax)
+	shrq	$40, %r11
+	movb	%r11b, 5(%rax)
+	shrq	$48, %r9
+	movb	%r9b, 6(%rax)
+	shrq	$56, %r10
+	movb	%r10b, 7(%rax)
+	movl	%edx, %ecx
+	movb	%dl, 8(%rax)
+	movb	%dh, 9(%rax)
+	shrl	$16, %edx
+	movb	%dl, 10(%rax)
+	shrl	$24, %ecx
+	movb	%cl, 11(%rax)
+	movl	%ebx, %ecx
+	movb	%bl, 12(%rax)
+	movb	%bh, 13(%rax)
+	shrl	$16, %ebx
+	movb	%bl, 14(%rax)
+	shrl	$24, %ecx
+	movb	%cl, 15(%rax)
+	movl	$1945237724, 16(%rax)
+	movl	%r8d, %edx
+	movb	%dl, 20(%rax)
+	movb	%dh, 21(%rax)
+	movl	%r8d, %ecx
+	shrl	$16, %ecx
+	movb	%cl, 22(%rax)
+	movl	%r8d, %ecx
+	shrl	$24, %ecx
+	movb	%cl, 23(%rax)
+	popq	%rbx
+	retq
+
+current_container:
+	movq	%rdi, %rax
+	movq	%rsi, (%rdi)
+	movl	%edx, 8(%rdi)
+	movl	%ecx, 12(%rdi)
+	movl	$1945237724, 16(%rdi)
+	movl	%r8d, 20(%rdi)
+	retq

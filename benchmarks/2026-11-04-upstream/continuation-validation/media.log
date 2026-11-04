@@ -1,0 +1,11 @@
+    Finished `release` profile [optimized] target(s) in 0.12s
+     Running unittests src/lib.rs (target/release/deps/grammers_client-b8812a44f1cd4c3a)
+
+running 5 tests
+test client::messages::response_mapping_tests::unmappable_send_responses_preserve_input_cardinality ... ok
+test client::messages::response_mapping_tests::self_lookup_failure_prevents_text_and_media_send_requests ... ok
+test client::messages::response_mapping_tests::albums_keep_cardinality_and_reject_failed_or_missing_media ... ok
+test client::messages::response_mapping_tests::upload_media_preserves_requests_responses_and_errors ... ok
+test client::messages::response_mapping_tests::self_send_resolves_identity_before_text_or_media_delivery ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 119 filtered out; finished in 0.77s

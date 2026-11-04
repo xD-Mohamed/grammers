@@ -1,0 +1,9 @@
+   Compiling grammers-client v0.10.0 (/root/grammers/grammers-client)
+    Finished `release` profile [optimized] target(s) in 8.62s
+     Running tests/api_compatibility.rs (target/release/deps/api_compatibility-529e8e5cafe4e15f)
+
+running 2 tests
+test downstream_serializers_sinks_and_deque_extensions_remain_compatible ... ok
+test legacy_ttl_call_patterns_and_conversion_remain_available ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

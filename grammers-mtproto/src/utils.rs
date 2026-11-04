@@ -38,9 +38,13 @@ impl<const N: usize> StackBuffer<N> {
 
 impl<const N: usize> Extend<u8> for StackBuffer<N> {
     fn extend<T: IntoIterator<Item = u8>>(&mut self, iter: T) {
+        // Keep the cursor independent of the buffer while copying, so the compiler
+        // can combine adjacent bytes from serialized integers into wider stores.
+        let mut pos = self.pos;
         iter.into_iter().for_each(|x| {
-            self.array[self.pos] = x;
-            self.pos += 1;
+            self.array[pos] = x;
+            pos += 1;
         });
+        self.pos = pos;
     }
 }
