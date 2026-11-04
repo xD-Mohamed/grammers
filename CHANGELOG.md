@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased: proxy transports
+
+- The existing `proxy` feature, `ClientBuilder::proxy` and
+  `ConnectionParams::proxy_url` now support HTTP/HTTPS CONNECT, SOCKS4 (plus
+  SOCKS4a/5h numeric-target aliases), and MTProxy classic, dd and ee fake TLS.
+  Existing SOCKS5 and direct connections remain supported.
+- HTTP(S) supports optional Basic authentication with percent-decoded UTF-8
+  credentials. CONNECT response parsing is bounded, handles partial replies
+  and keeps subsequent tunnel bytes. Proxy errors never fall back to direct.
+- HTTPS verifies the proxy's certificate and server name against bundled Mozilla
+  roots. Fake TLS authenticates the MTProxy secret; it is a different protocol.
+- Proxy URLs are redacted in `ServerAddr` debug output and omitted from errors.
+- `ProxyTransport` supplies MTProxy framing for low-level senders; the sender pool
+  chooses it for each destination automatically. The `Transport` trait has a
+  backward-compatible default `supports_mtproxy` method to reject incompatible framing.
+- [Configuration and limits](docs/proxies.md), including the local-only validation
+  scope and experimental WEB relay exclusion.
+
 ## Unreleased: bot workload performance and compliance audit
 
 The [measurements](benchmarks/2026-10-31-bot/README.md) and the

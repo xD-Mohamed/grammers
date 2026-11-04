@@ -35,6 +35,26 @@ impl ObfuscatedCipher {
         }
     }
 
+    /// Creates the secret-mixed AES-256-CTR streams used by an MTProxy.
+    /// `secret` excludes its transport marker and any fake-TLS hostname.
+    pub fn with_secret(init: &[u8; 64], secret: &[u8; 16]) -> Self {
+        let mut init_rev = *init;
+        init_rev.reverse();
+        let rx_key = crate::sha256!(&init_rev[8..40], secret);
+        let tx_key = crate::sha256!(&init[8..40], secret);
+        #[allow(deprecated)] // see https://github.com/RustCrypto/block-ciphers/issues/509
+        Self {
+            rx: ctr::Ctr128BE::<aes::Aes256>::new(
+                (&rx_key).into(),
+                init_rev[40..56].try_into().unwrap(),
+            ),
+            tx: ctr::Ctr128BE::<aes::Aes256>::new(
+                (&tx_key).into(),
+                init[40..56].try_into().unwrap(),
+            ),
+        }
+    }
+
     pub fn encrypt(&mut self, buffer: &mut [u8]) {
         self.tx.apply_keystream(buffer);
     }
@@ -47,6 +67,29 @@ impl ObfuscatedCipher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mtproxy_secret_mixing_matches_independent_openssl_ctr_vectors() {
+        // SHA-256(nonce[8..40] || [0x71;16]), nonce[40..56], AES-256-CTR.
+        // Static ciphertext generated with Python hashlib + OpenSSL enc; the
+        // reverse-nonce fixture independently checks the receive direction.
+        let nonce = std::array::from_fn(|i| i as u8);
+        let mut cipher = ObfuscatedCipher::with_secret(&nonce, &[0x71; 16]);
+        let mut bytes: Vec<u8> = (0..64).collect();
+        cipher.encrypt(&mut bytes[..13]);
+        cipher.encrypt(&mut bytes[13..]);
+        assert_eq!(
+            crate::hex::to_hex(&bytes),
+            "2b3dd2b9d658036114772ec925cbd516f18966547015f5fb19ce0525e8a2fc705791564bef7334e509a8060a386dbd97f49e85e0e48cf6122e4588325c7c34b1"
+        );
+        let mut bytes: Vec<u8> = (0..64).collect();
+        cipher.decrypt(&mut bytes[..17]);
+        cipher.decrypt(&mut bytes[17..]);
+        assert_eq!(
+            crate::hex::to_hex(&bytes),
+            "dbbc2ec198284166905f24f4c6cf0e836feb8f189c27ac57a73fd1bed5ebe0473f697ba0dd7dd8c675f5c8e7e8b6dd257ecbd239b477c36b05d220d2b1a05d59"
+        );
+    }
 
     fn heap_scratch_cipher(init: &[u8; 64]) -> ObfuscatedCipher {
         let init_rev = init.iter().copied().rev().collect::<Vec<_>>();

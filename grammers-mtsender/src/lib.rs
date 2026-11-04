@@ -41,6 +41,8 @@ pub use configuration::{
     UpdatesConfiguration,
 };
 pub use errors::{InvocationError, InvocationErrorCategory, ReadError, RpcError};
+#[cfg(feature = "proxy")]
+pub use net::ProxyTransport;
 pub use net::ServerAddr;
 pub use sender::{Sender, connect, connect_with_auth, generate_auth_key};
 pub use sender_pool::{

@@ -92,6 +92,13 @@ impl fmt::Display for Error {
 
 /// The trait used by the transports to create instances of themselves.
 pub trait Transport {
+    /// Whether this transport emits the secret-mixed MTProxy handshake.
+    /// Ordinary transports return false. This prevents a sender configured
+    /// with an MTProxy URL from silently using incompatible wire framing.
+    fn supports_mtproxy(&self) -> bool {
+        false
+    }
+
     /// Packs the input buffer in-place.
     ///
     /// Panics if `buffer.len()` is not divisible by 4.

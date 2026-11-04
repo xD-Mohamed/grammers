@@ -125,6 +125,22 @@ let client = Client::builder(api_id)
 
 Managed defaults: 30-second connection initialization, 10-second shutdown, and 1024 queued/in-flight requests. The default retry policy respects short Telegram waits without automatically replaying I/O failures. Configure IPv6, proxy, updates, and retry policy when needed; advanced callers can supply `ConnectionParams`.
 
+Enable the `proxy` feature for HTTP/HTTPS CONNECT, SOCKS4/5, and MTProxy:
+
+```rust
+let client = Client::builder(api_id)
+    .proxy("http://127.0.0.1:8080")
+    // With Basic authentication: http://username:password@127.0.0.1:8080
+    // For TLS to the proxy: https://proxy.example.com:8443
+    .build()
+    .await?;
+```
+
+The same setting applies to reconnects and other DCs. Credentials containing URL
+delimiters must be percent-encoded. See [proxy configuration](docs/proxies.md)
+for authentication, MTProxy secrets, supported protocols and limits, and the
+[compiled example](grammers-client/examples/proxy.rs).
+
 ## Messages and errors
 
 Ordinary messages need only a recipient and text:
@@ -160,7 +176,7 @@ A timeout or missing reply does not prove a request was never sent. Sent request
 | `dispatcher` | Composable filters and sequential handlers |
 | `qr-login` | QR login steps and 2FA integration |
 | `markdown`, `html` | Message formatting parsers |
-| `proxy` | SOCKS5 support |
+| `proxy` | HTTP/HTTPS CONNECT, SOCKS4/5, MTProxy (classic, dd, ee fake TLS) |
 | `parse_invite_link` | Invite-link parsing |
 
 Memory-only session builds do not require SQLite. Native strings and external importers are independently optional.
