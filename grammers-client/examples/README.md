@@ -24,6 +24,7 @@ login codes and two-factor passwords are hidden rather than echoed.
 | Example | Purpose | Required client features | Arguments / inputs |
 | --- | --- | --- | --- |
 | [ping](ping.rs) | Raw MTProto Ping through the managed client; connectivity only | none | `TG_ID`; no account or file |
+| [proxy](proxy.rs) | Connectivity through HTTP(S), SOCKS4/5 or MTProxy | `proxy` | `TG_ID`, `TG_PROXY`; no account or file |
 | [managed_client](managed_client.rs) | Builder settings, native string session, connectivity and Ctrl-C lifecycle | `session-string` | `TG_ID`, `TG_SESSION` (native secret) |
 | [dialogs](dialogs.rs) | Interactive user login and paginated dialog iteration | `session-file` | `TG_ID`, `TG_HASH` |
 | [echo](echo.rs) | Bot echo with at most 16 concurrent handlers and graceful draining | `session-file` | `TG_ID`, `TG_HASH`, `TG_BOT_TOKEN` |

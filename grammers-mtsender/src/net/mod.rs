@@ -6,12 +6,25 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#[cfg(feature = "proxy")]
+mod http_connect;
+#[cfg(feature = "proxy")]
+pub(crate) mod mtproxy;
+#[cfg(feature = "proxy")]
+mod proxy_transport;
 mod tcp;
+#[cfg(feature = "proxy")]
+mod tls_proxy;
+#[cfg(feature = "proxy")]
+pub use proxy_transport::ProxyTransport;
 
 pub use tcp::NetStream;
 
+#[cfg(all(test, feature = "proxy"))]
+mod proxy_tests;
+
 /// Represents a socket address which may be proxied.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ServerAddr {
     /// Socket address whose connection should be proxied.
     #[cfg(feature = "proxy")]
@@ -21,4 +34,18 @@ pub enum ServerAddr {
     },
     /// Proxy address for direct connection.
     Tcp { address: std::net::SocketAddr },
+}
+
+impl std::fmt::Debug for ServerAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(feature = "proxy")]
+            Self::Proxied { address, .. } => f
+                .debug_struct("Proxied")
+                .field("address", address)
+                .field("proxy", &"[redacted]")
+                .finish(),
+            Self::Tcp { address } => f.debug_struct("Tcp").field("address", address).finish(),
+        }
+    }
 }

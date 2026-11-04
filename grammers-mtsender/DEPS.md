@@ -63,7 +63,45 @@ Used to look up the IP address of the proxy host if a domain is provided.
 
 ## tokio-socks
 
-SOCKS5 proxy support.
+SOCKS4 and SOCKS5 proxy handshakes, retaining the existing Tokio connector.
+
+## base64
+
+Optional proxy dependency for HTTP Basic authentication and MTProxy secret decoding.
+
+## percent-encoding
+
+Optional proxy dependency to decode URL user IDs and passwords without lossy conversion.
+
+## httparse
+
+Optional proxy dependency for bounded HTTP CONNECT response parsing. Reuses an
+established parser without pulling an HTTP client/runtime into the sender.
+
+## tokio-rustls
+
+Optional HTTPS proxy dependency for asynchronous, certificate-verified TLS.
+Uses the explicit ring provider without changing an application's global provider.
+
+## webpki-roots
+
+Bundled Mozilla trust roots for HTTPS proxy certificate verification. Optional;
+no system trust-store loading or blocking filesystem work during connection setup.
+
+## getrandom
+
+Optional proxy dependency for fresh MTProxy nonces, padding and fake-TLS greetings.
+The same secure entropy provider already used by grammers-crypto.
+
+## hmac
+
+Optional proxy dependency for fake-TLS HMAC-SHA256 and constant-time tag verification.
+Reuses the RustCrypto dependency already used by grammers-crypto.
+
+## rcgen
+
+Development-only dependency generating synthetic local TLS certificates for proxy
+tests. No test certificates/keys, real credentials or CA bypass enter production.
 
 ## socks5-server
 
@@ -76,6 +114,7 @@ Used by the loopback measurement test's local responder to derive the auth key I
 ## sha2
 
 Used by the loopback measurement test's local responder for MTProto 2.0 message keys.
+With the optional proxy feature, also supplies SHA-256 for MTProxy fake-TLS authentication.
 
 ## flate2
 

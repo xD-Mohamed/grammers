@@ -416,7 +416,9 @@ impl ClientBuilder {
         self.shutdown_timeout = value;
         self
     }
-    /// SOCKS5 proxy URL; credentials are never included in builder errors.
+    /// HTTP/HTTPS CONNECT, SOCKS4/5 or MTProxy URL. See
+    /// [`ConnectionParams::proxy_url`] for formats and authentication.
+    /// Credentials are never included in builder errors.
     #[cfg(feature = "proxy")]
     pub fn proxy(mut self, value: impl Into<String>) -> Self {
         self.params.proxy_url = Some(value.into());

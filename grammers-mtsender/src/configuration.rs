@@ -40,13 +40,27 @@ pub struct ConnectionParams {
 
     /// URL of the proxy to use. Requires the `proxy` feature to be enabled.
     ///
-    /// The scheme must be `socks5`. Username and password are optional, e.g.:
-    /// - socks5://127.0.0.1:1234
-    /// - socks5://username:password@example.com:5678
+    /// HTTP/HTTPS CONNECT and SOCKS4/5 are supported, e.g.:
+    /// - `http://127.0.0.1:8080`
+    /// - `http://username:password@example.com:8080` (Basic authentication)
+    /// - `https://username:password@example.com:8443` (certificate-verified TLS to the proxy)
+    /// - `socks5://username:password@example.com:1080`
+    /// - `socks4://userid@example.com:1080` (IPv4 targets, no password)
     ///
-    /// Both a host and port must be provided. If a domain is used for the host, its address will be looked up,
+    /// URL credentials are percent-decoded as UTF-8. HTTP defaults to port 80,
+    /// HTTPS to 443; SOCKS requires an explicit port. `socks4a`/`socks5h` are
+    /// accepted aliases; DC targets are already numeric, so no remote DNS is needed.
+    /// MTProxy accepts `mtproxy://host:port?secret=HEX_OR_BASE64`, `tg://proxy?...`
+    /// and `https://t.me/proxy?...` links, including classic, dd and ee secrets.
+    /// The pool selects its framing/DC tag automatically. Lower-level senders
+    /// must use [`crate::ProxyTransport::for_proxy`] for MTProxy.
+    ///
+    /// If a domain is used for the proxy host, its address will be looked up,
     /// and the first IP address found will be used. If a different IP address should be used, consider resolving
     /// the host manually and selecting an IP address of your choice.
+    /// The configured proxy is used for every DC/reconnect, with no direct fallback.
+    /// HTTPS uses bundled Mozilla roots; ee is authenticated fake TLS, not HTTPS.
+    /// Experimental Telegram WEB relays are not supported.
     #[cfg(feature = "proxy")]
     pub proxy_url: Option<String>,
 
@@ -75,7 +89,8 @@ pub struct ConnectionParams {
     /// acknowledgement still waits at most ten seconds once another request goes out.
     pub ack_batch: usize,
 
-    /// Optional deadline for socket connection, key exchange and initialization.
+    /// Optional deadline for DNS, socket connection, proxy/TLS negotiation,
+    /// key exchange and initialization.
     /// None preserves unlimited establishment; this is not an ordinary RPC timeout.
     pub connection_timeout: Option<Duration>,
 

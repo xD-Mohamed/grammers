@@ -23,7 +23,9 @@ use grammers_mtproto::{MsgId, authentication};
 use grammers_session::updates::UpdatesLike;
 use grammers_tl_types::{self as tl, Deserializable, RemoteCall};
 use tl::{Cursor, Identifiable, Serializable};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
+#[cfg(any(not(feature = "proxy"), test))]
+use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::TryRecvError;
 use tokio::time::{Instant, Sleep, sleep_until};
@@ -240,6 +242,17 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     /// Note that this does not attempt to invoke [`tl::functions::InitConnection`].
     /// It will simply open a new socket connection to the provided address.
     pub async fn connect(transport: T, mtp: M, addr: ServerAddr) -> Result<Self, io::Error> {
+        #[cfg(feature = "proxy")]
+        if let ServerAddr::Proxied { proxy, .. } = &addr
+            && let Ok(url) = url::Url::parse(proxy)
+            && crate::net::mtproxy::is_mtproxy_url(&url)
+            && !transport.supports_mtproxy()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "MTProxy requires ProxyTransport::for_proxy or compatible secret-mixed framing",
+            ));
+        }
         let stream = NetStream::connect(&addr).await?;
         let next_ping = Instant::now() + PING_DELAY;
         Ok(Self {

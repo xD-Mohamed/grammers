@@ -71,7 +71,10 @@ const UPDATES_DROPPED_LOG_COOLDOWN: Duration = Duration::from_secs(300);
 /// The lightest framing: one length byte for packets under 508 bytes, four
 /// above, and no checksum (TCP already has one). `Full` adds twelve bytes
 /// and a CRC32 to every packet in both directions.
+#[cfg(not(feature = "proxy"))]
 pub(crate) type Transport = transport::Abridged;
+#[cfg(feature = "proxy")]
+pub(crate) type Transport = crate::ProxyTransport;
 
 type InvokeResponse = Vec<u8>;
 
@@ -1304,7 +1307,15 @@ impl ConnectionSetup {
         &mut self,
         dc_option: &DcOption,
     ) -> Result<(Sender<Transport, mtp::Encrypted>, tl::types::Config), InvocationError> {
-        let transport = Transport::new;
+        #[cfg(not(feature = "proxy"))]
+        let transport = || Ok::<_, std::io::Error>(Transport::new());
+        #[cfg(feature = "proxy")]
+        let transport = || match self.connection_params.proxy_url.as_deref() {
+            Some(proxy) => {
+                Transport::for_connection(proxy, dc_option, self.connection_params.use_ipv6)
+            }
+            None => Ok(Transport::new()),
+        };
 
         let address = if self.connection_params.use_ipv6 {
             dc_option.ipv6.into()
@@ -1340,11 +1351,11 @@ impl ConnectionSetup {
         };
 
         let mut sender = if let Some(auth_key) = dc_option.auth_key {
-            connect_with_auth(transport(), addr(), auth_key)
+            connect_with_auth(transport()?, addr(), auth_key)
                 .await
                 .map_err(InvocationError::Io)?
         } else {
-            connect(transport(), addr()).await?
+            connect(transport()?, addr()).await?
         };
 
         sender.set_receive_updates(self.connection_params.receive_updates);
@@ -1359,7 +1370,7 @@ impl ConnectionSetup {
                     Some(transport::Error::BadStatus { status: 404 })
                 ) =>
             {
-                sender = connect(transport(), addr()).await?;
+                sender = connect(transport()?, addr()).await?;
                 sender.set_receive_updates(self.connection_params.receive_updates);
                 sender.set_ack_batch(self.connection_params.ack_batch);
                 sender.set_decode_limits(self.connection_params.decode_limits);
@@ -6418,6 +6429,71 @@ mod optimization_tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[cfg(feature = "proxy")]
+    #[tokio::test]
+    async fn http_proxy_covers_fresh_keys_cached_keys_and_recreated_dc_connections() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let session = Arc::new(grammers_session::storages::MemorySession::default());
+            for id in [1, 2] {
+                session.set_dc_option(&DcOption {
+                    id,
+                    ipv4: format!("192.0.2.{id}:443").parse().unwrap(),
+                    ipv6: format!("[2001:db8::{id}]:443").parse().unwrap(),
+                    auth_key: (id == 1).then_some([0; 256]),
+                }).await.unwrap();
+            }
+            let pool = SenderPool::with_configuration(session, 1, ConnectionParams {
+                proxy_url: Some(format!("http://{}", listener.local_addr().unwrap())),
+                connection_timeout: Some(Duration::from_secs(1)),
+                ..Default::default()
+            });
+            let mut setup = pool.runner.setup_context();
+            let server = async {
+                for id in [1, 2, 1] {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::new();
+                    while !request.ends_with(b"\r\n\r\n") { request.push(socket.read_u8().await.unwrap()); }
+                    assert_eq!(request, format!("CONNECT 192.0.2.{id}:443 HTTP/1.1\r\nHost: 192.0.2.{id}:443\r\n\r\n").as_bytes());
+                    socket.write_all(b"HTTP/1.1 403 Denied\r\n\r\n").await.unwrap();
+                }
+            };
+            let client = async {
+                for id in [1, 2, 1] {
+                    assert!(matches!(setup.create_connection(id).await, Err(InvocationError::Io(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused));
+                }
+            };
+            tokio::join!(client, server);
+        }).await.unwrap();
+    }
+
+    #[cfg(feature = "proxy")]
+    #[tokio::test]
+    async fn connection_initialization_deadline_includes_stalled_http_proxy_handshake() {
+        use tokio::io::AsyncReadExt;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let session = Arc::new(grammers_session::storages::MemorySession::default());
+            let pool = SenderPool::with_configuration(session, 1, ConnectionParams {
+                proxy_url: Some(format!("http://{}", listener.local_addr().unwrap())),
+                connection_timeout: Some(Duration::from_millis(30)),
+                ..Default::default()
+            });
+            let mut setup = pool.runner.setup_context();
+            let server = async {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                socket.read_to_end(&mut bytes).await.unwrap();
+                assert!(bytes.starts_with(b"CONNECT "));
+            };
+            let client = async {
+                assert!(matches!(setup.create_connection(2).await, Err(InvocationError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut));
+            };
+            tokio::join!(client, server);
+        }).await.unwrap();
     }
 
     fn fake_handle() -> (SenderPoolHandle, queue::UnboundedReceiver<Request>) {

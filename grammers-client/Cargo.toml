@@ -76,6 +76,10 @@ required-features = ["qr-login", "session-file"]
 name = "ping"
 
 [[example]]
+name = "proxy"
+required-features = ["proxy"]
+
+[[example]]
 name = "echo"
 required-features = ["session-file"]
 
