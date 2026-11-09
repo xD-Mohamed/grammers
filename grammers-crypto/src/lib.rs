@@ -142,18 +142,64 @@ fn do_encrypt_data_v2(buffer: &mut DequeBuffer<u8>, auth_key: &AuthKey, random_p
     buffer.extend_front(&auth_key.key_id);
 }
 
+/// Bytes requested from the operating system's generator at a time for padding.
+const PADDING_POOL_LEN: usize = 512;
+
+/// Bytes from the operating system's generator, handed out once each.
+struct PaddingPool {
+    bytes: [u8; PADDING_POOL_LEN],
+    used: usize,
+}
+
+impl PaddingPool {
+    const fn empty() -> Self {
+        Self {
+            bytes: [0; PADDING_POOL_LEN],
+            used: PADDING_POOL_LEN,
+        }
+    }
+
+    fn take(&mut self) -> [u8; 32] {
+        if self.used + 32 > PADDING_POOL_LEN {
+            getrandom::fill(&mut self.bytes).expect("failed to generate a secure padding");
+            self.used = 0;
+        }
+        let taken = &mut self.bytes[self.used..self.used + 32];
+        let mut padding = [0; 32];
+        padding.copy_from_slice(taken);
+        // A byte pads one message and is not kept here afterwards.
+        taken.fill(0);
+        self.used += 32;
+        padding
+    }
+}
+
+/// Random padding for one outgoing message.
+///
+/// Every byte still comes from the operating system's generator and is used once.
+/// They are fetched for sixteen messages at a time, because one system call per
+/// message was a measurable share of sending a small request. The pool belongs to
+/// its thread, so nothing is shared or locked. A thread whose local storage is
+/// already gone asks the system directly.
+fn random_padding() -> [u8; 32] {
+    thread_local! {
+        static POOL: std::cell::RefCell<PaddingPool> =
+            const { std::cell::RefCell::new(PaddingPool::empty()) };
+    }
+    POOL.try_with(|pool| pool.borrow_mut().take())
+        .unwrap_or_else(|_| {
+            let mut padding = [0; 32];
+            getrandom::fill(&mut padding).expect("failed to generate a secure padding");
+            padding
+        })
+}
+
 /// This function implements the [MTProto 2.0 algorithm] for computing
 /// `aes_key` and `aes_iv` from `auth_key` and `msg_key` as specified
 ///
 /// [MTProto 2.0 algorithm]: https://core.telegram.org/mtproto/description#defining-aes-key-and-initialization-vector
 pub fn encrypt_data_v2(buffer: &mut DequeBuffer<u8>, auth_key: &AuthKey) {
-    let random_padding = {
-        let mut rnd = [0; 32];
-        getrandom::fill(&mut rnd).expect("failed to generate a secure padding");
-        rnd
-    };
-
-    do_encrypt_data_v2(buffer, auth_key, &random_padding)
+    do_encrypt_data_v2(buffer, auth_key, &random_padding())
 }
 
 /// This method is the inverse of `encrypt_data_v2`.
@@ -318,7 +364,8 @@ mod benchmarks {
                 ],
             );
         }
-        for len in [640usize, 2096] {
+        // The key ID and message key, then whole cipher blocks.
+        for len in [24 + 624usize, 24 + 1600, 24 + 2080] {
             let source = vec![1u8; len];
             let mut work = source.clone();
             compare(
@@ -400,6 +447,48 @@ mod tests {
             ],
         );
         assert_eq!(calc_key(&auth_key, &msg_key, Side::Server), expected);
+    }
+
+    #[test]
+    fn padding_bytes_are_used_once_and_refilled_from_the_system() {
+        let mut pool = PaddingPool::empty();
+        let per_refill = PADDING_POOL_LEN / 32;
+        let mut seen = std::collections::HashSet::new();
+        for taken in 0..per_refill * 3 + 1 {
+            let padding = pool.take();
+            assert_ne!(padding, [0; 32], "padding {taken} is not random");
+            assert!(seen.insert(padding), "padding {taken} was handed out twice");
+            // What was handed out is no longer in the pool.
+            let used = pool.used;
+            assert_eq!(used, (taken % per_refill + 1) * 32);
+            assert!(pool.bytes[..used].iter().all(|byte| *byte == 0));
+            // What was not is still there for the next message, and is random.
+            assert!(used == PADDING_POOL_LEN || pool.bytes[used..].iter().any(|byte| *byte != 0));
+        }
+        // The same holds through the thread's own pool and across threads.
+        let ours: Vec<_> = (0..per_refill + 1).map(|_| random_padding()).collect();
+        let theirs = std::thread::spawn(move || {
+            (0..per_refill + 1)
+                .map(|_| random_padding())
+                .collect::<Vec<_>>()
+        })
+        .join()
+        .unwrap();
+        for padding in ours.iter().chain(&theirs) {
+            assert!(seen.insert(*padding), "padding repeated across pools");
+        }
+    }
+
+    #[test]
+    fn two_encryptions_of_one_message_differ() {
+        let auth_key = get_test_auth_key();
+        let encrypt = || {
+            let mut buffer = DequeBuffer::with_capacity(0, 0);
+            buffer.extend(b"the same plaintext, twice");
+            encrypt_data_v2(&mut buffer, &auth_key);
+            buffer[..].to_vec()
+        };
+        assert_ne!(encrypt(), encrypt());
     }
 
     #[test]
