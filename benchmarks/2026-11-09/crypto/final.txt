@@ -1,0 +1,21 @@
+test aes::tests::benchmark_decrypt_hashed ... decrypt and hash 96 B: portable 289.2 ns, one after the other 174.8 ns, together 150.7 ns
+decrypt and hash 448 B: portable 951.6 ns, one after the other 577.5 ns, together 458.6 ns
+decrypt and hash 656 B: portable 1296.0 ns, one after the other 807.7 ns, together 637.8 ns
+decrypt and hash 1600 B: portable 3026.6 ns, one after the other 1898.9 ns, together 1441.4 ns
+decrypt and hash 16384 B: portable 29850.2 ns, one after the other 19399.0 ns, together 14391.2 ns
+decrypt and hash 1048576 B: portable 1918935.2 ns, one after the other 1256814.9 ns, together 933949.4 ns
+test aes::tests::benchmark_ige_backend_closure ... IGE 64 B: encrypt per-block 137.5 ns, encrypt portable 129.6 ns, encrypt selected 39.6 ns, decrypt per-block 155.0 ns, decrypt portable 128.2 ns, decrypt selected 41.5 ns
+IGE 448 B: encrypt per-block 773.9 ns, encrypt portable 759.8 ns, encrypt selected 312.7 ns, decrypt per-block 900.7 ns, decrypt portable 784.9 ns, decrypt selected 321.8 ns
+IGE 656 B: encrypt per-block 1154.4 ns, encrypt portable 947.6 ns, encrypt selected 485.9 ns, decrypt per-block 1323.0 ns, decrypt portable 937.8 ns, decrypt selected 491.2 ns
+IGE 1600 B: encrypt per-block 2789.0 ns, encrypt portable 2822.4 ns, encrypt selected 1218.0 ns, decrypt per-block 3216.2 ns, decrypt portable 2930.6 ns, decrypt selected 1226.1 ns
+IGE 2096 B: encrypt per-block 3622.7 ns, encrypt portable 3794.5 ns, encrypt selected 1595.3 ns, decrypt per-block 4200.3 ns, decrypt portable 3880.2 ns, decrypt selected 1590.5 ns
+IGE 16384 B: encrypt per-block 28498.7 ns, encrypt portable 24410.0 ns, encrypt selected 12576.8 ns, decrypt per-block 33070.5 ns, decrypt portable 24311.1 ns, decrypt selected 12529.0 ns
+IGE 1048576 B: encrypt per-block 1810565.8 ns, encrypt portable 1466593.5 ns, encrypt selected 805264.4 ns, decrypt per-block 2082173.5 ns, decrypt portable 1472895.6 ns, decrypt selected 804028.4 ns
+test benchmarks::benchmark_message_crypto_components ... padding randomness: getrandom 32 B 325.8 ns
+AES-256 key schedule: both directions 34.7 ns, encrypt only 39.7 ns, decrypt only 34.8 ns
+encrypt 448 B plaintext: with OS padding 772.3 ns, fixed padding 679.8 ns
+encrypt 1024 B plaintext: with OS padding 1469.4 ns, fixed padding 1376.9 ns
+decrypt 648 B packet (key check fails after full work): decrypt_data_v2 731.9 ns
+decrypt 1624 B packet (key check fails after full work): decrypt_data_v2 1597.4 ns
+decrypt 2104 B packet (key check fails after full work): decrypt_data_v2 2026.6 ns
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 42 filtered out; finished in 13.25s

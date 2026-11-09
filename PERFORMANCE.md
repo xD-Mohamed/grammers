@@ -1,7 +1,14 @@
 # Library efficiency and fork changes
 
-The latest measurements, of [bot workloads against all three baselines](benchmarks/2026-10-31-bot/README.md),
-come first. What follows is older and describes earlier states of this code.
+The latest measurements are of [the request and reply path across many sessions](benchmarks/2026-11-09/README.md):
+against `dfb8e25`, 64 sessions on one thread complete **+32.77%** [+29.15, +37.41] more
+requests for **-24.82%** [-27.40, -22.96] CPU each with 1.6 KiB replies, a connected session
+holds 5,959 B of heap instead of 7,951 B, and one busy bot connection gains **+11.54%**
+[+7.79, +13.88]. Open-loop bot scenarios show no measured CPU change, and a process with a
+single connection holds 10 to 15 KiB more. All local mock traffic.
+
+Before that, [bot workloads against all three baselines](benchmarks/2026-10-31-bot/README.md).
+What follows is older and describes earlier states of this code.
 
 ## Large-reply memory scope
 

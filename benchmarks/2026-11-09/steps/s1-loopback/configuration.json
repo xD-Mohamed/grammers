@@ -1,0 +1,22 @@
+{
+  "binaries": {
+    "baseline": {
+      "name": "base-loopback",
+      "sha256": "f6be8ad9d78cc7690e0383f41ed0f734909a69112e718dccb68391ff9fefd9ad"
+    },
+    "candidate": {
+      "name": "s1-loopback",
+      "sha256": "0c56a3dab45dd5a3301f8754fe66d4cbf6bcd42da43a06f123f208143280d7c7"
+    }
+  },
+  "environment": {
+    "LOOPBACK_SHORT": "1",
+    "LOOPBACK_WINDOW_MS": "2000",
+    "LOOPBACK_CLIENT_CPUS": "0",
+    "LOOPBACK_SERVER_CPUS": "2,3",
+    "LOOPBACK_RUNTIME": "current"
+  },
+  "pairs": 12,
+  "command": "<binary> --exact loopback_rpc_cost --ignored --nocapture --test-threads=1",
+  "cpu_affinity": "client thread 0; responder threads 2,3"
+}

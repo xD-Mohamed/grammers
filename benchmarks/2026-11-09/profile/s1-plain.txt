@@ -1,0 +1,134 @@
+samples: 4840 (thread filter 'loopback')
+--- leaf categories
+ 30.52% send syscall
+ 24.81% crypto
+ 18.18% other user code
+ 12.71% clock_gettime
+ 10.89% recv syscall
+  1.16% epoll_wait
+  0.97% allocator
+  0.60% getrandom
+  0.17% other syscalls
+--- self
+ 30.52% __send
+ 13.66% _mm_aesdec_si128
+ 12.71% clock_gettime
+ 10.89% recv
+  8.72% _mm_sha256rnds2_epu32
+  2.54% copy_nonoverlapping
+  2.40% _mm_aesenc_si128
+  1.16% epoll_wait
+  1.07% {async_block#0}
+  1.03% atomic_compare_exchange
+  1.03% write
+  0.97% {async_fn#0}
+  0.72% __libc_malloc
+  0.60% getrandom
+  0.56% drop_glue
+  0.52% pop_request
+  0.50% swap_bytes
+  0.48% add
+  0.45% {closure#3}
+  0.43% atomic_load
+  0.43% poll_inner
+  0.41% {closure#1}
+  0.39% ::is_minus_one
+  0.39% poll
+  0.37% atomic_swap
+  0.35% {closure#0}
+  0.33% as_ref
+  0.29% poll_recv
+  0.29% on_net_write
+  0.29% read
+--- self by line
+ 30.52% __send @ :0
+ 13.66% _mm_aesdec_si128 @ src/x86/aes.rs:39
+ 12.71% clock_gettime @ :0
+ 10.89% recv @ :0
+  8.72% _mm_sha256rnds2_epu32 @ src/x86/sha.rs:138
+  2.54% copy_nonoverlapping @ src/ptr/mod.rs:573
+  2.40% _mm_aesenc_si128 @ src/x86/aes.rs:61
+  1.16% epoll_wait @ :0
+  0.93% write @ src/ptr/mod.rs:1963
+  0.91% {async_fn#0} @ grammers-mtsender/src/sender.rs:437
+  0.72% __libc_malloc @ :0
+  0.70% {async_block#0} @ grammers-mtsender/src/sender_pool.rs:1557
+  0.60% getrandom @ :0
+  0.56% drop_glue @ src/ptr/mod.rs:847
+  0.52% pop_request @ grammers-mtsender/src/sender.rs:1016
+  0.50% swap_bytes @ src/num/uint_macros.rs:743
+  0.48% add @ src/ptr/mut_ptr.rs:970
+  0.45% {closure#3} @ src/macros/select.rs:710
+  0.41% {closure#1} @ grammers-mtsender/src/sender_pool.rs:618
+  0.39% ::is_minus_one @ pal/unix/mod.rs:230
+  0.37% atomic_swap @ src/sync/atomic.rs:4013
+  0.37% {async_block#0} @ grammers-mtsender/tests/loopback.rs:990
+  0.35% atomic_compare_exchange @ src/sync/atomic.rs:4083
+  0.35% atomic_compare_exchange @ src/sync/atomic.rs:4104
+  0.33% atomic_load @ src/sync/atomic.rs:3995
+  0.33% atomic_compare_exchange @ src/sync/atomic.rs:4101
+  0.29% poll_recv @ src/sync/oneshot.rs:0
+  0.29% on_net_write @ grammers-mtsender/src/sender.rs:743
+  0.29% poll_inner @ runtime/task/harness.rs:217
+  0.27% get @ core/src/cell.rs:558
+--- inclusive
+100.00% ::new::thread_start
+100.00% ::call_once
+100.00% ::call_once::{shim:vtable#0}
+100.00% std::thread::lifecycle::spawn_unchecked::::{closure#1}
+100.00% std::panic::catch_unwind::
+100.00% std::panicking::catch_unwind::
+100.00% std::panicking::catch_unwind::do_call::
+100.00% std::thread::lifecycle::spawn_unchecked::::{closure#1}::{closure#0}
+100.00% std::sys::backtrace::__rust_begin_short_backtrace::
+100.00% test::run_test::{closure#1}
+100.00% test::run_test::{closure#0}
+100.00% test::run_test_in_process
+100.00% test::run_test_in_process::{closure#0}
+100.00% test::__rust_begin_short_backtrace::_core::result::Result
+100.00% _core::result::Result_as_core::ops::function::FnOnce::call_once
+100.00% call_once
+100.00% {closure#0}
+100.00% loopback_rpc_cost
+100.00% block_on
+100.00% block_on_inner
+100.00% enter_runtime
+100.00% enter
+100.00% set_scheduler
+100.00% with
+100.00% try_with
+100.00% set
+ 98.00% poll
+ 97.19% run_task
+ 97.19% budget
+ 97.19% with_budget
+ 96.84% run
+ 96.67% poll_inner
+ 95.97% poll_future
+ 95.97% catch_unwind
+ 95.97% do_call
+ 95.79% with_mut
+ 95.58% {async_block#0}
+ 90.50% {async_fn#0}
+ 43.64% {closure#3}
+ 41.59% do_io
+ 33.70% and_then
+ 31.61% write
+ 30.87% poll_write
+ 30.87% poll_write_priv
+ 30.56% ::write
+ 30.52% __send
+ 30.14% {closure#4}
+ 30.06% on_net_read
+ 28.95% deserialize
+ 23.04% decrypt_data_v2
+ 13.66% decrypt
+ 13.66% _mm_aesdec_si128
+ 13.16% ::now
+ 12.71% clock_gettime
+ 11.69% poll_read
+ 11.65% poll_read_priv
+ 11.30% read
+ 11.01% ::read
+ 11.01% ::recv_with_flags
+ 10.89% recv

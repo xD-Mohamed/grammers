@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased: request path, and Codeberg upstream reviewed through e61cf85
+
+[Measurements](benchmarks/2026-11-09/README.md). Nothing that compiled before stops compiling.
+
+- AES-IGE uses AES-NI directly on x86-64 where the processor has it, about twice as fast,
+  and incoming packets are decrypted and authenticated in one pass. Output is
+  byte-identical; other targets and processors use the previous code.
+  `grammers_crypto::aes::ige_decrypt_hashed` is new.
+- Padding randomness is requested from the system for sixteen messages at a time.
+- The request path reads the clock about three times per request instead of eight. The
+  messages of one packet take consecutive identifiers.
+- `Mtp::on_packet_sent` is new and optional: a driver reports when a packet was written,
+  and acknowledgements queued afterwards count their delay from then, never later than
+  before. A driver that reads `Mtp::service_deadline` must call `Mtp::on_service_timeout`
+  when it passes; `Encrypted` then no longer checks the delay itself.
+- A connection holds socket buffers only while a packet is in them. Grown buffers are
+  released one to two minutes after the last large transfer, judged at keepalive ticks.
+- `grammers-tl-parser`: `Definition`, `Parameter`, `ParameterType`, `Type`, `Flag`,
+  `ParseError` and `ParamParseError` are `Clone` (idea from upstream `d16333b`).
+- `grammers-session`: `tokio` is optional, enabled by `sqlite-storage` (a default feature)
+  and `session-import-files`. The memory-only library no longer depends on it (idea from
+  upstream `a852bec`).
+- `grammers-mtproto` no longer depends on `bytes`, which it never used (as upstream `b8b4be1`).
+- Reviewed all 10 upstream commits after `7b414b1`. Layer 233 is deferred and layer 230 is
+  unchanged: see [UPSTREAM.md](UPSTREAM.md) for each commit and the reasons.
+
 ## Unreleased: reviewed Codeberg upstream through 7b414b1
 
 - Add `InputMedia::try_media_ttl` and `InputVideo::try_ttl` to report TTL overflow

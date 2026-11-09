@@ -1,5 +1,33 @@
 # grammers fork
 
+## Request path, crypto and socket buffers (2026-11-09)
+
+[Measurements, the path of one request and what is left](benchmarks/2026-11-09/README.md).
+
+- On a host this size never run `cargo test --release --workspace` in one command: it
+  exhausted memory and froze the machine. One crate at a time, `-j 2`, nothing else heavy
+  alongside, and no measurement while anything builds.
+- The clock is a system call on this host. Nothing on the request path reads it without a
+  measured reason: one wall-clock read per packet (`get_new_msg_id`), and the write's one
+  monotonic read serves tracked requests and `Mtp::on_packet_sent`. Reads and writes only
+  set flags, which `Sender::idle_tick` ages at keepalive ticks. Count per request with
+  `benchmarks/2026-11-09/tools/sysc.c` after touching `Sender::step`, `Encrypted::push`,
+  `finalize` or `queue_ack`.
+- `Encrypted` stops checking the acknowledgement delay itself once a driver has read
+  `service_deadline`: a driver that reads it must call `on_service_timeout`. An
+  acknowledgement's delay may start before its arrival, at the last reported write, never after.
+- A connection holds a socket buffer only while a packet is in it; between packets they
+  are spares of the thread. A read on a plain socket waits for readiness first, polled
+  directly so that the connection task does not grow. TLS streams keep their own buffer.
+  The spare is 4 KiB: 16 KiB cost a one-connection process 34 KiB. Busy connections grow
+  their own to 16 KiB as before. Re-measure with `compare-overload.py` and the heap census.
+- AES-IGE has an AES-NI path and a portable one that must stay byte-identical, and incoming
+  packets are decrypted and hashed in one pass (`ige_decrypt_hashed`). The only `unsafe`
+  is the call into those functions after runtime detection. Encryption cannot be joined
+  with its hash: the key depends on it.
+- Padding bytes come from the system generator 512 at a time, each used once and cleared.
+- TL layer 233 is deferred for the reasons in UPSTREAM.md: `Update` would outgrow its guard.
+
 ## Bot workload and compliance follow-up (2026-10-31)
 
 [Measurements](benchmarks/2026-10-31-bot/README.md) and [audit with sources](COMPLIANCE-2026-10-31.md).

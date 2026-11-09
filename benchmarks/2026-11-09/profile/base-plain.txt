@@ -1,0 +1,134 @@
+samples: 3438 (thread filter 'loopback')
+--- leaf categories
+ 33.36% crypto
+ 20.27% send syscall
+ 18.15% clock_gettime
+ 14.60% other user code
+  8.76% recv syscall
+  2.27% getrandom
+  1.34% epoll_wait
+  1.16% allocator
+  0.09% other syscalls
+--- self
+ 20.27% __send
+ 18.15% clock_gettime
+ 14.69% _mm_aesdec_si128
+  8.87% _mm_sha256rnds2_epu32
+  8.76% recv
+  3.34% load_block
+  2.82% _mm_aesenclast_si128
+  2.27% getrandom
+  1.83% _mm_storeu_si128
+  1.34% epoll_wait
+  0.99% {async_fn#0}
+  0.84% copy_nonoverlapping
+  0.79% {async_block#0}
+  0.76% __libc_malloc
+  0.70% poll
+  0.67% atomic_compare_exchange
+  0.55% atomic_sub
+  0.52% {closure#3}
+  0.52% finalize_fixed
+  0.47% _mm_loadu_si128
+  0.47% poll_recv
+  0.44% ::now
+  0.41% {closure#0}
+  0.41% cfree
+  0.41% compare
+  0.41% decrypt
+  0.38% on_net_read
+  0.35% atomic_load
+  0.35% try_fill_write
+  0.32% get
+--- self by line
+ 20.27% __send @ :0
+ 18.15% clock_gettime @ :0
+ 14.69% _mm_aesdec_si128 @ src/x86/aes.rs:39
+  8.87% _mm_sha256rnds2_epu32 @ src/x86/sha.rs:138
+  8.76% recv @ :0
+  3.34% load_block @ backends/x86_aes/utils.rs:10
+  2.82% _mm_aesenclast_si128 @ src/x86/aes.rs:72
+  2.27% getrandom @ :0
+  1.83% _mm_storeu_si128 @ src/x86/sse2.rs:1404
+  1.34% epoll_wait @ :0
+  0.99% {async_fn#0} @ grammers-mtsender/src/sender.rs:401
+  0.84% copy_nonoverlapping @ src/ptr/mod.rs:573
+  0.79% {async_block#0} @ grammers-mtsender/src/sender_pool.rs:1548
+  0.76% __libc_malloc @ :0
+  0.52% {closure#3} @ src/macros/select.rs:0
+  0.52% finalize_fixed @ digest-0.11.3/src/lib.rs:104
+  0.49% atomic_sub @ src/sync/atomic.rs:4049
+  0.47% _mm_loadu_si128 @ src/x86/sse2.rs:1346
+  0.44% poll @ runtime/task/raw.rs:266
+  0.41% ::now @ pal/unix/time.rs:107
+  0.41% cfree @ :0
+  0.41% atomic_compare_exchange @ src/sync/atomic.rs:4083
+  0.41% compare @ src/slice/cmp.rs:339
+  0.41% decrypt @ backends/x86_aes/encdec.rs:38
+  0.38% on_net_read @ grammers-mtsender/src/sender.rs:638
+  0.38% poll_recv @ grammers-mtsender/src/queue.rs:115
+  0.35% try_fill_write @ grammers-mtsender/src/sender.rs:568
+  0.32% atomic_load @ src/sync/atomic.rs:3995
+  0.32% get @ core/src/cell.rs:558
+  0.32% _mm_aeskeygenassist_si128 @ src/x86/aes.rs:100
+--- inclusive
+100.00% ::new::thread_start
+100.00% ::call_once
+100.00% ::call_once::{shim:vtable#0}
+100.00% std::thread::lifecycle::spawn_unchecked::::{closure#1}
+100.00% std::panic::catch_unwind::
+100.00% std::panicking::catch_unwind::
+100.00% std::panicking::catch_unwind::do_call::
+100.00% std::thread::lifecycle::spawn_unchecked::::{closure#1}::{closure#0}
+100.00% std::sys::backtrace::__rust_begin_short_backtrace::
+100.00% test::run_test::{closure#1}
+100.00% test::run_test::{closure#0}
+100.00% test::run_test_in_process
+100.00% test::run_test_in_process::{closure#0}
+100.00% test::__rust_begin_short_backtrace::_core::result::Result
+100.00% _core::result::Result_as_core::ops::function::FnOnce::call_once
+100.00% call_once
+100.00% {closure#0}
+100.00% loopback_rpc_cost
+100.00% block_on
+100.00% block_on_inner
+100.00% enter_runtime
+100.00% enter
+100.00% set_scheduler
+100.00% with
+100.00% try_with
+100.00% set
+ 98.66% poll
+ 97.29% run_task
+ 97.29% budget
+ 97.29% with_budget
+ 97.29% run
+ 96.77% poll_inner
+ 96.34% poll_future
+ 96.34% catch_unwind
+ 96.34% do_call
+ 96.04% with_mut
+ 95.87% {async_block#0}
+ 91.74% {async_fn#0}
+ 40.52% and_then
+ 36.21% {closure#4}
+ 36.18% on_net_read
+ 32.46% deserialize
+ 31.04% {closure#3}
+ 29.23% do_io
+ 27.49% decrypt_data_v2
+ 23.62% call
+ 20.54% poll_write
+ 20.54% poll_write_priv
+ 20.48% write
+ 20.33% ::write
+ 20.27% __send
+ 20.13% ige_decrypt
+ 19.98% decrypt_with_backend
+ 19.98% decrypt
+ 19.98% decrypt_block_inplace
+ 19.98% decrypt_block
+ 18.73% ::now
+ 18.15% clock_gettime
+ 16.46% try_fill_write
+ 14.69% _mm_aesdec_si128
