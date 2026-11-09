@@ -1,6 +1,6 @@
 # Compatible upstream ideas: focused continuation, 2026-11-04
 
-Baseline: `b48890ddf5186632ff7cb7835a51000e619337bb`, initially both local and
+Baseline: `8ddcfab0f2ad66aa2f5f680e204f5dfaf778fe9a`, initially both local and
 remote `main`, with a clean working tree. Work branch: `codex/upstream-ideas-20261104`.
 Canonical Codeberg `HEAD` and `refs/heads/master` were checked again with
 `git ls-remote`; both still point to `7b414b1d28537f4c354629c3ceeabe771a86f3b4`.
@@ -51,7 +51,7 @@ Exo's `6ce4c54c0ad712a6f91f6344119f58be105f9533`, rather than its API/semantics.
 
 ## Audit of the completed intake and other deferred ideas
 
-- `61cc9ff` only adds `MsgId::into_inner`. `b48890d` adds `upload_media` and uses
+- `83f0cb5` only adds `MsgId::into_inner`. `8ddcfab` adds `upload_media` and uses
   the same response conversion in albums. Comparison against their parents
   found no removed/renamed public signature. Album upload order, error types,
   media conversion, peer/business fields and result cardinality are retained.

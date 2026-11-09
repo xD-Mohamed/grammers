@@ -9,15 +9,15 @@
       "bytes": 8983
     },
     "benchmarks/2026-11-04-upstream/README.md": {
-      "sha256": "f336ee38c143064b19bf2d40a59282f90a112bac8e7f11c6cfbac171bc04c6d6",
+      "sha256": "a7ba0beaab4967772295ad68fd480e13d53fb0296af220ba43b1471fcdf5d6ea",
       "bytes": 10690
     },
     "benchmarks/2026-11-04-upstream/compatible-ideas.md": {
-      "sha256": "5b682b6c4ccd6be261e7a3ab2193dbf4e7e546140c9a50c319090d122a4cf062",
+      "sha256": "f7b6d265a22ea2ba2e6bbc506dea4e187f1dfb6c29cc4ae23e3774ba3ae42363",
       "bytes": 9144
     },
     "benchmarks/2026-11-04-upstream/continuation-validation.json": {
-      "sha256": "847c3b3b8adcdd7a9f254e96eadf27e24cab796d1c900063dcc5c8a89f9dffe0",
+      "sha256": "a325d3379df4bfe5c12454e6b2ea9c0d962da92ea0e77cc85f4607c548789c4b",
       "bytes": 6385
     },
     "benchmarks/2026-11-04-upstream/continuation-validation/api.log": {
@@ -73,7 +73,7 @@
       "bytes": 949
     },
     "benchmarks/2026-11-04-upstream/header-probe.rs": {
-      "sha256": "d1bddd0f18676f707be51c220b9224a086071200213f9c685a9f1b7afac39aa5",
+      "sha256": "90e267c6c82f47ee8bf3ae1fbb7d35727af3b0981948652a074d91f28f12687a",
       "bytes": 3581
     },
     "benchmarks/2026-11-04-upstream/slice-probe.csv": {
@@ -85,7 +85,7 @@
       "bytes": 4186
     },
     "benchmarks/2026-11-04-upstream/source.json": {
-      "sha256": "a3fd1d1e8381bd27c91c7b250115a98c9d9cb9806aafefe40034c51c83da0f14",
+      "sha256": "a5af09cb9359698ed0acb52693830622f85df6c67b560d1d43889cc18ec0f121",
       "bytes": 13547
     },
     "benchmarks/2026-11-04-upstream/validation.json": {

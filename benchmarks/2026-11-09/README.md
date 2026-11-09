@@ -1,6 +1,6 @@
 # Request and reply path review (2026-11-09)
 
-Baseline `dfb8e25`, result `6cd992d`. Everything here is local mock traffic on this host:
+Baseline `aa1ac8a`, result `27a3f75`. Everything here is local mock traffic on this host:
 nothing contacted Telegram and no credential was used. Rust 1.99.1, 4-core KVM guest
 (Ryzen 9 7950X3D), 5.9 GB RAM, shared with other services. Changes are medians of paired
 percentage changes with unadjusted paired bootstrap 95% intervals; a change whose interval
@@ -18,7 +18,7 @@ harness file changed, so both revisions ran the identical harness.
 
 Request about 270 B. [Logs](loopback).
 
-| Metric | `dfb8e25` | `6cd992d` | Change |
+| Metric | `aa1ac8a` | `27a3f75` | Change |
 |---|---:|---:|---:|
 | Plain reply 1592 B: RPC/s | 65,759 | 86,054 | **+32.77%** [+29.15, +37.41] |
 | CPU µs/RPC | 15.17 | 11.55 | **-24.82%** [-27.40, -22.96] |
@@ -31,7 +31,7 @@ Request about 270 B. [Logs](loopback).
 
 ### Heap per session (400 sessions, deterministic census)
 
-| Stage | `dfb8e25` | `6cd992d` | Change |
+| Stage | `aa1ac8a` | `27a3f75` | Change |
 |---|---:|---:|---:|
 | Pool created, not connected | 2,143 B | 2,143 B | none |
 | Connected after one RPC | 7,951 B | 5,959 B | **-25.1%** |
@@ -52,7 +52,7 @@ Both sides improved; no trade was made between them.
 
 ### One busy bot connection with updates
 
-| Scenario | Metric | `dfb8e25` | `6cd992d` | Change |
+| Scenario | Metric | `aa1ac8a` | `27a3f75` | Change |
 |---|---|---:|---:|---:|
 | Closed loop, 64 callers, 10 rounds | RPC/s | 134,293 | 149,831 | **+11.54%** [+7.79, +13.88] |
 | | CPU µs/RPC | 7.45 | 6.67 | **-10.29%** [-12.13, -7.86] |
@@ -84,7 +84,7 @@ twelve rounds above give -10.29% [-22.24, +13.40]. That latency is quantized by 
 
 ## The path of one request and its reply
 
-Raw tracked call on a warm connection, as counted and profiled at `dfb8e25`.
+Raw tracked call on a warm connection, as counted and profiled at `aa1ac8a`.
 
 | Stage | Where | Per request |
 |---|---|---|
@@ -108,7 +108,7 @@ on this path except the runtime thread.
 Client thread, [samples](profile) at the 250 Hz the kernel's timer allows, and
 [system calls counted natively](tools/sysc.c) per thread.
 
-| Where | `dfb8e25` share | µs/RPC | `6cd992d` share | µs/RPC |
+| Where | `aa1ac8a` share | µs/RPC | `27a3f75` share | µs/RPC |
 |---|---:|---:|---:|---:|
 | AES-IGE and SHA-256 | 33.4% | 5.1 | 22.8% | 2.6 |
 | `send` | 20.3% | 3.1 | 34.7% | 4.0 |
@@ -119,7 +119,7 @@ Client thread, [samples](profile) at the 250 Hz the kernel's timer allows, and
 | `epoll_wait` | 1.3% | 0.2 | 1.8% | 0.2 |
 | Allocator | 1.2% | 0.2 | 1.0% | 0.1 |
 
-| System calls per request | `dfb8e25` | `6cd992d` |
+| System calls per request | `aa1ac8a` | `27a3f75` |
 |---|---:|---:|
 | `send` / `recv` | 1.00 / 1.00 | 1.00 / 1.00 |
 | `clock_gettime(CLOCK_REALTIME)` | 3.00 | 1.00 |
@@ -144,7 +144,7 @@ client finds the mock's thread asleep more often. That is the harness, not the l
 Each step was measured against the build before it with the many-session scenario, 12
 pairs. [Summaries](steps).
 
-### 1. AES-IGE on AES-NI directly (`4ba555e`)
+### 1. AES-IGE on AES-NI directly (`aa770a0`)
 
 IGE is one serial chain, so its speed is the latency of that chain. The cipher crate's
 block interface moved every block between vector and general registers on it. A block now
@@ -157,12 +157,12 @@ folded into the first and last round keys. Runtime detection, portable fallback 
 | 16 KiB decrypt | 24.3 µs | 12.5 µs |
 | 1 MiB decrypt / encrypt | 1,473 / 1,467 µs | 804 / 805 µs |
 
-### 2. Padding randomness sixteen messages at a time (`b568278`)
+### 2. Padding randomness sixteen messages at a time (`9a1b837`)
 
 One `getrandom` call (326 ns) per packet became one per sixteen. Same generator, each byte
 used once and cleared, pool owned by the thread.
 
-### 3. Clock reads (`375fbb7`)
+### 3. Clock reads (`ebcaadc`)
 
 One wall-clock read per packet instead of per message; idle-buffer release judged at
 keepalive ticks from flags that reads and writes set; the acknowledgement delay left to
@@ -174,7 +174,7 @@ Steps 1 to 3 together: plain **+24.04%** [+22.77, +26.50] RPC/s, CPU **-19.82%**
 **-11.63%** [-15.62, -10.51]. They were not measured apart at the workload level; the
 component figures are in each commit.
 
-### 4. Socket buffers only while a packet is in them (`ebe1550`, `6cd992d`)
+### 4. Socket buffers only while a packet is in them (`01547c2`, `27a3f75`)
 
 A connection kept a 1 KiB read buffer and a 1.1 KiB write buffer for life, and a busy one a
 16 KiB read buffer. They are now spares of the runtime thread: a read waits for the socket
@@ -188,15 +188,15 @@ Heap per session as in the table at the top. Against the previous step: RPC/s +0
 the tail may be real; the final figures above include it.
 
 The spare was first 16 KiB. That cost a one-connection process on two workers 34 KiB
-(**+13.43%** [+12.48, +14.15] live heap), so it became 4 KiB (`6cd992d`).
+(**+13.43%** [+12.48, +14.15] live heap), so it became 4 KiB (`27a3f75`).
 
-### 5. Decrypt and authenticate in one pass (`bc59f61`)
+### 5. Decrypt and authenticate in one pass (`2f8fd59`)
 
 Decryption and the SHA-256 that authenticates the plaintext are two serial chains that do
 not need each other's result for the same 64 bytes. Issued together, with the hash one
 block behind, the processor works on both at once.
 
-| Buffer | `dfb8e25` | After step 1 | Together |
+| Buffer | `aa1ac8a` | After step 1 | Together |
 |---|---:|---:|---:|
 | 1600 B decrypt and hash | 3,027 ns | 1,899 ns | 1,441 ns |
 | 16 KiB | 29.9 µs | 19.4 µs | 14.4 µs |
@@ -205,7 +205,7 @@ block behind, the processor works on both at once.
 A complete outgoing packet of 448 B went from 1,384 to 772 ns and of 1024 B from 2,477 to
 1,469 ns. Encryption cannot be joined the same way: its key depends on the finished hash.
 
-### 6. Acknowledgements timed from the write (`aeb4341`)
+### 6. Acknowledgements timed from the write (`faab596`)
 
 The read of the clock when a packet is written now also starts the delay of the
 acknowledgements its replies need, through the new optional `Mtp::on_packet_sent`. That time
@@ -309,7 +309,7 @@ exceeded 14 MiB.
 
 ## Validation
 
-At `6cd992d`, Rust/Cargo 1.99.1, Linux x86_64, locked offline dependencies, all local.
+At `27a3f75`, Rust/Cargo 1.99.1, Linux x86_64, locked offline dependencies, all local.
 
 | Check | Result |
 |---|---|
@@ -318,7 +318,7 @@ At `6cd992d`, Rust/Cargo 1.99.1, Linux x86_64, locked offline dependencies, all 
 | Size and depth guards (`depth_tests.rs`) | Passed, in that run |
 | Strict Clippy, all targets and features: crypto, mtproto, mtsender (also without `proxy`), session, tl-parser | Passed |
 | Warning-free Rustdoc, all features: the same five crates | Passed |
-| Session features at `e6d3f5e`: none / import / string / file import / sqlite / default | 70 / 70+22 / 70 / 90+22 / 83 / 83 passed |
+| Session features at `139e6e2`: none / import / string / file import / sqlite / default | 70 / 70+22 / 70 / 90+22 / 83 / 83 passed |
 | New tests checked by breaking what they test | AES key schedule (two ways), digest padding and block offset: all caught |
 
 Not run: Clippy and Rustdoc over the crates this work did not touch (client, tl-types,

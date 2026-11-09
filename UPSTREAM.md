@@ -14,10 +14,10 @@ cherry-picked: three ideas were written for this fork's own crates, each in its 
 | `3f94fd9` | Separate NormalParameterType from the enum | Parser refactor, breaking | Not adopted, for the same reason |
 | `b4184af` | Address clippy lints | Chore | Not applicable: it rewrites acknowledgement code in upstream's `push` that this fork replaced; the fork passes strict Clippy |
 | `8fb8135` | Update to layer 233 | Schema | **Deferred**, see below |
-| `d16333b` | Derive Clone for all parser types | Additive | Adopted in our form, `c66bd28`: the existing parser types keep their fields and gain `Clone`, and so do both error enums, which upstream left out |
+| `d16333b` | Derive Clone for all parser types | Additive | Adopted in our form, `ccd7a1a`: the existing parser types keep their fields and gain `Clone`, and so do both error enums, which upstream left out |
 | `81fcef4` | Upgrade dependencies | Chore | Not adopted: manifest minimums only, and the fork has a committed lock. `aes` and `flate2` are on measured paths; moving them needs the byte-identity tests and benchmarks |
-| `b8b4be1` | Delete unused bytes dependency from mtproto | Chore | Adopted, `f499e39`: no source file of `grammers-mtproto` used it here either |
-| `a852bec` | Gate tokio as optional behind sqlite-storage session | Feature gating | Adopted in our form, `e6d3f5e`: enabled by `sqlite-storage` and also by `session-import-files`, which upstream does not have. The memory-only library builds without an async runtime |
+| `b8b4be1` | Delete unused bytes dependency from mtproto | Chore | Adopted, `ecf4d86`: no source file of `grammers-mtproto` used it here either |
+| `a852bec` | Gate tokio as optional behind sqlite-storage session | Feature gating | Adopted in our form, `139e6e2`: enabled by `sqlite-storage` and also by `session-import-files`, which upstream does not have. The memory-only library builds without an async runtime |
 | `9d5de24` | Use imported alias instead of full crate name | Cosmetic | Not adopted: no behaviour |
 | `e61cf85` | Bump to v0.12.0 | Release label | Not applicable: the fork's versions are its own |
 

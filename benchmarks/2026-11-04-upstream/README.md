@@ -5,7 +5,7 @@ Canonical source: <https://codeberg.org/Lonami/grammers.git>, default branch
 The source was fetched with ordinary public Git; no web search snippets were used.
 
 Both local `main` and the actual remote `origin/main` initially pointed at
-`37ca7a06db50520d6384e79b169a92e9d0b19288`, with a clean working tree. Work was
+`14ffda1a9a622514232494082083fac57c4c049f`, with a clean working tree. Work was
 prepared on `codex/upstream-review-20261104`. The merge base with upstream remains
 `633d7fe4ecc829beec492d745bbbfe5911010623`. There are **20 upstream commits**
 after that ancestor, **three new since the 2026-10-30 review** at
@@ -17,11 +17,11 @@ The owner clarified acceptance after that intake: judge the idea and implement
 useful behavior within this fork's APIs. The [focused continuation](compatible-ideas.md)
 supersedes the original TTL/serialization dispositions. It adapts the private
 stack cursor optimization and adds fallible TTL setters; the original full-suite
-receipts below remain the receipts for `b48890d`, not a rerun of this continuation.
+receipts below remain the receipts for `8ddcfab`, not a rerun of this continuation.
 
 ## Applied changes
 
-- **`c8d6979`** is cherry-picked with `-x` as `61cc9ff`. Its stable patch ID,
+- **`c8d6979`** is cherry-picked with `-x` as `83f0cb5`. Its stable patch ID,
   `c73827874a01104dda0bf55bbf54dd861a0edd10`, matches upstream exactly. The
   additive `MsgId::into_inner` accessor makes opaque protocol identifiers usable
   outside the crate. An external integration test correlates two returned IDs

@@ -5,8 +5,8 @@
   "checked_tip": "7b414b1d28537f4c354629c3ceeabe771a86f3b4",
   "integrated_ancestor": "633d7fe4ecc829beec492d745bbbfe5911010623",
   "previous_review_tip": "1e31e73cd9797790905bbea82cd75adcbe6f1242",
-  "fork_start": "37ca7a06db50520d6384e79b169a92e9d0b19288",
-  "observed_origin_main_at_start": "37ca7a06db50520d6384e79b169a92e9d0b19288",
+  "fork_start": "14ffda1a9a622514232494082083fac57c4c049f",
+  "observed_origin_main_at_start": "14ffda1a9a622514232494082083fac57c4c049f",
   "comparison_commits": 20,
   "new_commits_since_previous_review": 3,
   "commands": [

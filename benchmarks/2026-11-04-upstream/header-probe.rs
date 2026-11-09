@@ -18,7 +18,7 @@ mod mtp {
 #[path = "../../grammers-mtproto/src/utils.rs"]
 mod utils;
 
-// Exact pre-change cursor implementation from b48890d, grammers-mtproto/src/utils.rs.
+// Exact pre-change cursor implementation from 8ddcfab, grammers-mtproto/src/utils.rs.
 struct Baseline<const N: usize> {
     array: [u8; N],
     pos: usize,
