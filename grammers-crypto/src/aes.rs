@@ -18,9 +18,9 @@ use aes::cipher::{
 };
 
 /// One IGE pass over a buffer, run inside the cipher's backend closure: the
-/// CPU-feature dispatch happens once per buffer instead of once per block, and
-/// the chaining values stay in registers. Every block depends on the previous
-/// one, so the mode itself cannot process blocks in parallel.
+/// CPU-feature dispatch happens once per buffer instead of once per block.
+/// Every block depends on the previous one, so the mode itself cannot process
+/// blocks in parallel. This is the portable path; see [`x86`] for AES-NI.
 struct Ige<'a> {
     buffer: &'a mut [u8],
     iv: &'a [u8; 32],
@@ -73,18 +73,187 @@ impl BlockCipherDecClosure for Ige<'_> {
     }
 }
 
+/// AES-NI applied directly to the IGE chain.
+///
+/// IGE is one serial dependency chain: every block waits for the previous one, so
+/// its speed is the latency of that chain and nothing else. The portable closure
+/// above goes through the cipher's block interface, which moves every block between
+/// vector and general registers on that chain. Here a block stays in one vector
+/// register from load to store, and the two whitening XORs that do not depend on
+/// the previous block are folded into the first and last round keys, leaving the
+/// fourteen rounds and one XOR per block. Output is byte-identical; the tests
+/// compare both paths.
+#[cfg(target_arch = "x86_64")]
+mod x86 {
+    use std::arch::x86_64::*;
+
+    /// Whether this processor has the instructions used below. The standard
+    /// library caches the answer, so asking per message costs a load.
+    #[inline]
+    pub(super) fn available() -> bool {
+        std::arch::is_x86_feature_detected!("aes") && std::arch::is_x86_feature_detected!("sse4.1")
+    }
+
+    #[inline]
+    #[target_feature(enable = "aes,sse4.1")]
+    fn load(bytes: &[u8; 16]) -> __m128i {
+        let (low, high) = bytes.split_at(8);
+        _mm_set_epi64x(
+            i64::from_le_bytes(high.try_into().unwrap()),
+            i64::from_le_bytes(low.try_into().unwrap()),
+        )
+    }
+
+    #[inline]
+    #[target_feature(enable = "aes,sse4.1")]
+    fn store(bytes: &mut [u8; 16], value: __m128i) {
+        let (low, high) = bytes.split_at_mut(8);
+        low.copy_from_slice(&_mm_cvtsi128_si64(value).to_le_bytes());
+        high.copy_from_slice(&_mm_extract_epi64(value, 1).to_le_bytes());
+    }
+
+    /// The AES-256 encryption round keys (FIPS 197, section 5.2).
+    #[target_feature(enable = "aes,sse4.1")]
+    fn expand(key: &[u8; 32]) -> [__m128i; 15] {
+        // w[i] = w[i - 8] ^ w[i - 1] for each of the four words, as three shifts.
+        #[inline]
+        #[target_feature(enable = "aes,sse4.1")]
+        fn mix(previous: __m128i, assist: __m128i) -> __m128i {
+            let mut key = previous;
+            key = _mm_xor_si128(key, _mm_slli_si128(key, 4));
+            key = _mm_xor_si128(key, _mm_slli_si128(key, 4));
+            key = _mm_xor_si128(key, _mm_slli_si128(key, 4));
+            _mm_xor_si128(key, assist)
+        }
+        macro_rules! even {
+            ($keys:ident, $i:expr, $rcon:expr) => {
+                $keys[$i] = mix(
+                    $keys[$i - 2],
+                    _mm_shuffle_epi32(_mm_aeskeygenassist_si128($keys[$i - 1], $rcon), 0xff),
+                );
+            };
+        }
+        macro_rules! odd {
+            ($keys:ident, $i:expr) => {
+                $keys[$i] = mix(
+                    $keys[$i - 2],
+                    _mm_shuffle_epi32(_mm_aeskeygenassist_si128($keys[$i - 1], 0), 0xaa),
+                );
+            };
+        }
+        let (first, second) = key.split_at(16);
+        let mut keys = [_mm_setzero_si128(); 15];
+        keys[0] = load(first.try_into().unwrap());
+        keys[1] = load(second.try_into().unwrap());
+        even!(keys, 2, 0x01);
+        odd!(keys, 3);
+        even!(keys, 4, 0x02);
+        odd!(keys, 5);
+        even!(keys, 6, 0x04);
+        odd!(keys, 7);
+        even!(keys, 8, 0x08);
+        odd!(keys, 9);
+        even!(keys, 10, 0x10);
+        odd!(keys, 11);
+        even!(keys, 12, 0x20);
+        odd!(keys, 13);
+        even!(keys, 14, 0x40);
+        keys
+    }
+
+    #[target_feature(enable = "aes,sse4.1")]
+    pub(super) fn encrypt(buffer: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
+        let keys = expand(key);
+        let (iv1, iv2) = iv.split_at(16);
+        // The previous ciphertext and plaintext blocks.
+        let mut iv1 = load(iv1.try_into().unwrap());
+        let mut iv2 = load(iv2.try_into().unwrap());
+        for chunk in buffer.as_chunks_mut::<16>().0 {
+            let plaintext = load(chunk);
+            // c = E(p ^ iv1) ^ iv2, with p ^ k0 and k14 ^ iv2 off the chain.
+            let mut block = _mm_xor_si128(_mm_xor_si128(plaintext, keys[0]), iv1);
+            for key in &keys[1..14] {
+                block = _mm_aesenc_si128(block, *key);
+            }
+            let ciphertext = _mm_aesenclast_si128(block, _mm_xor_si128(keys[14], iv2));
+            store(chunk, ciphertext);
+            iv1 = ciphertext;
+            iv2 = plaintext;
+        }
+    }
+
+    #[target_feature(enable = "aes,sse4.1")]
+    pub(super) fn decrypt(buffer: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
+        // The equivalent inverse cipher (FIPS 197, section 5.3.5): the same
+        // round keys in reverse, the inner ones through InvMixColumns.
+        let encryption = expand(key);
+        let mut keys = [_mm_setzero_si128(); 15];
+        keys[0] = encryption[14];
+        for round in 1..14 {
+            keys[round] = _mm_aesimc_si128(encryption[14 - round]);
+        }
+        keys[14] = encryption[0];
+
+        let (iv1, iv2) = iv.split_at(16);
+        let mut iv1 = load(iv1.try_into().unwrap());
+        let mut iv2 = load(iv2.try_into().unwrap());
+        for chunk in buffer.as_chunks_mut::<16>().0 {
+            let ciphertext = load(chunk);
+            // p = D(c ^ iv2) ^ iv1, with c ^ k0 and k14 ^ iv1 off the chain.
+            let mut block = _mm_xor_si128(_mm_xor_si128(ciphertext, keys[0]), iv2);
+            for key in &keys[1..14] {
+                block = _mm_aesdec_si128(block, *key);
+            }
+            let plaintext = _mm_aesdeclast_si128(block, _mm_xor_si128(keys[14], iv1));
+            store(chunk, plaintext);
+            iv1 = ciphertext;
+            iv2 = plaintext;
+        }
+    }
+}
+
+/// The cipher crate's own backend, whichever it selects: every other target, and
+/// x86-64 processors without AES-NI.
+fn portable_encrypt(buffer: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
+    Aes256::new(key.into()).encrypt_with_backend(Ige { buffer, iv });
+}
+
+fn portable_decrypt(buffer: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
+    Aes256::new(key.into()).decrypt_with_backend(Ige { buffer, iv });
+}
+
 /// Encrypt the input plaintext in-place using the AES-IGE mode.
 /// The buffer length must be a multiple of 16.
 pub fn ige_encrypt(buffer: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
     assert_eq!(buffer.len() % 16, 0);
-    Aes256::new(key.into()).encrypt_with_backend(Ige { buffer, iv });
+    #[cfg(target_arch = "x86_64")]
+    if x86::available() {
+        // SAFETY: `available` just confirmed the processor supports every target
+        // feature `x86::encrypt` is compiled with. It takes and returns only safe
+        // Rust types and contains no other unsafe operation.
+        #[allow(unsafe_code)]
+        unsafe {
+            x86::encrypt(buffer, key, iv)
+        };
+        return;
+    }
+    portable_encrypt(buffer, key, iv);
 }
 
 /// Decrypt the input ciphertext in-place using the AES-IGE mode.
 /// The buffer length must be a multiple of 16.
 pub fn ige_decrypt(buffer: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
     assert_eq!(buffer.len() % 16, 0);
-    Aes256::new(key.into()).decrypt_with_backend(Ige { buffer, iv });
+    #[cfg(target_arch = "x86_64")]
+    if x86::available() {
+        // SAFETY: as in `ige_encrypt`.
+        #[allow(unsafe_code)]
+        unsafe {
+            x86::decrypt(buffer, key, iv)
+        };
+        return;
+    }
+    portable_decrypt(buffer, key, iv);
 }
 
 #[cfg(test)]
@@ -168,6 +337,79 @@ mod tests {
         }
     }
 
+    /// FIPS 197, appendix C.3. With a zero IV, one IGE block is one AES block, so
+    /// this checks the key schedule and both directions against the standard
+    /// itself, not against another implementation.
+    #[test]
+    fn single_block_matches_the_fips_197_aes_256_vector() {
+        let key: [u8; 32] = std::array::from_fn(|i| i as u8);
+        let plaintext: [u8; 16] = std::array::from_fn(|i| (i * 0x11) as u8);
+        let ciphertext = [
+            0x8e, 0xa2, 0xb7, 0xca, 0x51, 0x67, 0x45, 0xbf, 0xea, 0xfc, 0x49, 0x90, 0x4b, 0x49,
+            0x60, 0x89,
+        ];
+        type Pass = fn(&mut [u8], &[u8; 32], &[u8; 32]);
+        let paths: [(&str, Pass, Pass); 2] = [
+            ("selected", ige_encrypt, ige_decrypt),
+            ("portable", portable_encrypt, portable_decrypt),
+        ];
+        for (path, encrypt, decrypt) in paths {
+            let mut block = plaintext;
+            encrypt(&mut block, &key, &[0; 32]);
+            assert_eq!(block, ciphertext, "{path} encrypt");
+            decrypt(&mut block, &key, &[0; 32]);
+            assert_eq!(block, plaintext, "{path} decrypt");
+        }
+    }
+
+    /// The path a processor selects and the portable one must agree on every
+    /// length, including a final block and chains long enough to expose a
+    /// mistake in either chaining value.
+    #[test]
+    fn selected_and_portable_paths_agree() {
+        #[cfg(target_arch = "x86_64")]
+        println!("AES-NI path selected: {}", x86::available());
+        let lengths = (0..=40).map(|blocks| blocks * 16).chain([4096, 65536 + 16]);
+        for (case, len) in lengths.enumerate() {
+            let key: [u8; 32] = bytes(case as u64 * 7 + 11, 32).try_into().unwrap();
+            let iv: [u8; 32] = bytes(case as u64 * 7 + 12, 32).try_into().unwrap();
+            let plaintext = bytes(case as u64 * 7 + 13, len);
+
+            let mut selected = plaintext.clone();
+            let mut portable = plaintext.clone();
+            ige_encrypt(&mut selected, &key, &iv);
+            portable_encrypt(&mut portable, &key, &iv);
+            assert_eq!(selected, portable, "encrypt {len}");
+            assert!(
+                len == 0 || selected != plaintext,
+                "encrypt {len} changed nothing"
+            );
+
+            // Each path decrypts what the other produced.
+            ige_decrypt(&mut portable, &key, &iv);
+            portable_decrypt(&mut selected, &key, &iv);
+            assert_eq!(portable, plaintext, "selected decrypt {len}");
+            assert_eq!(selected, plaintext, "portable decrypt {len}");
+        }
+    }
+
+    /// Keys and IVs at the extremes of each byte, where a wrong shift or a wrong
+    /// round constant in the key schedule shows.
+    #[test]
+    fn selected_and_portable_paths_agree_on_edge_keys() {
+        for fill in [0x00u8, 0x01, 0x7f, 0x80, 0xfe, 0xff] {
+            for len in [16, 32, 80] {
+                let plaintext = bytes(fill as u64 + 1, len);
+                let (mut selected, mut portable) = (plaintext.clone(), plaintext.clone());
+                ige_encrypt(&mut selected, &[fill; 32], &[!fill; 32]);
+                portable_encrypt(&mut portable, &[fill; 32], &[!fill; 32]);
+                assert_eq!(selected, portable, "encrypt fill {fill:#x} len {len}");
+                ige_decrypt(&mut selected, &[fill; 32], &[!fill; 32]);
+                assert_eq!(selected, plaintext, "decrypt fill {fill:#x} len {len}");
+            }
+        }
+    }
+
     #[test]
     #[should_panic]
     fn rejects_partial_blocks() {
@@ -181,32 +423,38 @@ mod tests {
         use std::time::Instant;
         let key = [3u8; 32];
         let iv = [5u8; 32];
-        for len in [448usize, 656, 2096] {
+        type Pass = fn(&mut [u8], &[u8; 32], &[u8; 32]);
+        let passes: [(&str, Pass); 6] = [
+            ("encrypt per-block", reference_encrypt),
+            ("encrypt portable", portable_encrypt),
+            ("encrypt selected", ige_encrypt),
+            ("decrypt per-block", reference_decrypt),
+            ("decrypt portable", portable_decrypt),
+            ("decrypt selected", ige_decrypt),
+        ];
+        for len in [64usize, 448, 656, 1600, 2096, 16 * 1024, 1024 * 1024] {
             let mut buffer = bytes(len as u64, len);
-            let iterations = 2_000_000 / len;
-            let mut samples = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+            let iterations = (8_000_000 / len).max(8);
+            let mut samples = vec![Vec::new(); passes.len()];
             for round in 0..8 {
-                for k in 0..4 {
-                    let k = (k + round) % 4;
+                for k in 0..passes.len() {
+                    let k = (k + round) % passes.len();
                     let began = Instant::now();
                     for _ in 0..iterations {
-                        match k {
-                            0 => reference_encrypt(black_box(&mut buffer), &key, &iv),
-                            1 => ige_encrypt(black_box(&mut buffer), &key, &iv),
-                            2 => reference_decrypt(black_box(&mut buffer), &key, &iv),
-                            _ => ige_decrypt(black_box(&mut buffer), &key, &iv),
-                        }
+                        (passes[k].1)(black_box(&mut buffer), &key, &iv);
                     }
                     samples[k].push(began.elapsed().as_nanos() as f64 / iterations as f64);
                 }
             }
-            for sample in &mut samples {
-                sample.sort_by(f64::total_cmp);
-            }
-            println!(
-                "{len} B: encrypt per-block {:.1} ns, closure {:.1} ns; decrypt per-block {:.1} ns, closure {:.1} ns",
-                samples[0][4], samples[1][4], samples[2][4], samples[3][4]
-            );
+            let report: Vec<String> = passes
+                .iter()
+                .zip(&mut samples)
+                .map(|((name, _), sample)| {
+                    sample.sort_by(f64::total_cmp);
+                    format!("{name} {:.1} ns", sample[4])
+                })
+                .collect();
+            println!("IGE {len} B: {}", report.join(", "));
         }
     }
 }
