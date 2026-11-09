@@ -66,6 +66,11 @@ const BUFFER_RELEASE_DELAY: Duration = Duration::from_secs(60);
 /// A read filling the buffer suggests more is waiting. Replies are small, so a busy
 /// connection grows to this to read them with fewer system calls per packet.
 const BUSY_READ_BUFFER_SIZE: usize = RETAINED_BUFFER_SIZE;
+/// A spare read buffer: several ordinary replies in one read. A connection whose
+/// reads fill it grows a buffer of its own towards [`BUSY_READ_BUFFER_SIZE`], as
+/// one with its own initial buffer does, so only busy connections hold that much
+/// and a thread keeps little for the others.
+const SPARE_READ_BUFFER_SIZE: usize = 4 * 1024;
 /// Bytes read per unit of scheduler budget. Smaller is fairer to other connections on
 /// the thread, larger gives this one more throughput: see benchmarks/2026-10-31-bot.
 const READ_CHARGE_UNIT: usize = 2 * 1024;
@@ -193,7 +198,7 @@ mod spare {
 
     use grammers_crypto::DequeBuffer;
 
-    use super::{BUSY_READ_BUFFER_SIZE, INITIAL_WRITE_BUFFER_SIZE, LEADING_BUFFER_SPACE};
+    use super::{INITIAL_WRITE_BUFFER_SIZE, LEADING_BUFFER_SPACE, SPARE_READ_BUFFER_SIZE};
 
     /// More than this were in use at once, which a stalled socket explains: the
     /// excess is freed rather than kept for a peak that has passed.
@@ -204,17 +209,17 @@ mod spare {
         static WRITE: RefCell<Vec<DequeBuffer<u8>>> = const { RefCell::new(Vec::new()) };
     }
 
-    /// A read buffer of [`BUSY_READ_BUFFER_SIZE`]. Its contents are whatever the
+    /// A read buffer of [`SPARE_READ_BUFFER_SIZE`]. Its contents are whatever the
     /// last read left: callers use only the bytes a read reports.
     pub(super) fn take_read() -> Vec<u8> {
         READ.try_with(|kept| kept.borrow_mut().pop())
             .ok()
             .flatten()
-            .unwrap_or_else(|| vec![0; BUSY_READ_BUFFER_SIZE])
+            .unwrap_or_else(|| vec![0; SPARE_READ_BUFFER_SIZE])
     }
 
     pub(super) fn give_read(buffer: Vec<u8>) {
-        debug_assert_eq!(buffer.len(), BUSY_READ_BUFFER_SIZE);
+        debug_assert_eq!(buffer.len(), SPARE_READ_BUFFER_SIZE);
         let _ = READ.try_with(|kept| {
             let mut kept = kept.borrow_mut();
             if kept.len() < KEPT {
@@ -779,7 +784,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         // whichever connection that is for.
         if self.read_pooled
             && self.read_tail == 0
-            && self.read_buffer.len() == BUSY_READ_BUFFER_SIZE
+            && self.read_buffer.len() == SPARE_READ_BUFFER_SIZE
         {
             spare::give_read(std::mem::take(&mut self.read_buffer));
         }
@@ -823,7 +828,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     /// while a packet is incomplete, or its own initial one.
     fn read_baseline(&self) -> usize {
         if self.read_pooled {
-            BUSY_READ_BUFFER_SIZE
+            SPARE_READ_BUFFER_SIZE
         } else {
             INITIAL_READ_BUFFER_SIZE
         }
@@ -1817,7 +1822,7 @@ pub(crate) mod optimization_tests {
         while spare::kept().0 != 0 {
             spare::take_read();
         }
-        spare::give_read(vec![0xaa; BUSY_READ_BUFFER_SIZE]);
+        spare::give_read(vec![0xaa; SPARE_READ_BUFFER_SIZE]);
 
         let (tx, mut rx) = oneshot::channel();
         sender.enqueue_body(tl::functions::Ping { ping_id: 1 }.to_bytes().into(), tx);
@@ -1859,7 +1864,7 @@ pub(crate) mod optimization_tests {
         let (head, rest) = second.split_at(second.len() / 2);
         peer.write_all(head).await.unwrap();
         sender.step().await.unwrap();
-        assert_eq!(sender.read_buffer.len(), BUSY_READ_BUFFER_SIZE);
+        assert_eq!(sender.read_buffer.len(), SPARE_READ_BUFFER_SIZE);
         assert_eq!(sender.read_tail, head.len());
         assert_eq!(spare::kept().0, 0);
         peer.write_all(rest).await.unwrap();
@@ -1895,7 +1900,7 @@ pub(crate) mod optimization_tests {
         for _ in 0..1000 {
             sender.step().await.unwrap();
             largest = largest.max(sender.read_buffer.len());
-            if sender.read_tail == 0 && largest > BUSY_READ_BUFFER_SIZE {
+            if sender.read_tail == 0 && largest > 2 * BUSY_READ_BUFFER_SIZE {
                 break;
             }
         }
@@ -1914,18 +1919,53 @@ pub(crate) mod optimization_tests {
         assert!(!sender.release_due);
     }
 
+    #[tokio::test]
+    async fn reads_filling_a_spare_grow_a_buffer_of_the_connections_own() {
+        let (mut sender, _peer) = pooled_pair().await;
+        let before = spare::kept().0;
+        let mut grown_to = Vec::new();
+        for _ in 0..4 {
+            if sender.read_buffer.is_empty() {
+                sender.read_buffer = spare::take_read();
+            }
+            // The start of a larger packet, so the read fills the buffer.
+            let len = sender.read_buffer.len();
+            sender.read_buffer[..4].copy_from_slice(&(512 * 1024i32).to_le_bytes());
+            sender.on_net_read(len).unwrap();
+            grown_to.push(sender.read_buffer.len());
+            sender.read_tail = 0;
+        }
+        assert_eq!(
+            grown_to,
+            [
+                SPARE_READ_BUFFER_SIZE * 2,
+                SPARE_READ_BUFFER_SIZE * 4,
+                BUSY_READ_BUFFER_SIZE,
+                BUSY_READ_BUFFER_SIZE
+            ]
+        );
+        // It is the connection's until a minute passes without such reads, and
+        // the thread's spares are no larger for it.
+        assert!(sender.buffers_grown());
+        assert!(spare::kept().0 <= before);
+        let now = Instant::now();
+        sender.idle_tick(now);
+        sender.idle_tick(now + BUFFER_RELEASE_DELAY);
+        assert!(sender.read_buffer.is_empty());
+    }
+
     #[test]
     fn spares_are_few_and_of_the_usual_shape() {
         // Its own thread, so that no other test's spares are counted.
         std::thread::spawn(|| {
             assert_eq!(spare::kept(), (0, 0));
-            assert_eq!(spare::take_read().len(), BUSY_READ_BUFFER_SIZE);
+            assert_eq!(spare::take_read().len(), SPARE_READ_BUFFER_SIZE);
             let write = spare::take_write();
             assert!(write.is_empty());
             assert!(write.capacity() >= INITIAL_WRITE_BUFFER_SIZE + LEADING_BUFFER_SPACE);
             // A peak is not kept: more than two were in use only while sockets stalled.
             for mark in 0..4u8 {
-                spare::give_read(vec![mark; BUSY_READ_BUFFER_SIZE]);
+                spare::give_read(vec![mark; SPARE_READ_BUFFER_SIZE]);
                 spare::give_write(DequeBuffer::with_capacity(
                     INITIAL_WRITE_BUFFER_SIZE,
                     LEADING_BUFFER_SPACE,
