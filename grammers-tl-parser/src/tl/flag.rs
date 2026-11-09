@@ -12,7 +12,7 @@ use std::str::FromStr;
 use crate::errors::ParamParseError;
 
 /// Data attached to parameters conditional on flags.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Flag {
     /// The name of the parameter containing the flags in its bits.
     pub name: String,

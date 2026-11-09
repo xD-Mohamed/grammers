@@ -12,7 +12,7 @@ use std::str::FromStr;
 use crate::errors::ParamParseError;
 
 /// The type of a definition or a parameter.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Type {
     /// The namespace components of the type.
     pub namespace: Vec<String>,

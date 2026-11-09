@@ -16,7 +16,7 @@ use crate::utils::infer_id;
 /// A [Type Language] definition.
 ///
 /// [Type Language]: https://core.telegram.org/mtproto/TL
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Definition {
     /// The namespace components of the definition. This list will be empty
     /// if the name of the definition belongs to the global namespace.
@@ -232,6 +232,30 @@ impl Definition {
 mod tests {
     use super::*;
     use crate::tl::Flag;
+
+    #[test]
+    fn parsed_definitions_can_be_cloned_whole() {
+        // Every part a definition can have: a namespace, an identifier, generic
+        // and flag parameters, a conditional parameter and a generic result.
+        let definition: Definition = "ns.name#1a2b3c4d {X:Type} flags:# \
+            opt:flags.3?Vector<ns.Inner> plain:int query:!X = ns.Result<X>"
+            .parse()
+            .unwrap();
+        let copy = definition.clone();
+        assert_eq!(copy, definition);
+        assert_eq!(copy.to_string(), definition.to_string());
+        // A copy is independent of what it was made from.
+        let mut changed = definition.clone();
+        changed.params.pop();
+        changed.ty.generic_arg = None;
+        assert_ne!(changed, definition);
+        assert_eq!(copy, definition);
+        // The parts are data on their own and copy on their own.
+        let parameter = definition.params[1].clone();
+        assert_eq!(parameter, definition.params[1]);
+        assert_eq!(parameter.ty.clone(), definition.params[1].ty);
+        assert_eq!(definition.ty.clone(), copy.ty);
+    }
 
     #[test]
     fn parse_empty_def() {

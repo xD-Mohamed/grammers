@@ -15,7 +15,7 @@ use std::num::ParseIntError;
 /// The error type for the parsing operation of [`Definition`]s.
 ///
 /// [`Definition`]: crate::Definition
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ParseError {
     /// The definition is empty.
     Empty,
@@ -42,7 +42,7 @@ pub enum ParseError {
 /// The error type for the parsing operation of [`Parameter`]s.
 ///
 /// [`Parameter`]: crate::tl::Parameter
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ParamParseError {
     /// The parameter was empty.
     Empty,

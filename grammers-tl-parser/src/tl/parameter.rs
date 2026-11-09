@@ -13,7 +13,7 @@ use crate::errors::ParamParseError;
 use crate::tl::ParameterType;
 
 /// A single parameter, with a name and a type.
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Parameter {
     /// The name of the parameter.
     pub name: String,
