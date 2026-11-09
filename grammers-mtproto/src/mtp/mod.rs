@@ -255,6 +255,14 @@ pub trait Mtp {
     /// supports runtimes with virtual time without making the protocol depend on one.
     fn on_service_timeout(&mut self) {}
 
+    /// Tell the protocol when the packet it last finalized was completely written.
+    ///
+    /// Optional. A driver reads the clock then anyway, and a protocol told the time
+    /// can count what it queues next from it (an acknowledgement's delay, for one)
+    /// instead of reading the clock again for every message received. The time is
+    /// never later than the true one, so nothing waits longer than it would have.
+    fn on_packet_sent(&mut self, _at: std::time::Instant) {}
+
     /// Serializes one request to the input buffer.
     /// The same buffer should be used until `finalize` is called.
     ///

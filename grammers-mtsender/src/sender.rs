@@ -909,8 +909,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         self.write_head = 0;
         self.release_idle_buffers(used, false);
         self.release_write_buffer();
-        // One packet reached the network at one time, whatever it carried.
-        let mut sent_at = None;
+        // One packet reached the network at one time, whatever it carried: tracked
+        // requests record it, and the protocol times what it queues next from it.
+        let sent_at = std::time::Instant::now();
+        self.mtp.on_packet_sent(sent_at);
         for req in self.requests.iter_mut() {
             match &req.state {
                 RequestState::NotSerialized | RequestState::Sent(_) => {}
@@ -918,7 +920,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                     debug!(?pair, "sent request with");
                     req.state = RequestState::Sent(pair.clone());
                     if let Some(permit) = &req.permit {
-                        permit.mark_sent(&mut sent_at);
+                        permit.mark_sent(sent_at);
                     }
                 }
             }
@@ -1937,6 +1939,40 @@ pub(crate) mod optimization_tests {
         })
         .join()
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_reply_is_acknowledged_within_the_delay_of_its_request_being_written() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        let tracker = crate::InvocationTracker::default();
+        let (tx, _rx) = oneshot::channel();
+        sender.enqueue_tracked_body(
+            tl::functions::Ping { ping_id: 1 }.to_bytes().into(),
+            tx,
+            tracker.try_acquire(),
+        );
+        sender.try_fill_write();
+        let plain = client_frame_plaintext(&sender.write_buffer[..]);
+        let session = i64::from_le_bytes(plain[8..16].try_into().unwrap());
+        let msg_id = i64::from_le_bytes(plain[16..24].try_into().unwrap());
+        sender.on_net_write(sender.write_buffer.len()).unwrap();
+        // One clock read served the tracker and the protocol.
+        let written = tracker.sent_at().unwrap();
+
+        let pong = tl::enums::Pong::Pong(tl::types::Pong { msg_id, ping_id: 1 }).to_bytes();
+        let reply = server_frame(&mut transport::Full::new(), session, 13, 1, &pong);
+        sender.read_buffer[..reply.len()].copy_from_slice(&reply);
+        sender.on_net_read(reply.len()).unwrap();
+        // The reply needs an acknowledgement, due ten seconds from that write. Another
+        // thread's earlier write may have set the origin of tracked times a moment
+        // after this one began, hence the margin.
+        let deadline = sender.mtp.service_deadline().unwrap();
+        let expected = written + Duration::from_secs(10);
+        let apart = deadline
+            .max(expected)
+            .duration_since(deadline.min(expected));
+        assert!(apart <= Duration::from_millis(1), "{apart:?}");
+        assert!(deadline <= std::time::Instant::now() + Duration::from_secs(10));
     }
 
     #[tokio::test]

@@ -167,9 +167,11 @@ pub struct Encrypted {
     /// [Content-related Message]: https://core.telegram.org/mtproto/description#content-related-message
     pending_ack: Vec<i64>,
 
-    /// When the oldest entry of `pending_ack` was queued. Only tracked while
-    /// acknowledgements are batched.
+    /// No later than when the oldest entry of `pending_ack` was queued: that time,
+    /// or the last time the driver reported a packet written (`last_sent`), which
+    /// can only bring the deadline forward.
     pending_ack_since: Option<Instant>,
+    last_sent: Option<Instant>,
     ack_flush_due: bool,
     /// Set once a driver has asked for [`Mtp::service_deadline`]. Such a driver
     /// reports the deadline through [`Mtp::on_service_timeout`], so the time is not
@@ -273,6 +275,7 @@ impl Builder {
             salt_checked_secs: 0,
             pending_ack: vec![],
             pending_ack_since: None,
+            last_sent: None,
             ack_flush_due: false,
             timer_driven: std::sync::atomic::AtomicBool::new(false),
             request_deferred_by_ack: false,
@@ -461,7 +464,11 @@ impl Encrypted {
             });
         }
         if self.pending_ack.is_empty() {
-            self.pending_ack_since = Some(Instant::now());
+            // A reply follows the request whose write the driver just timed. Counting
+            // from that write spares a clock read per message received, and sends the
+            // acknowledgement no later. After a long silence it leaves at once, alone,
+            // where it would have left alone ten seconds later.
+            self.pending_ack_since = Some(self.last_sent.unwrap_or_else(Instant::now));
         }
         self.pending_ack.push(msg_id);
         Ok(())
@@ -1737,6 +1744,10 @@ impl Mtp for Encrypted {
     fn on_service_timeout(&mut self) {
         self.ack_flush_due = !self.pending_ack.is_empty();
     }
+
+    fn on_packet_sent(&mut self, at: std::time::Instant) {
+        self.last_sent = Some(at);
+    }
     /// Pushes a request into the internal buffer.
     ///
     /// Multiple requests will be buffered and sent as a single container to reduce roundtrips.
@@ -2737,6 +2748,39 @@ mod tests {
             mtp.queue_ack(id).unwrap();
         }
         assert!(mtp.push(&mut buffer, REQUEST).is_some());
+        assert!(mtp.pending_ack.is_empty());
+    }
+
+    #[test]
+    fn acknowledgements_are_timed_from_the_last_packet_the_driver_reported() {
+        let mut mtp = Encrypted::build().finish(auth_key());
+        // Without a report the clock is read, as before.
+        let before = Instant::now();
+        mtp.queue_ack(3).unwrap();
+        assert!(mtp.pending_ack_since.unwrap() >= before);
+        mtp.pending_ack.clear();
+
+        // With one, the delay counts from the write: never later than the truth.
+        let written = Instant::now() - std::time::Duration::from_secs(2);
+        mtp.on_packet_sent(written);
+        mtp.queue_ack(5).unwrap();
+        assert_eq!(mtp.pending_ack_since, Some(written));
+        assert_eq!(mtp.service_deadline(), Some(written + ACK_MAX_DELAY));
+        // Later ones join the oldest, whose deadline is the one that counts.
+        mtp.on_packet_sent(Instant::now());
+        mtp.queue_ack(7).unwrap();
+        assert_eq!(mtp.pending_ack_since, Some(written));
+
+        // After a silence longer than the delay, the deadline has already passed:
+        // the driver's timer fires at once and the acknowledgement leaves alone.
+        mtp.pending_ack.clear();
+        let long_ago = Instant::now() - ACK_MAX_DELAY * 3;
+        mtp.on_packet_sent(long_ago);
+        mtp.queue_ack(9).unwrap();
+        assert!(mtp.service_deadline().unwrap() <= Instant::now());
+        mtp.on_service_timeout();
+        let mut buffer = DequeBuffer::with_capacity(0, 0);
+        assert!(mtp.finalize(&mut buffer).is_some());
         assert!(mtp.pending_ack.is_empty());
     }
 
