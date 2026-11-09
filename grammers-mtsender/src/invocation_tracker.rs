@@ -106,11 +106,16 @@ impl InvocationPermit {
         permit
     }
 
-    pub(crate) fn mark_sent(&self) {
+    /// Record that the packet carrying this request was written. `sent_at` holds
+    /// the time for every request of that packet, read when the first tracked one
+    /// asks: one clock read per packet, and none for untracked requests.
+    pub(crate) fn mark_sent(&self, sent_at: &mut Option<u64>) {
         let Some(tracker) = &self.tracker else {
             return;
         };
-        let nanos = u64::try_from(origin().elapsed().as_nanos()).unwrap_or(u64::MAX - 1);
+        let nanos = *sent_at.get_or_insert_with(|| {
+            u64::try_from(origin().elapsed().as_nanos()).unwrap_or(u64::MAX - 1)
+        });
         // The first complete write is the one that reached the network.
         let _ =
             tracker
@@ -164,7 +169,7 @@ mod benchmarks {
                 for _ in 0..SAMPLES {
                     let permit = tracker.try_acquire().unwrap();
                     if timestamps {
-                        permit.mark_sent();
+                        permit.mark_sent(&mut None);
                     } else {
                         // Comparison only: keep production timestamp semantics.
                         permit

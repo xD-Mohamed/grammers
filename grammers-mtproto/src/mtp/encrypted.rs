@@ -32,6 +32,11 @@ const NUM_FUTURE_SALTS: i32 = 64;
 /// Used to prevent small fluctuations in the system clock.
 const SALT_USE_DELAY: i32 = 60;
 
+/// How much the clock must move between looks at whether the next salt can be
+/// used. Salts overlap by many minutes, so a look every few seconds loses nothing,
+/// and a busy connection does not read a second clock for every message.
+const SALT_CHECK_INTERVAL: u64 = 16;
+
 /// With acknowledgement batching enabled, the longest an acknowledgement may
 /// wait for its batch to fill before it rides on the next outgoing message.
 /// Acknowledgements only ever travel with outgoing messages, so an idle
@@ -148,6 +153,11 @@ pub struct Encrypted {
     /// The ID of the last message.
     last_msg_id: i64,
 
+    /// The system clock's seconds when a message ID last read it, and when the
+    /// salts were last examined against the time.
+    clock_secs: i64,
+    salt_checked_secs: i64,
+
     /// Identifiers that need to be acknowledged to the server.
     ///
     /// A [Content-related Message] is "a message requiring an explicit
@@ -161,6 +171,10 @@ pub struct Encrypted {
     /// acknowledgements are batched.
     pending_ack_since: Option<Instant>,
     ack_flush_due: bool,
+    /// Set once a driver has asked for [`Mtp::service_deadline`]. Such a driver
+    /// reports the deadline through [`Mtp::on_service_timeout`], so the time is not
+    /// also read here for every message built while acknowledgements wait.
+    timer_driven: std::sync::atomic::AtomicBool,
     // ACK insertion deferred a user request; give its next attempt priority.
     request_deferred_by_ack: bool,
 
@@ -255,9 +269,12 @@ impl Builder {
             session_id: i64::from_le_bytes(session_id),
             sequence: 0,
             last_msg_id: 0,
+            clock_secs: 0,
+            salt_checked_secs: 0,
             pending_ack: vec![],
             pending_ack_since: None,
             ack_flush_due: false,
+            timer_driven: std::sync::atomic::AtomicBool::new(false),
             request_deferred_by_ack: false,
             ack_batch: self.ack_batch,
             compression_threshold: self.compression_threshold,
@@ -361,14 +378,22 @@ impl Encrypted {
 
     /// Generates a new unique message ID based on the current
     /// time (in ms) since epoch, applying a known time offset.
+    ///
+    /// The clock is read for the first message of a packet. The others are created
+    /// in the same instant: a request, the acknowledgements beside it and their
+    /// container used to read it three times, to find it had hardly moved. They take
+    /// the identifiers that follow, as they did whenever it had not moved at all.
     fn get_new_msg_id(&mut self) -> i64 {
+        if self.msg_count != 0 && self.last_msg_id != 0 {
+            self.last_msg_id += 4;
+            return self.last_msg_id;
+        }
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time is before epoch");
+        self.clock_secs = now.as_secs().min(i64::MAX as u64) as i64;
 
-        let seconds = (now.as_secs().min(i64::MAX as u64) as i64)
-            .saturating_add(self.time_offset)
-            .max(0) as u64;
+        let seconds = self.clock_secs.saturating_add(self.time_offset).max(0) as u64;
         let nanoseconds = now.subsec_nanos() as u64;
         let mut new_msg_id = ((seconds << 32) | (nanoseconds << 2)) as i64;
 
@@ -442,15 +467,22 @@ impl Encrypted {
         Ok(())
     }
 
+    /// Whether the oldest pending acknowledgement has waited [`ACK_MAX_DELAY`].
+    ///
+    /// A driver that asked for the deadline says so with `on_service_timeout`,
+    /// which sets `ack_flush_due`. Only without one is the clock read here.
+    fn ack_delay_passed(&self) -> bool {
+        if self.timer_driven.load(std::sync::atomic::Ordering::Relaxed) {
+            return false;
+        }
+        self.pending_ack_since
+            .is_none_or(|since| since.elapsed() >= ACK_MAX_DELAY)
+    }
+
     /// Whether the pending acknowledgements go out with the next message.
     fn ack_due(&self) -> bool {
         let count = self.pending_ack.len();
-        count != 0
-            && (self.ack_flush_due
-                || count >= self.ack_batch
-                || self
-                    .pending_ack_since
-                    .is_none_or(|since| since.elapsed() >= ACK_MAX_DELAY))
+        count != 0 && (self.ack_flush_due || count >= self.ack_batch || self.ack_delay_passed())
     }
 
     fn serialize_pending_ack(&mut self, buffer: &mut DequeBuffer<u8>) {
@@ -1369,6 +1401,8 @@ impl Encrypted {
             return Ok(());
         }
         self.start_salt_time = Some((salts.now, Instant::now()));
+        // New salts are examined by the next request, whenever the last look was.
+        self.salt_checked_secs = 0;
         self.salt_request_failures = 0;
         self.salts = salts.salts.0;
         self.salts
@@ -1695,6 +1729,8 @@ impl Mtp for Encrypted {
     }
 
     fn service_deadline(&self) -> Option<std::time::Instant> {
+        self.timer_driven
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         self.pending_ack_since.map(|since| since + ACK_MAX_DELAY)
     }
 
@@ -1716,9 +1752,14 @@ impl Mtp for Encrypted {
 
         // Check to see if the next salt can be used already. If it can, drop the current one and,
         // if the next salt is the last one, fetch more.
+        // The time since the salts arrived is measured on the monotonic clock, but
+        // only once the system clock (as the last packet read it, for its message
+        // ID) has moved since the previous look, in either direction.
         if let Some((start_secs, start_instant)) =
             self.start_salt_time.filter(|_| self.salts.len() > 1)
+            && self.clock_secs.abs_diff(self.salt_checked_secs) >= SALT_CHECK_INTERVAL
         {
+            self.salt_checked_secs = self.clock_secs;
             let salt = &self.salts[self.salts.len() - 2];
             let now = i64::from(start_secs)
                 + start_instant.elapsed().as_secs().min(i32::MAX as u64) as i64;
@@ -1793,9 +1834,7 @@ impl Mtp for Encrypted {
             && (self.ack_flush_due
                 || !buffer.is_empty()
                 || self.pending_ack.len() >= 8192
-                || self
-                    .pending_ack_since
-                    .is_some_and(|since| since.elapsed() >= ACK_MAX_DELAY))
+                || (self.pending_ack_since.is_some() && self.ack_delay_passed()))
         {
             self.serialize_pending_ack(buffer);
         }
@@ -2360,6 +2399,165 @@ mod tests {
         assert_eq!(mtp.pending_ack, [7]);
     }
 
+    /// The header fields of each message in a finalized, unencrypted packet.
+    fn packet_message_ids(buffer: &[u8], count: usize) -> Vec<i64> {
+        let id = |at: usize| i64::from_le_bytes(buffer[at..at + 8].try_into().unwrap());
+        let len = |at: usize| i32::from_le_bytes(buffer[at..at + 4].try_into().unwrap()) as usize;
+        if count == 1 {
+            return vec![id(MESSAGE_PREFIX_LEN)];
+        }
+        // Salt and session, then the container's own header and constructor.
+        let mut ids = vec![id(MESSAGE_PREFIX_LEN)];
+        let mut at = MESSAGE_PREFIX_LEN + 16 + 8;
+        for _ in 0..count {
+            ids.push(id(at));
+            at += 16 + len(at + 12);
+        }
+        assert_eq!(at, buffer.len());
+        ids
+    }
+
+    #[test]
+    fn one_packet_reads_the_clock_once_for_all_its_message_ids() {
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let mut buffer = DequeBuffer::with_capacity(1024, 64);
+        mtp.queue_ack(5).unwrap();
+        // Acknowledgements, two requests and their container: four identifiers.
+        let first = mtp.push(&mut buffer, REQUEST).unwrap();
+        let second = mtp.push(&mut buffer, REQUEST_B).unwrap();
+        mtp.finalize_plain(&mut buffer);
+        let ids = packet_message_ids(&buffer[..], 3);
+        let ack = ids[1];
+        assert_eq!(ids, [ack + 12, ack, first.0, second.0]);
+        // Each follows the one before by the smallest step the protocol allows,
+        // which separate clock reads a few hundred nanoseconds apart never gave.
+        assert_eq!([first.0, second.0], [ack + 4, ack + 8]);
+        assert_eq!(mtp.last_msg_id, ack + 12);
+        let wall = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert!((wall - (ack >> 32)).abs() <= 1, "the first is the time");
+        assert_eq!(mtp.clock_secs, ack >> 32);
+
+        // The next packet reads it again instead of counting on from the last.
+        buffer.clear();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let later = mtp.push(&mut buffer, REQUEST).unwrap();
+        mtp.finalize_plain(&mut buffer);
+        assert_eq!(packet_message_ids(&buffer[..], 1), [later.0]);
+        assert!(
+            later.0 - (ack + 12) > 1_000_000 << 2,
+            "a later packet must carry its own time"
+        );
+
+        // A corrected clock discards the floor, and with it any counting on.
+        buffer.clear();
+        mtp.time_offset = -1000;
+        mtp.last_msg_id = 0;
+        let corrected = mtp.push(&mut buffer, REQUEST).unwrap();
+        let sibling = mtp.push(&mut buffer, REQUEST_B).unwrap();
+        assert!(corrected.0 < later.0);
+        assert_eq!(sibling.0, corrected.0 + 4);
+    }
+
+    #[test]
+    fn the_next_salt_is_examined_when_the_clock_has_moved() {
+        let salts = |now: i32| {
+            // Sorted as the session keeps them: the one in use last.
+            vec![
+                tl::types::FutureSalt {
+                    valid_since: now - SALT_USE_DELAY,
+                    valid_until: now + 3600,
+                    salt: 222,
+                },
+                tl::types::FutureSalt {
+                    valid_since: now - 1800,
+                    valid_until: now + 1800,
+                    salt: 111,
+                },
+            ]
+        };
+        let mut mtp = Encrypted::build().finish(auth_key());
+        let mut buffer = DequeBuffer::with_capacity(1024, 64);
+        // Moving to the last salt asks for more in a packet of its own, so a push
+        // may hold no request; either way it examined the salts and read the clock.
+        let mut send = |mtp: &mut Encrypted| {
+            mtp.salt_request_msg_id = None;
+            mtp.push(&mut buffer, REQUEST);
+            mtp.finalize_plain(&mut buffer);
+            buffer.clear();
+        };
+        send(&mut mtp);
+        let wall = mtp.clock_secs;
+        assert_ne!(wall, 0);
+
+        // Looked at a moment ago: a salt that became usable since then waits.
+        mtp.salts = salts(1000);
+        mtp.start_salt_time = Some((1000, Instant::now()));
+        mtp.salt_checked_secs = wall;
+        send(&mut mtp);
+        assert_eq!(mtp.get_current_salt(), 111);
+        // Until the clock has moved by the interval, forwards or backwards.
+        for moved in [SALT_CHECK_INTERVAL as i64, -(SALT_CHECK_INTERVAL as i64)] {
+            mtp.salts = salts(1000);
+            mtp.salt_checked_secs = mtp.clock_secs - moved + moved.signum();
+            send(&mut mtp);
+            assert_eq!(mtp.get_current_salt(), 111, "moved {moved} less one");
+            let looked_at = mtp.clock_secs;
+            mtp.salt_checked_secs = looked_at - moved;
+            send(&mut mtp);
+            assert_eq!(mtp.get_current_salt(), 222, "moved {moved}");
+            assert_eq!(mtp.salt_checked_secs, looked_at);
+        }
+        // A look that finds the next salt too young leaves it, and is not repeated
+        // by the message after.
+        mtp.salts = salts(1001);
+        mtp.salt_checked_secs = 0;
+        let looked_at = mtp.clock_secs;
+        send(&mut mtp);
+        assert_eq!(mtp.get_current_salt(), 111);
+        assert_eq!(mtp.salt_checked_secs, looked_at);
+    }
+
+    #[test]
+    fn newly_received_salts_are_examined_by_the_next_request() {
+        let mut mtp = Encrypted::build().first_salt(123).finish(auth_key());
+        let mut buffer = DequeBuffer::with_capacity(1024, 64);
+        assert!(mtp.push(&mut buffer, REQUEST).is_none());
+        let id = mtp.salt_request_msg_id.unwrap();
+        mtp.finalize_plain(&mut buffer);
+        buffer.clear();
+        // As if the salts had been examined this very second.
+        mtp.salt_checked_secs = mtp.clock_secs;
+        // The server time `future_salts_body` reports.
+        let now = 100;
+        mtp.process_message(manual_tl::MessageView {
+            msg_id: 9,
+            seq_no: 1,
+            body: Cow::Owned(future_salts_body(
+                id.0,
+                vec![
+                    tl::types::FutureSalt {
+                        valid_since: now - 1800,
+                        valid_until: now + 1800,
+                        salt: 111,
+                    },
+                    tl::types::FutureSalt {
+                        valid_since: now - SALT_USE_DELAY,
+                        valid_until: now + 3600,
+                        salt: 222,
+                    },
+                ],
+            )),
+        })
+        .unwrap();
+        assert_eq!(mtp.salt_checked_secs, 0);
+        assert_eq!(mtp.get_current_salt(), 111);
+        mtp.push(&mut buffer, REQUEST);
+        assert_eq!(mtp.get_current_salt(), 222);
+    }
+
     #[test]
     fn failed_optional_salt_prefetch_keeps_requests_and_salt_recovery_working() {
         let mut mtp = Encrypted::build().first_salt(123).finish(auth_key());
@@ -2503,6 +2701,42 @@ mod tests {
         mtp.pending_ack_since = Instant::now().checked_sub(ACK_MAX_DELAY);
         let mut buffer = DequeBuffer::with_capacity(0, 0);
         assert!(mtp.finalize(&mut buffer).is_some());
+        assert!(mtp.pending_ack.is_empty());
+    }
+
+    #[test]
+    fn a_driver_given_the_deadline_reports_it_instead_of_the_clock_being_read() {
+        let mut mtp = Encrypted::build()
+            .compression_threshold(None)
+            .ack_batch(3)
+            .finish(auth_key());
+        let mut buffer = DequeBuffer::with_capacity(1024, 64);
+        mtp.queue_ack(7).unwrap();
+        let queued = mtp.pending_ack_since.unwrap();
+        // The driver asks, as the sender does before waiting with nothing to write.
+        assert_eq!(mtp.service_deadline(), Some(queued + ACK_MAX_DELAY));
+        // From then on the delay is the driver's to report. An old acknowledgement
+        // neither leaves alone nor joins a request below the batch on the clock.
+        mtp.pending_ack_since = Instant::now().checked_sub(ACK_MAX_DELAY);
+        assert!(mtp.finalize(&mut buffer).is_none());
+        assert!(mtp.push(&mut buffer, REQUEST).is_some());
+        mtp.finalize_plain(&mut buffer);
+        assert_eq!(mtp.pending_ack, [7]);
+        assert_eq!(packet_message_ids(&buffer[..], 1).len(), 1);
+        buffer.clear();
+        // The deadline it was given is unchanged by that, and reporting it works.
+        assert!(mtp.service_deadline().unwrap() <= Instant::now());
+        mtp.on_service_timeout();
+        assert!(mtp.finalize(&mut buffer).is_some());
+        assert!(mtp.pending_ack.is_empty());
+        assert_eq!(mtp.service_deadline(), None);
+
+        // A full batch still leaves with the next request without any report.
+        buffer.clear();
+        for id in [9, 11, 13] {
+            mtp.queue_ack(id).unwrap();
+        }
+        assert!(mtp.push(&mut buffer, REQUEST).is_some());
         assert!(mtp.pending_ack.is_empty());
     }
 

@@ -46,8 +46,10 @@ use crate::net::{NetStream, ServerAddr};
 const MAXIMUM_DATA: usize = (1024 * 1024) + (8 * 1024);
 /// Initial socket buffers. Typical requests and replies fit; larger packets grow
 /// them (receive up to [`MAXIMUM_DATA`]). Grown capacity is kept while transfers
-/// above [`RETAINED_BUFFER_SIZE`] continue and released after [`BUFFER_RELEASE_DELAY`]
-/// without one, so one large reply does not cost an idle session a megabyte for life.
+/// above [`RETAINED_BUFFER_SIZE`] continue and released once [`BUFFER_RELEASE_DELAY`]
+/// has passed without one, so one large reply does not cost an idle session a megabyte
+/// for life. That is judged at keepalive ticks ([`Sender::idle_tick`]), so that reads
+/// and writes themselves never read the clock: one to two minutes in practice.
 const INITIAL_READ_BUFFER_SIZE: usize = 1024;
 const INITIAL_WRITE_BUFFER_SIZE: usize = 1024;
 const RETAINED_BUFFER_SIZE: usize = 16 * 1024;
@@ -190,6 +192,11 @@ pub struct Sender<T: Transport, M: Mtp> {
     recycled_updates: Vec<UpdatesLike>,
     last_update_burst: Instant,
     read_since_charge: usize,
+    // Seen since the last keepalive tick, which turns them into the times above.
+    large_transfer: bool,
+    update_burst: bool,
+    // A tick found the grown buffers unused for long enough. They go when empty.
+    release_due: bool,
 }
 
 struct Request {
@@ -276,6 +283,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             recycled_updates: Vec::new(),
             last_update_burst: Instant::now(),
             read_since_charge: 0,
+            large_transfer: false,
+            update_burst: false,
+            release_due: false,
         })
     }
 
@@ -626,7 +636,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         self.read_buffer.copy_within(next_offset..self.read_tail, 0);
         self.read_tail -= next_offset;
         if filled && self.read_buffer.len() < BUSY_READ_BUFFER_SIZE {
-            self.last_large_transfer = Instant::now();
+            self.note_large_transfer();
             let next = (self.read_buffer.len() * 2).min(BUSY_READ_BUFFER_SIZE);
             self.read_buffer
                 .reserve_exact(next - self.read_buffer.len());
@@ -650,37 +660,41 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
     /// Return the vector from [`Self::step`] once its `batch` updates were handled.
     /// Reads delivering several updates are worth a vector kept for the next. A single
-    /// update is not, and a kept vector goes after a while with no such reads, whose
-    /// keepalive replies also pass through here.
+    /// update is not, and a kept vector goes at a keepalive tick after a while with no
+    /// such reads.
     pub(crate) fn recycle_updates(&mut self, mut updates: Vec<UpdatesLike>, batch: usize) {
         if updates.capacity() == 0 || updates.capacity() > MAX_RECYCLED_UPDATES {
             return;
         }
-        let keep = match batch {
-            0 => self.last_update_burst.elapsed() < BUFFER_RELEASE_DELAY,
-            1 => false,
-            _ => {
-                self.last_update_burst = Instant::now();
-                true
-            }
-        };
-        if keep {
-            updates.clear();
-            self.recycled_updates = updates;
+        match batch {
+            0 => {}
+            1 => return,
+            _ => self.update_burst = true,
         }
+        updates.clear();
+        self.recycled_updates = updates;
     }
 
-    // Only buffers holding no pending bytes are replaced. Keepalive replies
-    // guarantee a later visit, so this also applies to otherwise idle sessions.
+    fn note_large_transfer(&mut self) {
+        self.large_transfer = true;
+        self.release_due = false;
+    }
+
+    /// Whether either socket buffer holds more than an idle connection needs.
+    fn buffers_grown(&self) -> bool {
+        self.read_buffer.len() > INITIAL_READ_BUFFER_SIZE
+            || self.write_buffer.capacity() > RETAINED_BUFFER_SIZE + LEADING_BUFFER_SPACE
+    }
+
+    // Only buffers holding no pending bytes are replaced. Called after every read
+    // and complete write, so it must not read the clock: `idle_tick` decides when
+    // a release is due, and this carries it out once the bytes are gone.
     fn release_idle_buffers(&mut self, used: usize, filled: bool) {
         if used > RETAINED_BUFFER_SIZE
             || (filled && self.read_buffer.len() > INITIAL_READ_BUFFER_SIZE)
         {
-            self.last_large_transfer = Instant::now();
-        } else if (self.read_buffer.len() > INITIAL_READ_BUFFER_SIZE
-            || self.write_buffer.capacity() > RETAINED_BUFFER_SIZE + LEADING_BUFFER_SPACE)
-            && self.last_large_transfer.elapsed() >= BUFFER_RELEASE_DELAY
-        {
+            self.note_large_transfer();
+        } else if self.release_due {
             if self.read_tail == 0 && self.read_buffer.len() > INITIAL_READ_BUFFER_SIZE {
                 self.read_buffer = vec![0; INITIAL_READ_BUFFER_SIZE];
             }
@@ -690,6 +704,31 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 self.write_buffer =
                     DequeBuffer::with_capacity(INITIAL_WRITE_BUFFER_SIZE, LEADING_BUFFER_SPACE);
             }
+            self.release_due = self.buffers_grown();
+        }
+    }
+
+    /// Age what reads and writes only flag, once per keepalive interval.
+    ///
+    /// Every read and write used to read the clock to learn whether its buffers had
+    /// been idle for a minute. On hosts where the clock is a system call that was
+    /// two calls per request. A flag costs nothing, and the keepalive already wakes
+    /// every connection, idle or not, with the time in hand.
+    fn idle_tick(&mut self, now: Instant) {
+        if std::mem::take(&mut self.large_transfer) {
+            self.last_large_transfer = now;
+        } else if self.buffers_grown()
+            && now.saturating_duration_since(self.last_large_transfer) >= BUFFER_RELEASE_DELAY
+        {
+            self.release_due = true;
+            self.release_idle_buffers(0, false);
+        }
+        if std::mem::take(&mut self.update_burst) {
+            self.last_update_burst = now;
+        } else if self.recycled_updates.capacity() != 0
+            && now.saturating_duration_since(self.last_update_burst) >= BUFFER_RELEASE_DELAY
+        {
+            self.recycled_updates = Vec::new();
         }
     }
 
@@ -717,6 +756,8 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         self.write_buffer.clear();
         self.write_head = 0;
         self.release_idle_buffers(used, false);
+        // One packet reached the network at one time, whatever it carried.
+        let mut sent_at = None;
         for req in self.requests.iter_mut() {
             match &req.state {
                 RequestState::NotSerialized | RequestState::Sent(_) => {}
@@ -724,7 +765,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                     debug!(?pair, "sent request with");
                     req.state = RequestState::Sent(pair.clone());
                     if let Some(permit) = &req.permit {
-                        permit.mark_sent();
+                        permit.mark_sent(&mut sent_at);
                     }
                 }
             }
@@ -734,8 +775,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
 
     /// Handle a ping timeout, meaning we need to enqueue a new ping request.
     fn on_ping_timeout(&mut self) {
-        self.next_ping = Instant::now() + self.ping_interval();
+        let now = Instant::now();
+        self.next_ping = now + self.ping_interval();
         self.ping_timer.as_mut().reset(self.next_ping);
+        self.idle_tick(now);
         // Refresh the server's disconnect deadline even if its pong was lost.
         // Retain a partially written ping until its packet finishes writing.
         self.requests.retain(|request| {
@@ -1088,8 +1131,11 @@ pub async fn generate_auth_key<T: Transport>(
         write_head: sender.write_head,
         last_large_transfer: sender.last_large_transfer,
         recycled_updates: Vec::new(),
-        last_update_burst: Instant::now(),
+        last_update_burst: next_ping - PING_DELAY,
         read_since_charge: 0,
+        large_transfer: sender.large_transfer,
+        update_burst: false,
+        release_due: sender.release_due,
         addr: sender.addr,
     })
 }
@@ -1535,8 +1581,13 @@ pub(crate) mod optimization_tests {
         };
         grow(&mut sender);
         sender.release_idle_buffers(RETAINED_BUFFER_SIZE + 1, false);
+        // The tick after a large transfer only notes when it was.
+        tokio::time::advance(PING_DELAY).await;
+        sender.idle_tick(Instant::now());
+        assert!(!sender.release_due);
         // Active transfers keep their capacity, however small the transfer between.
         tokio::time::advance(BUFFER_RELEASE_DELAY - Duration::from_secs(1)).await;
+        sender.idle_tick(Instant::now());
         sender.release_idle_buffers(1, false);
         assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
         assert!(sender.write_buffer.capacity() >= MAXIMUM_DATA);
@@ -1545,6 +1596,8 @@ pub(crate) mod optimization_tests {
         sender.read_tail = 5;
         sender.read_buffer[..5].copy_from_slice(b"parts");
         sender.write_buffer.push(9);
+        sender.idle_tick(Instant::now());
+        assert!(sender.release_due);
         sender.release_idle_buffers(1, false);
         assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
         assert_eq!(&sender.read_buffer[..5], b"parts");
@@ -1557,13 +1610,47 @@ pub(crate) mod optimization_tests {
         sender.read_tail = 0;
         sender.release_idle_buffers(1, false);
         assert_eq!(sender.read_buffer.len(), INITIAL_READ_BUFFER_SIZE);
+        // Nothing is left to release, and reads and writes ask no more.
+        assert!(!sender.release_due);
         // Ordinary traffic reaches this through the network paths, and buffers can
         // grow again afterwards. The loopback retention census exercises real reads.
         grow(&mut sender);
-        tokio::time::advance(BUFFER_RELEASE_DELAY).await;
         sender.on_net_write(0).unwrap();
+        assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
+        // An idle connection has no read or write to carry the release out: the
+        // tick that finds it due does, as the keepalive timer would.
+        tokio::time::advance(BUFFER_RELEASE_DELAY).await;
+        sender.idle_tick(Instant::now());
         assert_eq!(sender.read_buffer.len(), INITIAL_READ_BUFFER_SIZE);
         assert!(sender.write_buffer.capacity() <= RETAINED_BUFFER_SIZE);
+        assert!(!sender.release_due);
+        // A large transfer withdraws a release that was due but not yet possible.
+        grow(&mut sender);
+        sender.read_tail = 5;
+        tokio::time::advance(BUFFER_RELEASE_DELAY).await;
+        sender.idle_tick(Instant::now());
+        assert!(sender.release_due);
+        sender.release_idle_buffers(RETAINED_BUFFER_SIZE + 1, false);
+        sender.read_tail = 0;
+        sender.release_idle_buffers(1, false);
+        assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
+    }
+
+    #[tokio::test]
+    async fn the_keepalive_timer_ages_idle_buffers() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        tokio::time::pause();
+        sender.read_buffer.resize(MAXIMUM_DATA, 0);
+        // The first keepalive after connecting is also the first full minute idle.
+        tokio::time::advance(PING_DELAY).await;
+        sender.on_ping_timeout();
+        assert_eq!(sender.read_buffer.len(), INITIAL_READ_BUFFER_SIZE);
+        assert!(
+            sender
+                .requests
+                .iter()
+                .any(|request| request.result.is_none())
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1584,11 +1671,16 @@ pub(crate) mod optimization_tests {
         // Staying busy keeps it.
         sender.release_idle_buffers(1, true);
         tokio::time::advance(BUFFER_RELEASE_DELAY).await;
+        sender.idle_tick(Instant::now());
         sender.release_idle_buffers(1, true);
+        tokio::time::advance(BUFFER_RELEASE_DELAY).await;
+        sender.idle_tick(Instant::now());
         assert_eq!(sender.read_buffer.len(), BUSY_READ_BUFFER_SIZE);
         // A minute of reads that do not fill it returns it to its original size.
-        tokio::time::advance(BUFFER_RELEASE_DELAY).await;
         sender.release_idle_buffers(1, false);
+        assert_eq!(sender.read_buffer.len(), BUSY_READ_BUFFER_SIZE);
+        tokio::time::advance(BUFFER_RELEASE_DELAY).await;
+        sender.idle_tick(Instant::now());
         assert_eq!(sender.read_buffer.len(), INITIAL_READ_BUFFER_SIZE);
     }
 
@@ -1611,13 +1703,21 @@ pub(crate) mod optimization_tests {
     async fn a_kept_update_vector_goes_once_bursts_stop() {
         let mut sender = pair_with(mtp::Encrypted::build().finish([0; 256])).await.0;
         sender.recycle_updates(Vec::with_capacity(4), 2);
+        // The tick after a burst notes when it was; reads without one keep the vector.
+        sender.idle_tick(Instant::now());
         tokio::time::advance(BUFFER_RELEASE_DELAY - Duration::from_secs(1)).await;
+        sender.idle_tick(Instant::now());
         let taken = std::mem::take(&mut sender.recycled_updates);
         sender.recycle_updates(taken, 0);
         assert_eq!(sender.recycled_updates.capacity(), 4);
-        tokio::time::advance(Duration::from_secs(1)).await;
+        // Another burst within the minute starts it again.
         let taken = std::mem::take(&mut sender.recycled_updates);
-        sender.recycle_updates(taken, 0);
+        sender.recycle_updates(taken, 2);
+        tokio::time::advance(Duration::from_secs(1)).await;
+        sender.idle_tick(Instant::now());
+        assert_eq!(sender.recycled_updates.capacity(), 4);
+        tokio::time::advance(BUFFER_RELEASE_DELAY).await;
+        sender.idle_tick(Instant::now());
         assert_eq!(sender.recycled_updates.capacity(), 0);
     }
 
@@ -1679,7 +1779,12 @@ pub(crate) mod optimization_tests {
         };
         tokio::time::pause();
         sender.read_buffer.resize(MAXIMUM_DATA, 0);
+        // Bytes of a packet arrive first, so the tick cannot release under them.
+        sender.read_tail = 1;
         tokio::time::advance(BUFFER_RELEASE_DELAY).await;
+        sender.idle_tick(Instant::now());
+        assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
+        sender.read_tail = 0;
         let ack = tl::enums::MsgsAck::Ack(tl::types::MsgsAck { msg_ids: vec![] }).to_bytes();
         let encrypted = zero_key_server_packet(session, 13, 0, &ack);
         let mut frame = DequeBuffer::with_capacity(encrypted.len(), LEADING_BUFFER_SPACE);

@@ -4819,7 +4819,7 @@ mod optimization_tests {
             .start_invoke_shared(4, Bytes::from_static(&[1; 4]), None)
             .unwrap();
         let rpc = rx.recv().await.unwrap();
-        rpc.permit.as_ref().unwrap().mark_sent();
+        rpc.permit.as_ref().unwrap().mark_sent(&mut None);
         drop(held);
         let tracker = crate::InvocationTracker::default();
         let result = pool

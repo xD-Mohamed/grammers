@@ -242,6 +242,11 @@ pub trait Mtp {
     }
 
     /// Deadline when an idle protocol needs another opportunity to finalize.
+    ///
+    /// A driver that reads this must call [`Self::on_service_timeout`] once the
+    /// deadline has passed. The built-in protocols rely on that from the first
+    /// call on: they stop reading the clock themselves each time a message is
+    /// built, which a driver that never asks still gets.
     fn service_deadline(&self) -> Option<std::time::Instant> {
         None
     }
