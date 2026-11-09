@@ -2,6 +2,44 @@
 
 Canonical upstream: https://codeberg.org/Lonami/grammers
 
+Review intake (2026-11-09): fetched `refs/heads/master` from the canonical Git endpoint at
+`e61cf8585e1e9969ab81eda9fb4725a1500e2d86` and reviewed all 10 commits after the previous
+review tip `7b414b1`, which is its ancestor. The range holds no handwritten feature and no
+bug fix; its one functional change is the layer 233 schema. Nothing was merged or
+cherry-picked: three ideas were written for this fork's own crates, each in its own commit.
+
+| Upstream | Subject | Kind | Disposition |
+|---|---|---|---|
+| `174bd26` | Switch parser definition and type to store full name | Parser refactor, breaking | Not adopted: build-time only, and it would break field access on `Definition` and `Type` for no runtime effect |
+| `3f94fd9` | Separate NormalParameterType from the enum | Parser refactor, breaking | Not adopted, for the same reason |
+| `b4184af` | Address clippy lints | Chore | Not applicable: it rewrites acknowledgement code in upstream's `push` that this fork replaced; the fork passes strict Clippy |
+| `8fb8135` | Update to layer 233 | Schema | **Deferred**, see below |
+| `d16333b` | Derive Clone for all parser types | Additive | Adopted in our form, `c66bd28`: the existing parser types keep their fields and gain `Clone`, and so do both error enums, which upstream left out |
+| `81fcef4` | Upgrade dependencies | Chore | Not adopted: manifest minimums only, and the fork has a committed lock. `aes` and `flate2` are on measured paths; moving them needs the byte-identity tests and benchmarks |
+| `b8b4be1` | Delete unused bytes dependency from mtproto | Chore | Adopted, `f499e39`: no source file of `grammers-mtproto` used it here either |
+| `a852bec` | Gate tokio as optional behind sqlite-storage session | Feature gating | Adopted in our form, `e6d3f5e`: enabled by `sqlite-storage` and also by `session-import-files`, which upstream does not have. The memory-only library builds without an async runtime |
+| `9d5de24` | Use imported alias instead of full crate name | Cosmetic | Not adopted: no behaviour |
+| `e61cf85` | Bump to v0.12.0 | Release label | Not applicable: the fork's versions are its own |
+
+Layer 233 is not taken in this intake, and layer 230 stays. It is not a safe drop-in:
+
+- `Update` would outgrow its size guard. `wallet.nftItem` gains an inline `StarGift`, and
+  it sits inline in `updateSentWalletTransaction` and, through `wallet.card`, in three new
+  updates. Modelled under the fork's boxing rules (not compiled), `Update` goes from 752 B
+  to about 1.2 to 1.3 KiB against the 1,024 B guard in `depth_tests.rs`, which the
+  2026-10-31 and 2026-11-09 measurements depend on. Restoring it needs a new boxing rule:
+  `BOXED_FOR_SIZE` only accepts names without a namespace.
+- `updateMessageWidgetData` carries `pts` and `pts_count`. `PtsInfo` ends in a wildcard, so
+  without an explicit arm every one would look like a gap and cost a difference request.
+  Which key it advances must be confirmed against Telegram's documentation first.
+- Nine handwritten sites gain fields or arms, and 20 method pages change.
+
+From 230 the schema adds 52 constructors and changes 11; none is removed or renamed, no
+`BOXED_FOR_SIZE` name changes, and `message`, `messageService` and every `Updates`
+constructor are byte-identical, so nothing here blocks it. It is a task of its own, with a
+build, the guards and the bot workload re-measured, on a host that can build
+`grammers-tl-types` without the memory limits this one ran under.
+
 Review intake (2026-11-04): verified the default branch as `refs/heads/master`
 through the canonical Git endpoint and fetched tip
 `7b414b1d28537f4c354629c3ceeabe771a86f3b4`. Reviewed all 20 commits after
