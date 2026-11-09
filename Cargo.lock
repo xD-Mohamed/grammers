@@ -853,7 +853,6 @@ dependencies = [
 name = "grammers-mtproto"
 version = "0.10.0"
 dependencies = [
- "bytes",
  "crc32fast",
  "flate2",
  "getrandom 0.4.3",
