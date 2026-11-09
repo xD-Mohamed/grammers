@@ -19,6 +19,7 @@ mod tls_proxy;
 pub use proxy_transport::ProxyTransport;
 
 pub use tcp::NetStream;
+pub(crate) use tcp::{ReadHalf, poll_readable};
 
 #[cfg(all(test, feature = "proxy"))]
 mod proxy_tests;

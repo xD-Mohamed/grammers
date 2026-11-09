@@ -40,6 +40,28 @@ pub enum ReadHalf<'a> {
     Tls(&'a mut tokio::io::ReadHalf<BufferedTls>),
     FakeTls(&'a mut tokio::io::ReadHalf<super::mtproxy::FakeTlsStream<TcpStream>>),
 }
+/// Whether a read would find data, where the stream can tell without reading: see
+/// [`NetStream::reports_readiness`]. The others are always ready, and their read
+/// does the waiting. Polled directly so that the wait adds no future of its own
+/// to the connection task, which lives as long as the connection.
+pub(crate) fn poll_readable(
+    reader: &ReadHalf<'_>,
+    cx: &mut std::task::Context<'_>,
+) -> std::task::Poll<std::io::Result<()>> {
+    #[cfg(not(feature = "proxy"))]
+    {
+        let stream: &TcpStream = reader.as_ref();
+        stream.poll_read_ready(cx)
+    }
+    #[cfg(feature = "proxy")]
+    match reader {
+        ReadHalf::Tcp(reader) => {
+            let stream: &TcpStream = reader.as_ref();
+            stream.poll_read_ready(cx)
+        }
+        ReadHalf::Tls(_) | ReadHalf::FakeTls(_) => std::task::Poll::Ready(Ok(())),
+    }
+}
 #[cfg(feature = "proxy")]
 impl tokio::io::AsyncRead for ReadHalf<'_> {
     fn poll_read(
@@ -87,6 +109,18 @@ impl WriteHalf<'_> {
 }
 
 impl NetStream {
+    /// Whether the read half can wait for data without a buffer to read into.
+    /// A plain socket can. A TLS stream only learns of data by reading it.
+    pub(crate) fn reports_readiness(&self) -> bool {
+        match self {
+            Self::Tcp(_) => true,
+            #[cfg(feature = "proxy")]
+            Self::ProxySocks5(_) => true,
+            #[cfg(feature = "proxy")]
+            Self::Tls(_) | Self::FakeTls(_) => false,
+        }
+    }
+
     pub(crate) fn split(&mut self) -> (ReadHalf<'_>, WriteHalf<'_>) {
         #[cfg(not(feature = "proxy"))]
         {

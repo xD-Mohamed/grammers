@@ -23,6 +23,7 @@ use grammers_mtproto::{MsgId, authentication};
 use grammers_session::updates::UpdatesLike;
 use grammers_tl_types::{self as tl, Deserializable, RemoteCall};
 use tl::{Cursor, Identifiable, Serializable};
+use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 #[cfg(any(not(feature = "proxy"), test))]
 use tokio::io::AsyncWriteExt;
@@ -44,6 +45,14 @@ use crate::net::{NetStream, ServerAddr};
 /// so to account for the transports' own overhead, we add a few extra
 /// kilobytes to the maximum data size.
 const MAXIMUM_DATA: usize = (1024 * 1024) + (8 * 1024);
+/// Socket buffers of the usual size belong to the connection only while it has
+/// bytes of a packet in them. Between packets they are spares of the thread
+/// ([`spare`]), so a session waiting for its next request or reply holds none:
+/// with thousands of sessions the buffers are as many as the threads, not the
+/// sessions, and stay in the processor's cache. A stream that cannot report
+/// readiness without a buffer to read into (TLS) keeps its own read buffer, from
+/// [`INITIAL_READ_BUFFER_SIZE`].
+///
 /// Initial socket buffers. Typical requests and replies fit; larger packets grow
 /// them (receive up to [`MAXIMUM_DATA`]). Grown capacity is kept while transfers
 /// above [`RETAINED_BUFFER_SIZE`] continue and released once [`BUFFER_RELEASE_DELAY`]
@@ -172,6 +181,100 @@ fn deserialize_own_update<'a>(
     })
 }
 
+/// Socket buffers between uses, kept by the thread that last used them.
+///
+/// A read takes one once its socket has data and returns it when no partial packet
+/// is left; a packet is built in one and returns it once written. Either happens
+/// within one poll of one connection in the usual case, so two of each serve every
+/// connection a thread drives. A buffer returned on another thread, after a task
+/// moved, simply stays with that thread.
+mod spare {
+    use std::cell::RefCell;
+
+    use grammers_crypto::DequeBuffer;
+
+    use super::{BUSY_READ_BUFFER_SIZE, INITIAL_WRITE_BUFFER_SIZE, LEADING_BUFFER_SPACE};
+
+    /// More than this were in use at once, which a stalled socket explains: the
+    /// excess is freed rather than kept for a peak that has passed.
+    const KEPT: usize = 2;
+
+    thread_local! {
+        static READ: RefCell<Vec<Vec<u8>>> = const { RefCell::new(Vec::new()) };
+        static WRITE: RefCell<Vec<DequeBuffer<u8>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// A read buffer of [`BUSY_READ_BUFFER_SIZE`]. Its contents are whatever the
+    /// last read left: callers use only the bytes a read reports.
+    pub(super) fn take_read() -> Vec<u8> {
+        READ.try_with(|kept| kept.borrow_mut().pop())
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| vec![0; BUSY_READ_BUFFER_SIZE])
+    }
+
+    pub(super) fn give_read(buffer: Vec<u8>) {
+        debug_assert_eq!(buffer.len(), BUSY_READ_BUFFER_SIZE);
+        let _ = READ.try_with(|kept| {
+            let mut kept = kept.borrow_mut();
+            if kept.len() < KEPT {
+                kept.push(buffer);
+            }
+        });
+    }
+
+    /// An empty write buffer with the leading space packets are framed into.
+    pub(super) fn take_write() -> DequeBuffer<u8> {
+        WRITE
+            .try_with(|kept| kept.borrow_mut().pop())
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| {
+                DequeBuffer::with_capacity(INITIAL_WRITE_BUFFER_SIZE, LEADING_BUFFER_SPACE)
+            })
+    }
+
+    pub(super) fn give_write(buffer: DequeBuffer<u8>) {
+        debug_assert!(buffer.is_empty());
+        let _ = WRITE.try_with(|kept| {
+            let mut kept = kept.borrow_mut();
+            if kept.len() < KEPT {
+                kept.push(buffer);
+            }
+        });
+    }
+
+    #[cfg(test)]
+    pub(super) fn kept() -> (usize, usize) {
+        (
+            READ.with(|kept| kept.borrow().len()),
+            WRITE.with(|kept| kept.borrow().len()),
+        )
+    }
+}
+
+/// Read after the `tail` bytes of a packet already in `buffer`.
+///
+/// An empty buffer is one not taken yet: nothing of a packet is held, so the wait
+/// for the socket needs no memory. The spare is taken once there is data, for the
+/// read that follows at once. Written as one poll function: its state is three
+/// words inside the connection task, as the plain read it replaces was.
+fn read_some<'a>(
+    reader: &'a mut crate::net::ReadHalf<'_>,
+    buffer: &'a mut Vec<u8>,
+    tail: usize,
+) -> impl Future<Output = io::Result<usize>> + 'a {
+    poll_fn(move |cx| {
+        if buffer.is_empty() {
+            std::task::ready!(crate::net::poll_readable(reader, cx))?;
+            *buffer = spare::take_read();
+        }
+        let mut read = tokio::io::ReadBuf::new(&mut buffer[tail..]);
+        std::task::ready!(Pin::new(&mut *reader).poll_read(cx, &mut read))?;
+        Poll::Ready(Ok(read.filled().len()))
+    })
+}
+
 /// Manages enqueuing requests, matching them to their response, and IO.
 pub struct Sender<T: Transport, M: Mtp> {
     stream: NetStream,
@@ -197,6 +300,8 @@ pub struct Sender<T: Transport, M: Mtp> {
     update_burst: bool,
     // A tick found the grown buffers unused for long enough. They go when empty.
     release_due: bool,
+    // The stream reports readiness, so reads wait without a buffer and borrow a spare.
+    read_pooled: bool,
 }
 
 struct Request {
@@ -262,6 +367,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         }
         let stream = NetStream::connect(&addr).await?;
         let next_ping = Instant::now() + PING_DELAY;
+        let read_pooled = stream.reports_readiness();
         Ok(Self {
             stream,
             transport,
@@ -272,12 +378,13 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             next_ping,
             liveness: None,
 
-            read_buffer: vec![0; INITIAL_READ_BUFFER_SIZE],
+            read_buffer: if read_pooled {
+                Vec::new()
+            } else {
+                vec![0; INITIAL_READ_BUFFER_SIZE]
+            },
             read_tail: 0,
-            write_buffer: DequeBuffer::with_capacity(
-                INITIAL_WRITE_BUFFER_SIZE,
-                LEADING_BUFFER_SPACE,
-            ),
+            write_buffer: DequeBuffer::with_capacity(0, 0),
             write_head: 0,
             last_large_transfer: Instant::now(),
             recycled_updates: Vec::new(),
@@ -286,6 +393,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
             large_transfer: false,
             update_burst: false,
             release_due: false,
+            read_pooled,
         })
     }
 
@@ -435,7 +543,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         }
 
         let res = tokio::select! {
-            n = reader.read(&mut self.read_buffer[self.read_tail..]) => {
+            n = read_some(&mut reader, &mut self.read_buffer, self.read_tail) => {
                 n.map_err(ReadError::Io).and_then(|n| self.on_net_read(n))
             }
             n = writer.write(&self.write_buffer[self.write_head..]), if !self.write_buffer.is_empty() => {
@@ -485,6 +593,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         self.ping_timer.as_mut().await;
         let mut budget = MAXIMUM_DATA;
         while budget != 0 {
+            if self.read_buffer.is_empty() {
+                self.read_buffer = spare::take_read();
+            }
             if let Err(error) = self.prepare_read_buffer() {
                 return Err(self.on_error(error));
             }
@@ -517,7 +628,8 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     }
 
     fn prepare_read_buffer(&mut self) -> Result<(), ReadError> {
-        if self.read_tail == self.read_buffer.len() {
+        // An empty buffer is one not yet taken, not a full one: see `read_some`.
+        if self.read_tail == self.read_buffer.len() && !self.read_buffer.is_empty() {
             if self.read_tail >= MAXIMUM_DATA {
                 return Err(ReadError::Io(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -543,6 +655,9 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         });
         if !self.write_buffer.is_empty() {
             return;
+        }
+        if self.write_buffer.capacity() == 0 {
+            self.write_buffer = spare::take_write();
         }
 
         // TODO add a test to make sure we only ever send the same request once
@@ -585,6 +700,22 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
                 }
             }
             self.transport.pack(&mut self.write_buffer)
+        }
+        if self.write_buffer.is_empty() {
+            // Nothing to send this time.
+            self.release_write_buffer();
+        }
+    }
+
+    /// Hand a written or unused buffer to the thread's next packet. One that grew
+    /// for large requests stays, under the rules of [`Self::release_idle_buffers`].
+    fn release_write_buffer(&mut self) {
+        let capacity = self.write_buffer.capacity();
+        if capacity != 0 && capacity <= RETAINED_BUFFER_SIZE + LEADING_BUFFER_SPACE {
+            spare::give_write(std::mem::replace(
+                &mut self.write_buffer,
+                DequeBuffer::with_capacity(0, 0),
+            ));
         }
     }
 
@@ -644,6 +775,14 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         } else {
             self.release_idle_buffers(used, filled);
         }
+        // Nothing of a packet is left in it: it serves the thread's next read,
+        // whichever connection that is for.
+        if self.read_pooled
+            && self.read_tail == 0
+            && self.read_buffer.len() == BUSY_READ_BUFFER_SIZE
+        {
+            spare::give_read(std::mem::take(&mut self.read_buffer));
+        }
 
         Ok(updates)
     }
@@ -680,9 +819,19 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         self.release_due = false;
     }
 
+    /// The largest read buffer a connection has without having grown one: a spare
+    /// while a packet is incomplete, or its own initial one.
+    fn read_baseline(&self) -> usize {
+        if self.read_pooled {
+            BUSY_READ_BUFFER_SIZE
+        } else {
+            INITIAL_READ_BUFFER_SIZE
+        }
+    }
+
     /// Whether either socket buffer holds more than an idle connection needs.
     fn buffers_grown(&self) -> bool {
-        self.read_buffer.len() > INITIAL_READ_BUFFER_SIZE
+        self.read_buffer.len() > self.read_baseline()
             || self.write_buffer.capacity() > RETAINED_BUFFER_SIZE + LEADING_BUFFER_SPACE
     }
 
@@ -695,14 +844,17 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         {
             self.note_large_transfer();
         } else if self.release_due {
-            if self.read_tail == 0 && self.read_buffer.len() > INITIAL_READ_BUFFER_SIZE {
-                self.read_buffer = vec![0; INITIAL_READ_BUFFER_SIZE];
+            if self.read_tail == 0 && self.read_buffer.len() > self.read_baseline() {
+                self.read_buffer = if self.read_pooled {
+                    Vec::new()
+                } else {
+                    vec![0; INITIAL_READ_BUFFER_SIZE]
+                };
             }
             if self.write_buffer.is_empty()
                 && self.write_buffer.capacity() > RETAINED_BUFFER_SIZE + LEADING_BUFFER_SPACE
             {
-                self.write_buffer =
-                    DequeBuffer::with_capacity(INITIAL_WRITE_BUFFER_SIZE, LEADING_BUFFER_SPACE);
+                self.write_buffer = DequeBuffer::with_capacity(0, 0);
             }
             self.release_due = self.buffers_grown();
         }
@@ -756,6 +908,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         self.write_buffer.clear();
         self.write_head = 0;
         self.release_idle_buffers(used, false);
+        self.release_write_buffer();
         // One packet reached the network at one time, whatever it carried.
         let mut sent_at = None;
         for req in self.requests.iter_mut() {
@@ -1136,6 +1289,7 @@ pub async fn generate_auth_key<T: Transport>(
         large_transfer: sender.large_transfer,
         update_burst: false,
         release_due: sender.release_due,
+        read_pooled: sender.read_pooled,
         addr: sender.addr,
     })
 }
@@ -1634,6 +1788,155 @@ pub(crate) mod optimization_tests {
         sender.read_tail = 0;
         sender.release_idle_buffers(1, false);
         assert_eq!(sender.read_buffer.len(), MAXIMUM_DATA);
+    }
+
+    /// A server packet as the peer's socket would carry it.
+    fn server_frame(
+        transport: &mut transport::Full,
+        session: i64,
+        id: i64,
+        seq: i32,
+        body: &[u8],
+    ) -> Vec<u8> {
+        let encrypted = zero_key_server_packet(session, id, seq, body);
+        let mut frame = DequeBuffer::with_capacity(encrypted.len(), LEADING_BUFFER_SPACE);
+        frame.extend(encrypted);
+        transport.pack(&mut frame);
+        frame[..].to_vec()
+    }
+
+    #[tokio::test]
+    async fn a_connection_between_packets_holds_no_socket_buffers() {
+        use tokio::io::AsyncWriteExt as _;
+        let (mut sender, mut peer) = pooled_pair().await;
+        assert!(sender.read_buffer.is_empty());
+        assert_eq!(sender.write_buffer.capacity(), 0);
+        // Whatever an earlier read on this thread left in a spare must not matter.
+        while spare::kept().0 != 0 {
+            spare::take_read();
+        }
+        spare::give_read(vec![0xaa; BUSY_READ_BUFFER_SIZE]);
+
+        let (tx, mut rx) = oneshot::channel();
+        sender.enqueue_body(tl::functions::Ping { ping_id: 1 }.to_bytes().into(), tx);
+        sender.step().await.unwrap();
+        // Written whole: the buffer it was built in is the thread's again.
+        assert_eq!(sender.write_buffer.capacity(), 0);
+        assert!(spare::kept().1 >= 1);
+        let mut request = vec![0; 4096];
+        let len = peer.read(&mut request).await.unwrap();
+        let plain = client_frame_plaintext(&request[..len]);
+        let session = i64::from_le_bytes(plain[8..16].try_into().unwrap());
+        let msg_id = i64::from_le_bytes(plain[16..24].try_into().unwrap());
+
+        // The wait for the reply holds no buffer either. An idle step only waits.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), sender.step())
+                .await
+                .is_err()
+        );
+        assert!(sender.read_buffer.is_empty());
+        assert_eq!(sender.write_buffer.capacity(), 0);
+
+        let mut server = transport::Full::new();
+        let pong = tl::enums::Pong::Pong(tl::types::Pong { msg_id, ping_id: 1 }).to_bytes();
+        let reply = server_frame(&mut server, session, 13, 1, &pong);
+        peer.write_all(&reply).await.unwrap();
+        sender.step().await.unwrap();
+        assert_eq!(rx.try_recv().unwrap().unwrap(), pong);
+        assert!(
+            sender.read_buffer.is_empty(),
+            "a complete packet leaves none"
+        );
+        assert_eq!(sender.read_tail, 0);
+        assert_eq!(spare::kept().0, 1);
+
+        // Part of a packet stays with its connection, in the spare it was read into.
+        let ack = tl::enums::MsgsAck::Ack(tl::types::MsgsAck { msg_ids: vec![] }).to_bytes();
+        let second = server_frame(&mut server, session, 17, 2, &ack);
+        let (head, rest) = second.split_at(second.len() / 2);
+        peer.write_all(head).await.unwrap();
+        sender.step().await.unwrap();
+        assert_eq!(sender.read_buffer.len(), BUSY_READ_BUFFER_SIZE);
+        assert_eq!(sender.read_tail, head.len());
+        assert_eq!(spare::kept().0, 0);
+        peer.write_all(rest).await.unwrap();
+        sender.step().await.unwrap();
+        assert!(sender.read_buffer.is_empty());
+        assert_eq!(spare::kept().0, 1);
+    }
+
+    #[tokio::test]
+    async fn a_packet_larger_than_a_spare_grows_a_buffer_of_its_own() {
+        use tokio::io::AsyncWriteExt as _;
+        let (mut sender, mut peer) = pooled_pair().await;
+        let (tx, _rx) = oneshot::channel();
+        sender.enqueue_body(tl::functions::Ping { ping_id: 1 }.to_bytes().into(), tx);
+        sender.step().await.unwrap();
+        let mut request = vec![0; 4096];
+        let len = peer.read(&mut request).await.unwrap();
+        let plain = client_frame_plaintext(&request[..len]);
+        let session = i64::from_le_bytes(plain[8..16].try_into().unwrap());
+
+        // About 40 KiB in one packet, two and a half spares.
+        let ack = tl::enums::MsgsAck::Ack(tl::types::MsgsAck {
+            msg_ids: vec![5; 5000],
+        })
+        .to_bytes();
+        let frame = server_frame(&mut transport::Full::new(), session, 13, 0, &ack);
+        assert!(frame.len() > 2 * BUSY_READ_BUFFER_SIZE);
+        let writer = tokio::spawn(async move {
+            peer.write_all(&frame).await.unwrap();
+            peer
+        });
+        let mut largest = 0;
+        for _ in 0..1000 {
+            sender.step().await.unwrap();
+            largest = largest.max(sender.read_buffer.len());
+            if sender.read_tail == 0 && largest > BUSY_READ_BUFFER_SIZE {
+                break;
+            }
+        }
+        let _peer = writer.await.unwrap();
+        assert_eq!(sender.read_tail, 0, "the packet was consumed");
+        // It grew by doubling, and is the connection's own while such transfers go on.
+        assert!(largest > 2 * BUSY_READ_BUFFER_SIZE && largest <= MAXIMUM_DATA);
+        assert_eq!(sender.read_buffer.len(), largest);
+        assert!(sender.buffers_grown());
+        // A minute without one, judged at keepalive ticks, and nothing is held again.
+        let now = Instant::now();
+        sender.idle_tick(now);
+        assert_eq!(sender.read_buffer.len(), largest);
+        sender.idle_tick(now + BUFFER_RELEASE_DELAY);
+        assert!(sender.read_buffer.is_empty());
+        assert!(!sender.release_due);
+    }
+
+    #[test]
+    fn spares_are_few_and_of_the_usual_shape() {
+        // Its own thread, so that no other test's spares are counted.
+        std::thread::spawn(|| {
+            assert_eq!(spare::kept(), (0, 0));
+            assert_eq!(spare::take_read().len(), BUSY_READ_BUFFER_SIZE);
+            let write = spare::take_write();
+            assert!(write.is_empty());
+            assert!(write.capacity() >= INITIAL_WRITE_BUFFER_SIZE + LEADING_BUFFER_SPACE);
+            // A peak is not kept: more than two were in use only while sockets stalled.
+            for mark in 0..4u8 {
+                spare::give_read(vec![mark; BUSY_READ_BUFFER_SIZE]);
+                spare::give_write(DequeBuffer::with_capacity(
+                    INITIAL_WRITE_BUFFER_SIZE,
+                    LEADING_BUFFER_SPACE,
+                ));
+            }
+            assert_eq!(spare::kept(), (2, 2));
+            // The last returned is the first reused, while it is still in the cache.
+            assert_eq!(spare::take_read()[0], 1);
+            assert_eq!(spare::take_read()[0], 0);
+            assert_eq!(spare::kept(), (0, 2));
+        })
+        .join()
+        .unwrap();
     }
 
     #[tokio::test]
@@ -3170,7 +3473,25 @@ pub(crate) mod optimization_tests {
             Sender::connect(transport::Full::new(), mtp, addr),
             listener.accept()
         );
-        (sender.unwrap(), peer.unwrap().0)
+        let mut sender = sender.unwrap();
+        // These tests place bytes in the read buffer themselves, so it has to exist
+        // beforehand: the buffer of a stream that cannot wait without one. Reads
+        // through a spare are tested with `pooled_pair`.
+        assert!(sender.read_pooled && sender.read_buffer.is_empty());
+        sender.read_pooled = false;
+        sender.read_buffer = vec![0; INITIAL_READ_BUFFER_SIZE];
+        (sender, peer.unwrap().0)
+    }
+
+    /// A sender as `connect` makes it for a socket: no buffer until one is needed.
+    async fn pooled_pair() -> (
+        Sender<transport::Full, mtp::Encrypted>,
+        tokio::net::TcpStream,
+    ) {
+        let (mut sender, peer) = encrypted_pair().await;
+        sender.read_pooled = true;
+        sender.read_buffer = Vec::new();
+        (sender, peer)
     }
 
     #[tokio::test]
