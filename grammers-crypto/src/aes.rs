@@ -182,10 +182,10 @@ mod x86 {
         }
     }
 
+    /// The round keys of the equivalent inverse cipher (FIPS 197, section 5.3.5):
+    /// the same ones in reverse, the inner ones through InvMixColumns.
     #[target_feature(enable = "aes,sse4.1")]
-    pub(super) fn decrypt(buffer: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
-        // The equivalent inverse cipher (FIPS 197, section 5.3.5): the same
-        // round keys in reverse, the inner ones through InvMixColumns.
+    fn expand_inverse(key: &[u8; 32]) -> [__m128i; 15] {
         let encryption = expand(key);
         let mut keys = [_mm_setzero_si128(); 15];
         keys[0] = encryption[14];
@@ -193,22 +193,117 @@ mod x86 {
             keys[round] = _mm_aesimc_si128(encryption[14 - round]);
         }
         keys[14] = encryption[0];
+        keys
+    }
 
+    /// The previous ciphertext and plaintext blocks.
+    #[target_feature(enable = "aes,sse4.1")]
+    fn chaining_values(iv: &[u8; 32]) -> (__m128i, __m128i) {
         let (iv1, iv2) = iv.split_at(16);
-        let mut iv1 = load(iv1.try_into().unwrap());
-        let mut iv2 = load(iv2.try_into().unwrap());
-        for chunk in buffer.as_chunks_mut::<16>().0 {
+        (load(iv1.try_into().unwrap()), load(iv2.try_into().unwrap()))
+    }
+
+    /// Decrypt whole blocks of `data`, continuing the chain in `iv1` and `iv2`.
+    #[inline]
+    #[target_feature(enable = "aes,sse4.1")]
+    fn decrypt_blocks(keys: &[__m128i; 15], iv1: &mut __m128i, iv2: &mut __m128i, data: &mut [u8]) {
+        for chunk in data.as_chunks_mut::<16>().0 {
             let ciphertext = load(chunk);
             // p = D(c ^ iv2) ^ iv1, with c ^ k0 and k14 ^ iv1 off the chain.
-            let mut block = _mm_xor_si128(_mm_xor_si128(ciphertext, keys[0]), iv2);
+            let mut block = _mm_xor_si128(_mm_xor_si128(ciphertext, keys[0]), *iv2);
             for key in &keys[1..14] {
                 block = _mm_aesdec_si128(block, *key);
             }
-            let plaintext = _mm_aesdeclast_si128(block, _mm_xor_si128(keys[14], iv1));
+            let plaintext = _mm_aesdeclast_si128(block, _mm_xor_si128(keys[14], *iv1));
             store(chunk, plaintext);
-            iv1 = ciphertext;
-            iv2 = plaintext;
+            *iv1 = ciphertext;
+            *iv2 = plaintext;
         }
+    }
+
+    #[target_feature(enable = "aes,sse4.1")]
+    pub(super) fn decrypt(buffer: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
+        let keys = expand_inverse(key);
+        let (mut iv1, mut iv2) = chaining_values(iv);
+        decrypt_blocks(&keys, &mut iv1, &mut iv2, buffer);
+    }
+
+    /// Decrypt as [`decrypt`] and return the SHA-256 of `prefix` followed by the
+    /// plaintext, which is how an incoming message is authenticated.
+    ///
+    /// Decryption is one serial chain and so is hashing, and neither needs the
+    /// other's result of the same 64 bytes: the hash runs one block behind. Issued
+    /// together, the processor works on both at once, and the hash that used to
+    /// follow as a second pass over the plaintext costs little more than nothing.
+    #[target_feature(enable = "aes,sse4.1")]
+    pub(super) fn decrypt_hashed(
+        buffer: &mut [u8],
+        key: &[u8; 32],
+        iv: &[u8; 32],
+        prefix: &[u8; 32],
+    ) -> [u8; 32] {
+        use sha2::block_api::compress256;
+
+        let keys = expand_inverse(key);
+        let (mut iv1, mut iv2) = chaining_values(iv);
+        // SHA-256's initial hash value (FIPS 180-4, section 5.3.3).
+        let mut state: [u32; 8] = [
+            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+            0x5be0cd19,
+        ];
+        // The prefix is half a hash block, so hash blocks straddle the 64-byte
+        // steps taken here: all but the first lie whole in the plaintext.
+        let len = buffer.len();
+        let steps = len / 64;
+        let mut hashed = None;
+        for step in 0..steps {
+            decrypt_blocks(
+                &keys,
+                &mut iv1,
+                &mut iv2,
+                &mut buffer[step * 64..step * 64 + 64],
+            );
+            // A block that earlier steps finished decrypting.
+            match hashed {
+                None if step == 1 => {
+                    let mut first = [0; 64];
+                    first[..32].copy_from_slice(prefix);
+                    first[32..].copy_from_slice(&buffer[..32]);
+                    compress256(&mut state, &[first]);
+                    hashed = Some(32);
+                }
+                None => {}
+                Some(done) => {
+                    let block: &[u8; 64] = buffer[done..done + 64].try_into().unwrap();
+                    compress256(&mut state, std::slice::from_ref(block));
+                    hashed = Some(done + 64);
+                }
+            }
+        }
+        decrypt_blocks(&keys, &mut iv1, &mut iv2, &mut buffer[steps * 64..]);
+
+        // What is left: at most 144 bytes (the prefix too, if there were fewer than
+        // two steps), then the padding of FIPS 180-4, section 5.1.1.
+        let mut tail = [0; 192];
+        let mut filled = 0;
+        if hashed.is_none() {
+            tail[..32].copy_from_slice(prefix);
+            filled = 32;
+        }
+        let rest = &buffer[hashed.unwrap_or(0)..];
+        tail[filled..filled + rest.len()].copy_from_slice(rest);
+        filled += rest.len();
+        tail[filled] = 0x80;
+        let blocks = (filled + 1 + 8).div_ceil(64);
+        let bits = (prefix.len() as u64 + len as u64) * 8;
+        tail[blocks * 64 - 8..blocks * 64].copy_from_slice(&bits.to_be_bytes());
+        compress256(&mut state, tail[..blocks * 64].as_chunks::<64>().0);
+
+        let mut digest = [0; 32];
+        for (bytes, word) in digest.as_chunks_mut::<4>().0.iter_mut().zip(state) {
+            *bytes = word.to_be_bytes();
+        }
+        digest
     }
 }
 
@@ -254,6 +349,40 @@ pub fn ige_decrypt(buffer: &mut [u8], key: &[u8; 32], iv: &[u8; 32]) {
         return;
     }
     portable_decrypt(buffer, key, iv);
+}
+
+/// Decrypt the input ciphertext in-place using the AES-IGE mode, and return the
+/// SHA-256 of `prefix` followed by the resulting plaintext.
+///
+/// This is the pair of operations that authenticates an incoming MTProto message:
+/// its key is that hash of part of the authorization key and the plaintext. The
+/// result is the same as [`ige_decrypt`] followed by hashing; with AES-NI the two
+/// are computed together, for about a quarter less time than one after the other.
+/// The buffer length must be a multiple of 16.
+pub fn ige_decrypt_hashed(
+    buffer: &mut [u8],
+    key: &[u8; 32],
+    iv: &[u8; 32],
+    prefix: &[u8; 32],
+) -> [u8; 32] {
+    assert_eq!(buffer.len() % 16, 0);
+    #[cfg(target_arch = "x86_64")]
+    if x86::available() {
+        // SAFETY: as in `ige_encrypt`.
+        #[allow(unsafe_code)]
+        return unsafe { x86::decrypt_hashed(buffer, key, iv, prefix) };
+    }
+    portable_decrypt_hashed(buffer, key, iv, prefix)
+}
+
+fn portable_decrypt_hashed(
+    buffer: &mut [u8],
+    key: &[u8; 32],
+    iv: &[u8; 32],
+    prefix: &[u8; 32],
+) -> [u8; 32] {
+    portable_decrypt(buffer, key, iv);
+    crate::sha256!(prefix, &*buffer)
 }
 
 #[cfg(test)]
@@ -393,6 +522,72 @@ mod tests {
         }
     }
 
+    /// Decrypting and hashing together must give what one after the other gives,
+    /// for every way the plaintext can end against a hash block: the prefix makes
+    /// hash blocks straddle the 64-byte steps, and the padding takes one block or
+    /// two depending on the last few bytes.
+    #[test]
+    fn decrypting_and_hashing_together_matches_one_after_the_other() {
+        use sha2::{Digest, Sha256};
+        #[cfg(target_arch = "x86_64")]
+        println!("AES-NI path selected: {}", x86::available());
+        let lengths = (0..=40)
+            .map(|blocks| blocks * 16)
+            .chain([4096, 4112, 65536 + 48, 1 << 20]);
+        for (case, len) in lengths.enumerate() {
+            let key: [u8; 32] = bytes(case as u64 * 5 + 21, 32).try_into().unwrap();
+            let iv: [u8; 32] = bytes(case as u64 * 5 + 22, 32).try_into().unwrap();
+            let prefix: [u8; 32] = bytes(case as u64 * 5 + 23, 32).try_into().unwrap();
+            let ciphertext = bytes(case as u64 * 5 + 24, len);
+
+            let mut separate = ciphertext.clone();
+            reference_decrypt(&mut separate, &key, &iv);
+            let expected: [u8; 32] = Sha256::new()
+                .chain_update(prefix)
+                .chain_update(&separate)
+                .finalize()
+                .into();
+
+            let mut selected = ciphertext.clone();
+            let digest = ige_decrypt_hashed(&mut selected, &key, &iv, &prefix);
+            assert_eq!(selected, separate, "plaintext {len}");
+            assert_eq!(digest, expected, "digest {len}");
+
+            let mut portable = ciphertext.clone();
+            let digest = portable_decrypt_hashed(&mut portable, &key, &iv, &prefix);
+            assert_eq!(portable, separate, "portable plaintext {len}");
+            assert_eq!(digest, expected, "portable digest {len}");
+        }
+    }
+
+    /// The digest is of the prefix and the plaintext, in that order, and of
+    /// nothing else: each bit of either changes it, at either end.
+    #[test]
+    fn the_digest_covers_the_prefix_and_every_plaintext_byte() {
+        let (key, iv, prefix) = ([7u8; 32], [9u8; 32], [3u8; 32]);
+        for len in [16usize, 64, 128, 208] {
+            let plaintext = bytes(len as u64, len);
+            let mut ciphertext = plaintext.clone();
+            ige_encrypt(&mut ciphertext, &key, &iv);
+            let digest_of = |ciphertext: &[u8], prefix: &[u8; 32]| {
+                let mut buffer = ciphertext.to_vec();
+                (ige_decrypt_hashed(&mut buffer, &key, &iv, prefix), buffer)
+            };
+            let (digest, decrypted) = digest_of(&ciphertext, &prefix);
+            assert_eq!(decrypted, plaintext);
+            for bit in [0, 255] {
+                let mut other = prefix;
+                other[bit / 8] ^= 1 << (bit % 8);
+                assert_ne!(digest_of(&ciphertext, &other).0, digest, "prefix bit {bit}");
+            }
+            for byte in [0, len / 2, len - 1] {
+                let mut other = ciphertext.clone();
+                other[byte] ^= 0x80;
+                assert_ne!(digest_of(&other, &prefix).0, digest, "byte {byte} of {len}");
+            }
+        }
+    }
+
     /// Keys and IVs at the extremes of each byte, where a wrong shift or a wrong
     /// round constant in the key schedule shows.
     #[test]
@@ -455,6 +650,53 @@ mod tests {
                 })
                 .collect();
             println!("IGE {len} B: {}", report.join(", "));
+        }
+    }
+
+    #[test]
+    #[ignore = "local decrypt-and-authenticate comparison; run release with nocapture"]
+    fn benchmark_decrypt_hashed() {
+        use std::hint::black_box;
+        use std::time::Instant;
+        let (key, iv, prefix) = ([3u8; 32], [5u8; 32], [8u8; 32]);
+        type Pass = fn(&mut [u8], &[u8; 32], &[u8; 32], &[u8; 32]) -> [u8; 32];
+        fn one_after_the_other(
+            buffer: &mut [u8],
+            key: &[u8; 32],
+            iv: &[u8; 32],
+            prefix: &[u8; 32],
+        ) -> [u8; 32] {
+            ige_decrypt(buffer, key, iv);
+            crate::sha256!(prefix, &*buffer)
+        }
+        let passes: [(&str, Pass); 3] = [
+            ("portable", portable_decrypt_hashed),
+            ("one after the other", one_after_the_other),
+            ("together", ige_decrypt_hashed),
+        ];
+        for len in [96usize, 448, 656, 1600, 16 * 1024, 1024 * 1024] {
+            let mut buffer = bytes(len as u64, len);
+            let iterations = (8_000_000 / len).max(8);
+            let mut samples = vec![Vec::new(); passes.len()];
+            for round in 0..8 {
+                for k in 0..passes.len() {
+                    let k = (k + round) % passes.len();
+                    let began = Instant::now();
+                    for _ in 0..iterations {
+                        black_box((passes[k].1)(black_box(&mut buffer), &key, &iv, &prefix));
+                    }
+                    samples[k].push(began.elapsed().as_nanos() as f64 / iterations as f64);
+                }
+            }
+            let report: Vec<String> = passes
+                .iter()
+                .zip(&mut samples)
+                .map(|((name, _), sample)| {
+                    sample.sort_by(f64::total_cmp);
+                    format!("{name} {:.1} ns", sample[4])
+                })
+                .collect();
+            println!("decrypt and hash {len} B: {}", report.join(", "));
         }
     }
 }

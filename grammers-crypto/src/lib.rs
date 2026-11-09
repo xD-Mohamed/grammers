@@ -227,11 +227,10 @@ pub fn decrypt_data_v2<'b>(
 
     let (key, iv) = calc_key(auth_key, &msg_key, Side::Server);
 
-    aes::ige_decrypt(&mut buffer[8 + 16..], &key, &iv);
-    let plaintext = &buffer[8 + 16..];
-
     // https://core.telegram.org/mtproto/security_guidelines#mtproto-encrypted-messages
-    let our_key = sha256!(&auth_key.data[88 + x..88 + x + 32], &plaintext);
+    // msg_key_large = SHA256 (substr (auth_key, 88+x, 32) + plaintext + random_padding);
+    let key_part: &[u8; 32] = auth_key.data[88 + x..88 + x + 32].try_into().unwrap();
+    let our_key = aes::ige_decrypt_hashed(&mut buffer[8 + 16..], &key, &iv, key_part);
 
     // Not stopping at the first difference: the time taken reveals nothing about it.
     let difference = msg_key
