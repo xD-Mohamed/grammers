@@ -31,9 +31,11 @@ _Optional._ Provides custom serialization helpers
 
 ## tokio
 
-Asynchronous locks and runtime for testing asynchronous `Session` implementations.
+_Optional._ The asynchronous lock around the SQLite connection (`sqlite-storage`).
 With `session-import-files`, the runtime's blocking pool keeps file reads, SQLite
 queries and JSON parsing off the async reactor. No second SQLite library is added.
+The memory-only library does not depend on it; its tests use the runtime as a
+development dependency.
 
 ## base64
 
