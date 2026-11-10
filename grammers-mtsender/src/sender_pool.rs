@@ -2823,6 +2823,43 @@ mod optimization_tests {
         assert_eq!((repaired.pts, repaired.date, repaired.seq), (100, 1, 0));
     }
 
+    // The receiver reads the clock once for a turn of its loop and offers that reading,
+    // so that a consumer ageing a cache per batch does not read it again.
+    #[tokio::test]
+    async fn receiver_offers_the_time_it_read_for_the_last_batch() {
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        let pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: false },
+        )
+        .await
+        .unwrap();
+        assert_eq!(receiver.last_clock_read(), None);
+
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let before = std::time::Instant::now();
+        update_tx.send(config_update()).await.unwrap();
+        let (updates, _, _) = receiver.next().await.unwrap();
+        let after = std::time::Instant::now();
+        assert_eq!(updates[0].0, tl::enums::Update::Config);
+        let read = receiver.last_clock_read().unwrap();
+        assert!(before <= read && read <= after);
+
+        // A batch that arrives while `next` waits is applied at a reading taken after the
+        // wait, not at the one its turn of the loop began with.
+        let mut sent_at = None;
+        let (batch, ()) = tokio::join!(receiver.next(), async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            sent_at = Some(std::time::Instant::now());
+            update_tx.send(config_update()).await.unwrap();
+        });
+        batch.unwrap();
+        assert!(receiver.last_clock_read().unwrap() >= sent_at.unwrap());
+    }
+
     #[tokio::test(start_paused = true)]
     async fn receiver_created_before_login_rechecks_self_while_next_is_waiting() {
         for catch_up in [false, true] {

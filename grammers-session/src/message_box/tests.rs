@@ -1886,6 +1886,63 @@ fn bot_updates_with_qts_are_delivered_before_login() {
     assert_eq!(boxes.session_state().qts, NO_PTS);
 }
 
+// A caller that has read the clock passes its reading in, and deadlines are set from it
+// and compared with it. The clock stays at zero throughout, so that a deadline taken from
+// the clock instead would be five minutes early and show.
+#[test]
+fn deadlines_follow_the_time_the_caller_passes() {
+    reset_time();
+    let mut boxes = MessageBoxes::new();
+    boxes.set_state(state(12, 34, 56, 78));
+    let start = Instant::now();
+    let later = start + Duration::from_secs(300);
+
+    // One update for each of the account's two sequences, applied at `later`.
+    assert_eq!(
+        boxes.process_updates_at(updates(NO_DATE, NO_SEQ, 57), later),
+        updates_ok(12, 34, 57)
+    );
+    let stopped = tl::types::UpdateBotStopped {
+        user_id: 1,
+        date: 2,
+        stopped: true,
+        qts: 79,
+    };
+    let (delivered, _, _) = boxes
+        .process_updates_at(one_update(stopped.into()), later)
+        .unwrap();
+    assert_eq!(delivered.len(), 1);
+
+    // Stamped by the clock, both would be due a timeout after `start`. They were applied
+    // at `later`, so at that moment nothing is due and the nearest deadline moves on.
+    let due = later + NO_UPDATES_TIMEOUT;
+    assert_eq!(boxes.check_deadlines_at(start + NO_UPDATES_TIMEOUT), due);
+    assert_eq!(boxes.get_difference(), None);
+
+    boxes.check_deadlines_at(later + (NO_UPDATES_TIMEOUT - Duration::from_millis(1)));
+    assert_eq!(boxes.get_difference(), None);
+    boxes.check_deadlines_at(due);
+    assert_eq!(boxes.get_difference(), Some(get_difference(12, 57, 79)));
+}
+
+// The wait for a possible gap to close starts at the time passed in as well.
+#[test]
+fn a_possible_gap_waits_from_the_time_the_caller_passes() {
+    reset_time();
+    let mut boxes = MessageBoxes::new();
+    boxes.set_state(state(12, 34, 56, 78));
+    let later = Instant::now() + Duration::from_secs(300);
+
+    let (delivered, _, _) = boxes
+        .process_updates_at(updates(NO_DATE, NO_SEQ, 58), later)
+        .unwrap();
+    assert!(delivered.is_empty());
+    boxes.check_deadlines_at(later + (POSSIBLE_GAP_TIMEOUT - Duration::from_millis(1)));
+    assert_eq!(boxes.get_difference(), None);
+    boxes.check_deadlines_at(later + POSSIBLE_GAP_TIMEOUT);
+    assert_eq!(boxes.get_difference(), Some(get_difference(12, 56, 78)));
+}
+
 #[test]
 fn test_process_socket_updates_flow_common_seq_gap() {
     reset_time();

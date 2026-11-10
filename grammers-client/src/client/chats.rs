@@ -83,9 +83,14 @@ impl StoredPeers {
         self.0.lock().unwrap().slots.len()
     }
 
-    fn forget_if_old(&self) {
+    /// `now` is a recent reading of the clock when the caller has one. The clock is only
+    /// read here without it, and only once something has been remembered.
+    fn forget_if_old(&self, now: Option<Instant>) {
         let mut table = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if table.forget_at.is_some_and(|at| Instant::now() >= at) {
+        if table
+            .forget_at
+            .is_some_and(|at| now.unwrap_or_else(Instant::now) >= at)
+        {
             table.slots.fill(0);
             table.forget_at = None;
         }
@@ -1050,13 +1055,20 @@ impl Client {
     }
 
     pub(crate) async fn cache_peer_map(&self, peers: &PeerMap) {
+        self.cache_peer_map_at(peers, None).await
+    }
+
+    /// [`Self::cache_peer_map`] with a recent reading of the clock, from a caller that has
+    /// one: the update stream caches peers for every batch, and a read of the clock for
+    /// each is measurable where the clock is a system call.
+    pub(crate) async fn cache_peer_map_at(&self, peers: &PeerMap, now: Option<Instant>) {
         if !self.0.configuration.auto_cache_peers {
             return;
         }
         // A bot mostly hears from the same peers, and each write here can be a storage
         // transaction per update. Only what changed since it was last stored needs one.
         let stored = &self.0.stored_peers;
-        stored.forget_if_old();
+        stored.forget_if_old(now);
         let changed: Vec<PeerInfo> = peers
             .map
             .values()

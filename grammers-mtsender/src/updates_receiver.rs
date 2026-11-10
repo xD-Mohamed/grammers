@@ -91,8 +91,14 @@ pub struct UpdatesReceiver {
     authorization: Authorization,
     is_bot: Option<bool>,
     next_self_check: tokio::time::Instant,
-    recovery_paused_until: tokio::time::Instant,
+    // `None` when recovery is not paused, which needs no reading of the clock to know.
+    recovery_paused_until: Option<tokio::time::Instant>,
     recovery_failures: u32,
+    // One reading of the clock for the steps of a loop turn that need the time: where the
+    // clock is a system call, a read for each is measurable per batch of updates. Cleared
+    // at the start of a turn and after anything in it that can wait.
+    turn_clock: Option<std::time::Instant>,
+    last_clock_read: Option<std::time::Instant>,
     // Keyed by channel; `None` is the account sequence.
     unreadable_differences: BTreeMap<Option<i64>, u8>,
 }
@@ -188,8 +194,10 @@ impl UpdatesReceiver {
             authorization: Authorization::Unknown,
             is_bot: None,
             next_self_check: tokio::time::Instant::now(),
-            recovery_paused_until: tokio::time::Instant::now(),
+            recovery_paused_until: None,
             recovery_failures: 0,
+            turn_clock: None,
+            last_clock_read: None,
             unreadable_differences: BTreeMap::new(),
         })
     }
@@ -209,6 +217,7 @@ impl UpdatesReceiver {
 
         loop {
             tokio::task::consume_budget().await;
+            self.turn_clock = None;
             let generation = self.handle.home_failure_generation();
             if generation != self.home_failure_generation {
                 self.process_socket_updates(UpdatesLike::ConnectionClosed)
@@ -233,7 +242,8 @@ impl UpdatesReceiver {
                     return Ok(update);
                 }
             }
-            self.message_box.check_deadlines();
+            let now = self.turn_now();
+            self.message_box.check_deadlines_at(now);
             let needs_authorization = !self.message_box.has_primary_state()
                 || self.message_box.get_difference().is_some()
                 || self.message_box.get_channel_difference().is_some();
@@ -242,7 +252,9 @@ impl UpdatesReceiver {
                 && tokio::time::Instant::now() >= self.next_self_check
             {
                 self.next_self_check = tokio::time::Instant::now() + Duration::from_secs(1);
-                if let Some(PeerInfo::User { bot, .. }) = session.peer(PeerId::self_user()).await? {
+                let own = session.peer(PeerId::self_user()).await;
+                self.turn_clock = None;
+                if let Some(PeerInfo::User { bot, .. }) = own? {
                     self.authorization = Authorization::Confirmed;
                     self.is_bot = Some(bot.unwrap_or(false));
                 }
@@ -252,9 +264,11 @@ impl UpdatesReceiver {
             // A failure can repeat until login, access or the schema change, and must
             // not turn a caller's retry loop into an RPC loop. Live updates still flow,
             // including the service pushes a re-login may be waiting for.
-            let recovery_paused = tokio::time::Instant::now() < self.recovery_paused_until;
+            let recovery_paused = self.recovery_paused();
             if self.should_get_state && !recovery_paused {
-                match self.invoke(&tl::functions::updates::GetState {}).await {
+                let state = self.invoke(&tl::functions::updates::GetState {}).await;
+                self.turn_clock = None;
+                match state {
                     Ok(tl::enums::updates::State::State(state)) => {
                         // Validate before persisting or changing the in-memory
                         // state. A rejected reply must leave recovery armed.
@@ -334,7 +348,8 @@ impl UpdatesReceiver {
                 if let Some(update) = self.buffer.pop_front() {
                     return Ok(update);
                 }
-                let deadline = self.message_box.check_deadlines();
+                let now = self.turn_now();
+                let deadline = self.message_box.check_deadlines_at(now);
                 // Saved state alone is not evidence of a current login.
                 let can_recover = self.authorization.can_recover();
                 let may_recover = can_recover && !recovery_paused;
@@ -546,8 +561,8 @@ impl UpdatesReceiver {
             let deadline = tokio::time::Instant::from_std(deadline);
             let deadline = if !can_recover && needs_authorization {
                 self.next_self_check
-            } else if recovery_paused {
-                self.recovery_paused_until
+            } else if let (true, Some(until)) = (recovery_paused, self.recovery_paused_until) {
+                until
             } else {
                 deadline
             };
@@ -555,6 +570,8 @@ impl UpdatesReceiver {
                 result = timeout_at(deadline, self.updates.recv()) => result,
                 _ = self.handle.wait_home_failure(self.home_failure_generation) => continue,
             };
+            // Time has passed while waiting.
+            self.turn_clock = None;
             match received {
                 Ok(Some(updates)) => self.process_socket_updates(updates).await,
                 Ok(None) => break Err(InvocationError::Dropped("updates channel was closed")),
@@ -582,7 +599,45 @@ impl UpdatesReceiver {
             .saturating_mul(1 << self.recovery_failures.min(6))
             .min(RECOVERY_RETRY_DELAY_LIMIT);
         self.recovery_failures = self.recovery_failures.saturating_add(1);
-        self.recovery_paused_until = tokio::time::Instant::now() + delay;
+        self.recovery_paused_until = Some(tokio::time::Instant::now() + delay);
+    }
+
+    /// Whether recovery is paused. Reads the clock only while a pause is set.
+    fn recovery_paused(&mut self) -> bool {
+        match self.recovery_paused_until {
+            Some(until) if tokio::time::Instant::now() < until => true,
+            Some(_) => {
+                self.recovery_paused_until = None;
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// The time for this turn of the loop, read once.
+    fn turn_now(&mut self) -> std::time::Instant {
+        match self.turn_clock {
+            Some(now) => now,
+            None => {
+                let now = std::time::Instant::now();
+                self.turn_clock = Some(now);
+                self.last_clock_read = Some(now);
+                now
+            }
+        }
+    }
+
+    /// The last reading of the monotonic clock this receiver took, while checking
+    /// deadlines or applying updates. `None` before the first.
+    ///
+    /// It is never in the future. It can be older than the batch [`Self::next`] last
+    /// returned by the time that batch waited to be taken, or by the duration of the
+    /// recovery request that produced it; a receiver that has been waiting reads the
+    /// clock again before it applies what arrives. That is recent enough to age a cache
+    /// by, which saves a consumer its own read for every batch: measurable where the
+    /// clock is a system call.
+    pub fn last_clock_read(&self) -> Option<std::time::Instant> {
+        self.last_clock_read
     }
 
     /// Pause after a failed request: no shorter than any wait Telegram asked for.
@@ -590,7 +645,7 @@ impl UpdatesReceiver {
         self.pause_recovery();
         if let Some(wait) = error.retry_after() {
             let until = tokio::time::Instant::now() + wait;
-            self.recovery_paused_until = self.recovery_paused_until.max(until);
+            self.recovery_paused_until = self.recovery_paused_until.max(Some(until));
         }
     }
 
@@ -607,7 +662,7 @@ impl UpdatesReceiver {
     // Telegram answered, and waiting longer will not make its reply readable: this keeps
     // the short pause, so that a sequence stops being blocked after its limited attempts.
     fn pause_recovery_for_unreadable_reply(&mut self) {
-        self.recovery_paused_until = tokio::time::Instant::now() + RECOVERY_RETRY_DELAY;
+        self.recovery_paused_until = Some(tokio::time::Instant::now() + RECOVERY_RETRY_DELAY);
     }
 
     fn account_recovery_failed(&mut self, error: InvocationError) -> InvocationError {
@@ -665,7 +720,8 @@ impl UpdatesReceiver {
         if self.authorization == Authorization::Unknown && proves_login(&updates) {
             self.authorization = Authorization::Inferred;
         }
-        if let Ok((updates, users, chats)) = self.message_box.process_updates(updates) {
+        let now = self.turn_now();
+        if let Ok((updates, users, chats)) = self.message_box.process_updates_at(updates, now) {
             self.extend_update_queue(updates, users, chats);
         }
     }

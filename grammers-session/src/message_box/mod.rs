@@ -407,7 +407,15 @@ impl MessageBoxes {
     /// Ready differences return an expired deadline. Deferred recovery retains
     /// its pending state but wakes at its retry deadline.
     pub fn check_deadlines(&mut self) -> Instant {
-        let now = Instant::now();
+        self.check_deadlines_at(Instant::now())
+    }
+
+    /// [`Self::check_deadlines`] at a time the caller has already read.
+    ///
+    /// For a caller that checks deadlines and applies updates in one turn: where the clock
+    /// is a system call, a read for each of those per batch of updates is measurable. `now`
+    /// must be a recent reading of the same clock, taken since the caller last waited.
+    pub fn check_deadlines_at(&mut self, now: Instant) -> Instant {
         let ready_deadline = self.next_deadline.min(now);
 
         if now < self.next_deadline {
@@ -456,7 +464,7 @@ impl MessageBoxes {
             .filter(|entry| !entry.recovery_pending || entry.recovery_deferred)
             .map(LiveEntry::effective_deadline)
             .min()
-            .unwrap_or_else(next_updates_deadline);
+            .unwrap_or(now + defs::NO_UPDATES_TIMEOUT);
 
         if self.ready_diff_count != 0 {
             return ready_deadline;
@@ -649,17 +657,28 @@ impl MessageBoxes {
     ///
     /// [updates' documentation]: https://core.telegram.org/api/updates
     pub fn process_updates(&mut self, updates: UpdatesLike) -> Result<UpdateAndPeers, Gap> {
-        self.process_updates_inner(updates, &[])
+        self.process_updates_at(updates, Instant::now())
+    }
+
+    /// [`Self::process_updates`] at a time the caller has already read, under the same
+    /// condition as [`Self::check_deadlines_at`].
+    pub fn process_updates_at(
+        &mut self,
+        updates: UpdatesLike,
+        now: Instant,
+    ) -> Result<UpdateAndPeers, Gap> {
+        self.process_updates_inner(updates, &[], now)
     }
 
     fn process_updates_inner(
         &mut self,
         updates: UpdatesLike,
         force: &[Key],
+        now: Instant,
     ) -> Result<UpdateAndPeers, Gap> {
         trace!(?updates, "processing updates");
 
-        let deadline = next_updates_deadline();
+        let deadline = now + defs::NO_UPDATES_TIMEOUT;
 
         // Top level, when handling received `updates` and `updatesCombined`.
         // `updatesCombined` groups all the fields we care about, which is why we use it.
@@ -796,7 +815,7 @@ impl MessageBoxes {
                     "forcing update to apply (getting difference)",
                 );
                 // Order does not need to be checked. These always must be applied.
-                self.reset_deadline(info.key, next_updates_deadline());
+                self.reset_deadline(info.key, deadline);
                 result.push((update, mk_state(Some(info.into()))));
                 continue;
             }
@@ -866,7 +885,7 @@ impl MessageBoxes {
                             // Retry backoff can keep a gap open for much longer than its
                             // timeout. What exceeds this comes back with the difference.
                             let gap = entry.possible_gap.get_or_insert_with(|| PossibleGap {
-                                deadline: Instant::now() + POSSIBLE_GAP_TIMEOUT,
+                                deadline: now + POSSIBLE_GAP_TIMEOUT,
                                 updates: Vec::new(),
                             });
                             if gap.updates.len() < MAX_HELD_UPDATES {
@@ -974,6 +993,7 @@ impl MessageBoxes {
                 .into(),
             ),
             &[],
+            Instant::now(),
         )
         .ok()
     }
@@ -1143,7 +1163,7 @@ impl MessageBoxes {
         // It is possible that the result from `GetDifference` includes users with `min = true`.
         // TODO in that case, we will have to resort to getUsers.
         let (mut result_updates, users, chats) = self
-            .process_updates_inner(us, &[Key::Common, Key::Secondary])
+            .process_updates_inner(us, &[Key::Common, Key::Secondary], Instant::now())
             .expect("gap is detected while applying difference");
 
         result_updates.extend(
@@ -1265,7 +1285,7 @@ impl MessageBoxes {
             seq: NO_SEQ,
         }));
         let (mut result_updates, users, chats) = self
-            .process_updates_inner(us, &[key])
+            .process_updates_inner(us, &[key], Instant::now())
             .expect("gap is detected while applying channel difference");
 
         result_updates.extend(new_messages.into_iter().map(|message| {

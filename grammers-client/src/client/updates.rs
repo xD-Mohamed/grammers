@@ -39,8 +39,11 @@ impl UpdateStream {
     ) -> Result<(tl::enums::Update, State, PeerMap), InvocationError> {
         loop {
             if let Some(peers) = self.pending_peer_cache.as_ref() {
-                // Cancellation leaves the input here for the next cache attempt.
-                self.client.cache_peer_map(peers).await;
+                // Cancellation leaves the input here for the next cache attempt. The
+                // receiver read the clock when it applied this batch: that is recent
+                // enough to age the table of stored peers by.
+                let now = self.updates.last_clock_read();
+                self.client.cache_peer_map_at(peers, now).await;
                 self.pending_peer_cache = None;
             }
             if let Some(update) = self.buffer.pop_front() {
@@ -450,6 +453,37 @@ mod tests {
         assert_eq!(session.writes.load(Ordering::Relaxed), 1);
         client.0.stored_peers.expire_for_tests();
         client.cache_peer_map(&peers).await;
+        assert_eq!(session.writes.load(Ordering::Relaxed), 2);
+    }
+
+    // The update stream ages the table with the time its receiver read for the batch,
+    // instead of reading the clock for every batch.
+    #[tokio::test]
+    async fn stored_peers_age_by_the_time_the_caller_passes() {
+        let session = Arc::new(CountingWrites::default());
+        let pool = SenderPool::new(Arc::clone(&session), 1);
+        let client = Client::new(pool.handle);
+        let peers = client.peer_map_from_raw(vec![user_with_hash(7, 100)], Vec::new());
+        let start = std::time::Instant::now();
+        client.cache_peer_map_at(&peers, Some(start)).await;
+        assert_eq!(session.writes.load(Ordering::Relaxed), 1);
+
+        // Short of the lifetime nothing is forgotten, by a passed time or by the clock.
+        let early = start + Duration::from_secs(599);
+        client.cache_peer_map_at(&peers, Some(early)).await;
+        client.cache_peer_map(&peers).await;
+        assert_eq!(session.writes.load(Ordering::Relaxed), 1);
+
+        // Past it, the peer is written once more. It is then remembered for a lifetime
+        // counted from the clock, not from the reading that was passed.
+        let late = std::time::Instant::now() + Duration::from_secs(601);
+        client.cache_peer_map_at(&peers, Some(late)).await;
+        assert_eq!(session.writes.load(Ordering::Relaxed), 2);
+        let now = std::time::Instant::now();
+        client.cache_peer_map_at(&peers, Some(now)).await;
+        client
+            .cache_peer_map_at(&peers, Some(now + Duration::from_secs(599)))
+            .await;
         assert_eq!(session.writes.load(Ordering::Relaxed), 2);
     }
 
