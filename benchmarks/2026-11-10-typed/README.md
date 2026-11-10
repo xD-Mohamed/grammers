@@ -19,6 +19,47 @@ in [CHANGELOG.md](../../CHANGELOG.md) with what to write instead.
 | [Peers as a list, one sent message without maps, one copy of a reply](#fewer-allocations-per-request) | 1.75 allocations and 1.8 kB less per request, **no measured change in CPU** | Yes |
 | [What earlier rounds had not verified](#what-the-earlier-rounds-had-left-unverified) | All of it passes, `impl-serde` in four parts | |
 
+## The whole round
+
+`4458f8d` against `754eecf`, which is `35a85cd` and its notes.
+
+| Scenario | Metric | `4458f8d` | `754eecf` | Change |
+|---|---|---:|---:|---:|
+| One bot connection with updates, closed loop, 64 callers, 30 rounds | RPC/s | 164,898 | 189,191 | **+15.00%** [+12.55, +16.85] |
+| | CPU µs/RPC | 6.05 | 5.28 | **-13.10%** [-14.45, -11.14] |
+| | user / kernel µs/RPC | 4.54 / 1.52 | 4.17 / 1.15 | **-8.30%** / **-26.13%** |
+| | p50 / p95 / p99 µs | 377 / 463 / 514 | 328 / 410 / 459 | **-13.57%** / **-11.44%** / **-11.16%** |
+| | Allocations per RPC | 21.44 | 17.69 | **-17.49%** |
+| | Bytes allocated per RPC | 16,730 | 12,168 | **-27.28%** [-27.46, -27.19] |
+| | Steady RSS KiB | 6,434 | 6,452 | -0.03% [-0.86, +1.18] |
+| | Live heap B | 495,560 | 497,640 | +0.33% [-0.09, +0.72] |
+| The same, open loop, 5,000 RPC/s, 8 rounds | CPU µs/RPC | 40.27 | 38.11 | **-4.15%** [-6.67, -3.25] |
+| | p99 µs | 2,130 | 2,097 | -1.53% [-5.39, +2.40] |
+| | Allocations per RPC | 22.48 | 18.73 | **-16.69%** |
+| | Bytes allocated per RPC | 17,173 | 12,724 | **-25.88%** [-26.26, -25.63] |
+| | Steady RSS KiB | 6,026 | 5,708 | -6.66% [-9.53, +1.36] |
+| The same, open loop, 500 RPC/s, 12 rounds | CPU µs/RPC | 101.20 | 99.92 | -0.23% [-3.67, +3.26] |
+| | p99 µs | 1,671 | 1,761 | +4.27% [-11.99, +29.06] |
+| | Allocations per RPC | 22.26 | 18.51 | **-16.85%** |
+| | Bytes allocated per RPC | 16,110 | 11,673 | **-27.54%** [-27.64, -27.53] |
+| | Steady RSS KiB | 4,872 | 4,030 | -1.58% [-20.87, +0.12] |
+| 64 sessions on the raw path, 16 callers, plain replies, 14 pairs | RPC/s | 83,783 | 86,196 | +3.15% [-0.08, +5.71] |
+| | CPU µs/RPC | 11.91 | 11.53 | -2.78% [-5.25, +0.17] |
+| | p95 µs | 316 | 298 | **-5.13%** [-7.35, -2.72] |
+| The same, gzip replies | RPC/s | 79,776 | 83,359 | **+3.77%** [+1.37, +6.65] |
+| | CPU µs/RPC | 12.52 | 11.96 | **-3.58%** [-5.65, -1.83] |
+| | p95 µs | 342 | 326 | **-3.90%** [-7.05, -1.96] |
+
+Logs: [closed](whole-round/bot-closed64), [5,000](whole-round/bot-open5000),
+[500](whole-round/bot-open500), [raw path](whole-round/loopback).
+
+The two steps that moved the closed loop measured +6.05% on their own (the update that
+holds its message once, on any hardware) and +10.11% (the coarse clock, only where the
+clock is a system call). Their product is 17% and the whole measures 15%, inside the
+intervals of the steps. The allocations saved are the same anywhere. Everything on the
+raw path is the coarse clock. A connected session still holds 5,959 B, as on 2026-11-09:
+nothing here touches what a session keeps.
+
 ## Where the typed path's CPU goes
 
 One busy bot connection with updates, closed loop with 64 callers, sampled at about 250 Hz
@@ -357,6 +398,34 @@ Every crate, with warnings denied in Clippy (`--all-targets`) and Rustdoc:
 Not run: Clippy for `grammers-tl-types` with `impl-serde`, which needs the same memory as
 the single check; the whole workspace in one command, by the host's rule; ignored tests,
 which are benchmarks and network probes; anything against Telegram.
+
+## Validation
+
+At `754eecf`, one crate at a time, `-j 2`, each command under the 4 GB limit and the
+memory watchdog:
+
+- `cargo fmt --all -- --check`.
+- Release tests. `grammers-mtproto`: 127 passed (7 ignored) and its 3 integration tests.
+  `grammers-mtsender` with every feature: 188 passed (8 ignored), then 5, 2 and 1; with
+  default features 158 (8 ignored). `grammers-client` with every feature: 132, 2, 1 and
+  69 doctests; without features 70, 2, 1 and 67 doctests; with `dispatcher,qr-login`,
+  library only, 85. `grammers-session` with every feature: 109, 22, 7, 1 and 3 doctests.
+- Strict Clippy (`--all-targets --all-features -D warnings`) and warning-free Rustdoc for
+  `grammers-mtproto`, `grammers-mtsender` and `grammers-client`; Clippy for `grammers`.
+- The coarse clock's fallback for other systems, which this host cannot target: compiled
+  with warnings denied and its tests run in a scratch copy with the `cfg` inverted.
+
+Unchanged since `4458f8d`, where the table further down has them verified:
+`grammers-tl-parser`, `grammers-tl-gen`, `grammers-tl-types`, `grammers-crypto`,
+`grammers-session` and `grammers`.
+
+Each kept change was read by a fresh reviewer before it was pushed. It found one defect,
+in the coarse clock as first written (the identifier offset still read the precise
+clock), fixed before the commit. Its other findings were missing test cases and wording,
+and are in the commits.
+
+Not run: ignored tests, which are benchmarks and network probes; a Windows or macOS
+build; anything against Telegram; any consumer of the fork.
 
 ## API changes and consumers
 
