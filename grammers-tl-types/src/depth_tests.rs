@@ -329,12 +329,21 @@ fn values_boxed_for_size_keep_their_wire_format() {
     }
 }
 
-fn reply_header(with_media: bool) -> Vec<u8> {
+fn reply_header(with_media: bool, with_forward: bool) -> Vec<u8> {
     let mut bytes = Vec::new();
     id::<types::MessageReplyHeader>(&mut bytes);
-    let flags = (1u32 << 4) | (1 << 6) | if with_media { 1 << 8 } else { 0 };
+    let flags = (1u32 << 4)
+        | (1 << 6)
+        | if with_media { 1 << 8 } else { 0 }
+        | if with_forward { 1 << 5 } else { 0 };
     flags.serialize(&mut bytes);
     41i32.serialize(&mut bytes);
+    if with_forward {
+        id::<types::MessageFwdHeader>(&mut bytes);
+        (1u32 << 5).serialize(&mut bytes);
+        b"forwarded".as_slice().serialize(&mut bytes);
+        123i32.serialize(&mut bytes);
+    }
     if with_media {
         id::<types::MessageMediaContact>(&mut bytes);
         b"123".as_slice().serialize(&mut bytes);
@@ -350,7 +359,7 @@ fn reply_header(with_media: bool) -> Vec<u8> {
 #[test]
 fn boxed_reply_media_keeps_its_wire_format() {
     for with_media in [false, true] {
-        let bytes = reply_header(with_media);
+        let bytes = reply_header(with_media, false);
         round_trip::<enums::MessageReplyHeader>(&bytes);
         let enums::MessageReplyHeader::Header(header) =
             enums::MessageReplyHeader::from_bytes(&bytes).unwrap()
@@ -359,6 +368,7 @@ fn boxed_reply_media_keeps_its_wire_format() {
         };
         assert_eq!(header.reply_to_msg_id, Some(41));
         assert_eq!(header.quote_text.as_deref(), Some("quoted text"));
+        assert!(header.reply_from.is_none());
         if with_media {
             assert!(matches!(
                 header.reply_media.as_deref(),
@@ -371,6 +381,33 @@ fn boxed_reply_media_keeps_its_wire_format() {
         assert_eq!(rebuilt.to_bytes(), bytes);
         // Includes failure after media has allocated its strings, while reading
         // the following quote: partially decoded fields must drop safely.
+        for end in 0..bytes.len() {
+            assert_error::<enums::MessageReplyHeader>(&bytes[..end], Error::UnexpectedEof);
+        }
+    }
+}
+
+#[test]
+fn boxed_reply_forward_header_keeps_its_wire_format() {
+    for with_media in [false, true] {
+        let bytes = reply_header(with_media, true);
+        round_trip::<enums::MessageReplyHeader>(&bytes);
+        let enums::MessageReplyHeader::Header(mut header) =
+            enums::MessageReplyHeader::from_bytes(&bytes).unwrap()
+        else {
+            panic!("expected a message reply header");
+        };
+        assert_eq!(header.reply_to_msg_id, Some(41));
+        assert_eq!(header.quote_text.as_deref(), Some("quoted text"));
+        assert_eq!(header.reply_media.is_some(), with_media);
+        let forward = types::MessageFwdHeader::from(header.reply_from.as_deref().unwrap().clone());
+        assert_eq!(forward.from_name.as_deref(), Some("forwarded"));
+        assert_eq!(forward.date, 123);
+        assert!(forward.from_id.is_none());
+        let forward = types::MessageFwdHeader::from(*header.reply_from.take().unwrap());
+        header.reply_from = Some(Box::new(forward.into()));
+        let rebuilt: enums::MessageReplyHeader = header.into();
+        assert_eq!(rebuilt.to_bytes(), bytes);
         for end in 0..bytes.len() {
             assert_error::<enums::MessageReplyHeader>(&bytes[..end], Error::UnexpectedEof);
         }
@@ -555,14 +592,19 @@ fn update_types_stay_small_enough_to_move_around() {
         size_of::<enums::MessageMedia>()
     );
     assert!(
-        size_of::<types::MessageReplyHeader>() <= 384,
+        size_of::<types::MessageReplyHeader>() <= 192,
         "{}",
         size_of::<types::MessageReplyHeader>()
     );
     assert!(
-        size_of::<types::Message>() <= 1664,
+        size_of::<types::Message>() <= 1472,
         "{}",
         size_of::<types::Message>()
+    );
+    assert!(
+        size_of::<types::MessageService>() <= 1024,
+        "{}",
+        size_of::<types::MessageService>()
     );
     assert!(
         size_of::<types::UpdateSentWalletTransaction>() <= 768,
@@ -575,7 +617,7 @@ fn update_types_stay_small_enough_to_move_around() {
         size_of::<enums::Update>()
     );
     assert!(
-        size_of::<enums::Updates>() <= 1024,
+        size_of::<enums::Updates>() <= 512,
         "{}",
         size_of::<enums::Updates>()
     );

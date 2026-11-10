@@ -62,6 +62,21 @@
 
 ## Unreleased: smaller reply headers
 
+- `tl::types::MessageReplyHeader::reply_from` is now
+  `Option<Box<tl::enums::MessageFwdHeader>>`. Absent forward metadata reserves one
+  pointer in ordinary replies, with no extra allocation. Populated metadata adds
+  one allocation. The containing message and short-update field types stay the same.
+  Box populated fields, use `as_deref()` for borrowed access, and `*forward` to move out.
+
+  ```rust
+  // before
+  header.reply_from = Some(forward);
+  let forward: Option<&tl::enums::MessageFwdHeader> = header.reply_from.as_ref();
+  // after
+  header.reply_from = Some(Box::new(forward));
+  let forward: Option<&tl::enums::MessageFwdHeader> = header.reply_from.as_deref();
+  ```
+
 - `tl::types::MessageReplyHeader::reply_media` is now
   `Option<Box<tl::enums::MessageMedia>>`. Absent reply media reserves one pointer;
   ordinary replies add no allocation. The TL wire and session formats are unchanged.
