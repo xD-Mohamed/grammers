@@ -1842,6 +1842,34 @@ fn bot_updates_with_qts_advance_the_secondary_sequence() {
         assert!(delivered.is_empty());
     }
     assert_eq!(boxes.session_state().qts, 85);
+
+    // Two in one batch, the second a deletion naming no message: one step each.
+    let peer = tl::enums::Peer::User(tl::types::PeerUser { user_id: 1 });
+    let batch = UpdatesLike::Updates(tl::enums::Updates::Updates(tl::types::Updates {
+        updates: vec![
+            tl::types::UpdateManagedBot {
+                user_id: 1,
+                bot_id: 2,
+                qts: 86,
+            }
+            .into(),
+            tl::types::UpdateBotDeleteBusinessMessage {
+                connection_id: "connection".into(),
+                peer,
+                messages: Vec::new(),
+                qts: 87,
+            }
+            .into(),
+        ],
+        users: Vec::new(),
+        chats: Vec::new(),
+        date: NO_DATE,
+        seq: NO_SEQ,
+    }));
+    let (delivered, _, _) = boxes.process_updates(batch).unwrap();
+    assert_eq!(delivered.len(), 2);
+    assert_eq!(boxes.session_state().qts, 87);
+    assert_eq!(boxes.get_difference(), None);
 }
 
 // Before login there is no account position to hold a `qts`: these are delivered as they

@@ -331,8 +331,8 @@ fn values_boxed_for_size_keep_their_wire_format() {
 
 // These values move through every step of the update path. Holding the largest variants
 // inline made a single update over 5 KiB, so a schema change undoing this must be noticed.
-// Layer 233 measured 1,264 B with `wallet.card` and `wallet.nftItem`'s `gift` inline, and
-// 760 B with the first boxed and the second a boxed field.
+// At layer 233 `Update` measured 1,264 B with `wallet.card` and `wallet.nftItem`'s `gift`
+// inline, and is 760 B with the first boxed and the second a boxed field.
 #[test]
 fn update_types_stay_small_enough_to_move_around() {
     assert!(size_of::<enums::Message>() <= 32);
