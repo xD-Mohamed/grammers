@@ -33,6 +33,19 @@
   plain functions with their own tests.
 - Its gain exists where the clock is a system call, as here. Say so beside every number
   that includes it, and count reads per request with `sysc.c` before adding one.
+- `PeerMap` keeps up to sixteen peers as a list (`Peers::Few`) and more in a map. Both
+  keep the later of two peers with one identifier. Responses without peers share
+  `Peers::empty()`: do not allocate an empty map for a message.
+- One sent message is sorted out by `map_random_id_to_message`, albums and forwards by
+  `map_random_ids_to_messages`. They must choose alike:
+  `one_sent_message_is_chosen_as_among_several` runs both on the same replies.
+- The connections this library makes build `Encrypted` with `own_updates_in_results`: an
+  `OwnUpdate` then arrives empty, and `process_mtp_buffer` reads the update from the
+  result that follows, before that result retires its request. A new place that builds
+  an `Encrypted` for a connection needs the option, or it copies every such reply twice.
+- The last three were kept for allocations, with no measurable CPU gain: the profile at
+  `f1dd333` has no single cost left on the typed path that does not need generated
+  types to change shape. Read "What is left" in the measurements before looking again.
 - A request's reply is decoded by its connection and again by its caller. Handing the
   caller a copy was built two ways and measured at -3.8% and 0%: a copy of a decoded
   reply costs what decoding it costs. Do not build it a third time without shared

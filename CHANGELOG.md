@@ -21,6 +21,16 @@ with the owner's approval; each break is listed with what to write instead.
   `grammers_mtsender::coarse_clock` re-exports them. `grammers-mtproto` depends on `libc`
   on Linux and Android, which every build already contained, and calls `clock_gettime`
   through it in one `unsafe` block.
+- A request costs 1.75 allocations and 1.8 kB less on a bot connection with updates, with
+  no measured change in CPU: the peers of a response are kept as a list when there are
+  sixteen or fewer, responses without peers share one empty map, the reply to one sent
+  message is sorted out without the maps an album needs, and a reply that holds updates
+  is copied out of the read buffer once. `PeerMap::iter` and `iter_peers` now go through
+  a few peers in the order they arrived.
+- `mtp::Encrypted`'s builder has a new option, `own_updates_in_results`, off by default.
+  A driver that turns it on is given `Deserialization::OwnUpdate` with an empty `update`
+  and reads the update from the body of the `RpcResult` that follows. The connections
+  this library makes turn it on.
 - Decoding a request's reply once for its caller and for the stream of updates was built
   two ways and gained nothing: see the measurements. Nothing in the library changed for it.
 

@@ -16,6 +16,7 @@ in [CHANGELOG.md](../../CHANGELOG.md) with what to write instead.
 | [A reply decoded once](#a-reply-decoded-once-measured-twice-and-dropped) | Built two ways, **no gain**, dropped | |
 | [The request decoded again](#the-request-decoded-again-not-built) | 0.75% of CPU, not built | |
 | [The kernel's coarse clock](#the-kernels-coarse-clock) | **+10.11% requests per second** at saturation with updates, 3% less CPU on the raw path | Only where the clock is a system call |
+| [Peers as a list, one sent message without maps, one copy of a reply](#fewer-allocations-per-request) | 1.75 allocations and 1.8 kB less per request, **no measured change in CPU** | Yes |
 | [What earlier rounds had not verified](#what-the-earlier-rounds-had-left-unverified) | All of it passes, `impl-serde` in four parts | |
 
 ## Where the typed path's CPU goes
@@ -88,7 +89,7 @@ Stated as they are:
   allocations, on any hardware. The percentage is of a request that spends 18% reading
   the clock here, so it is larger elsewhere.
 - **A bot that receives more than it sends gains more.** This workload delivers 1.25
-  updates per request, a quarter of them the request's own. The clone was per update.
+  updates per request. The clone was per update.
 - **"Live heap" moved +0.43% [+0.27, +0.76] in the closed loop and +0.69% [+0.31, +1.08]
   at 500 per second, about 2 KiB, and that is the allocator's thread cache.** The harness
   reads `mallinfo`, which counts freed chunks parked in that cache as in use. With the
@@ -119,10 +120,10 @@ What that says:
 - **A copy of a decoded reply costs what decoding it costs.** Both allocate the same
   strings and vectors, and the parsing between them is not where the time goes.
 - The first variant lost because `tl::enums::Updates` is over a kilobyte as a value: a
-  box of it for every reply, three in four of which are `updateShortSentMessage` and
-  decode in a few fields, costs more than those decodes did.
-- The second removes that and is left with nothing: the decode it saves on one reply in
-  four is paid for by the copy, plus a box.
+  box of it for every such reply, half of which are `updateShortSentMessage` and decode
+  in a few fields, costs more than those decodes did.
+- The second removes that and is left with nothing: the decode it saves on one request
+  in four is paid for by the copy, plus a box.
 - Neither needed a public type to change. Both went through a method added to
   `RemoteCall`, generated for the 144 calls that return `Updates`. The second diff is the
   library alone: its unit tests were not brought along once it measured nothing.
@@ -228,6 +229,82 @@ Stated as they are:
   open loops were measured before them and not repeated: they change no reading on the
   path those scenarios take. The measured builds differ from `7e79532` by tests.
 
+## Fewer allocations per request
+
+[The profile after the two changes above](profile/closed64-f1dd333.txt) (7,471 samples) has
+no single cost left on the typed path: 31% is decoding, 16% moving the large values it
+produces, 15% the allocator, 12% the kernel, and of the 11% left for the clock nearly all
+is the harness's own two readings per request. Three places allocated what they did not
+need. The workload sends a message with half its requests, one to a private chat, which
+is answered with `updateShortSentMessage`, and one to a group, answered with full updates.
+
+| Change | Allocations per RPC | Bytes allocated per RPC |
+|---|---:|---:|
+| `7e79532`, before | 19.44 | 13,954 |
+| `9fd5e44`: up to sixteen peers of a response are kept as a list and found by looking through it, and responses without peers share one empty map | 18.94 | 12,416 |
+| `482a4ef`: the reply to one sent message is sorted out in one pass, without the two maps and the vector an album needs | 18.19 | 12,286 |
+| `35a85cd`: a reply that holds updates is copied out of the read buffer once, and the stream's update is read from the caller's copy | 17.69 | 12,175 |
+
+Those are exact counts from one run of each build. Paired, 30 rounds of the closed loop
+and the open loops for the first two together:
+
+| Scenario | Metric | Before | After | Change |
+|---|---|---:|---:|---:|
+| `7e79532` to `482a4ef`, closed loop, 30 rounds | RPC/s | 182,990 | 185,267 | +0.22% [-1.52, +3.96] |
+| | CPU µs/RPC | 5.46 | 5.39 | -0.19% [-3.72, +1.50] |
+| | p99 µs | 473 | 461 | -0.42% [-4.28, +2.65] |
+| | Allocations per RPC | 19.44 | 18.19 | **-6.43%** |
+| | Bytes allocated per RPC | 13,978 | 12,263 | **-12.18%** [-12.43, -12.05] |
+| | Steady RSS KiB | 6,376 | 6,516 | **+1.53%** [+0.65, +3.02] |
+| The same, open loop, 5,000 RPC/s, 8 rounds | CPU µs/RPC | 38.80 | 38.52 | -0.85% [-3.01, +2.98] |
+| | Bytes allocated per RPC | 14,526 | 12,808 | **-11.80%** [-12.46, -11.46] |
+| | Steady RSS KiB | 5,876 | 5,824 | -1.62% [-3.47, +0.97] |
+| The same, open loop, 500 RPC/s, 12 rounds | CPU µs/RPC | 101.00 | 101.11 | +0.13% [-4.40, +4.29] |
+| | Bytes allocated per RPC | 13,459 | 11,743 | **-12.75%** [-12.77, -12.75] |
+| | Steady RSS KiB | 4,958 | 4,016 | -3.81% [-35.07, +2.57] |
+| `482a4ef` to `35a85cd`, closed loop, 30 rounds | RPC/s | 183,586 | 186,757 | +0.95% [-1.03, +3.57] |
+| | CPU µs/RPC | 5.44 | 5.35 | -0.93% [-3.42, +0.93] |
+| | Allocations per RPC | 18.19 | 17.69 | **-2.75%** |
+| | Bytes allocated per RPC | 12,275 | 12,175 | **-0.78%** [-1.06, -0.53] |
+| | Steady RSS KiB | 6,496 | 6,498 | -0.22% [-0.78, +0.50] |
+
+Logs: [closed](peers-and-replies/bot-closed64), [5,000](peers-and-replies/bot-open5000),
+[500](peers-and-replies/bot-open500), [the copy](peers-and-replies/own-update-copy-closed64).
+
+Stated as they are:
+
+- **No measured change in CPU, throughput or latency, in any scenario.** These are kept
+  for what they allocate: 1.75 allocations and 1.8 kB less per request, on any hardware.
+  The medians lean the right way and the intervals include zero.
+- **RSS rose 1.53% in the closed loop with the first two**, 140 KiB, and did not in the
+  open loops, whose intervals include zero on the other side. Live heap is unchanged
+  (+0.15% [-0.34, +0.31]). The peers of a batch are now one allocation of another size,
+  which the allocator serves from other bins: not explained further than that.
+- A bot whose sends go to groups gets the second change on every send, where this
+  workload gets it on one request in four. One whose sends go to private chats gets the
+  shared empty map on every send.
+- `PeerMap::iter` and `iter_peers` go through a few peers in the order they arrived. The
+  order was arbitrary before. Nothing else about them changes.
+- The third is an option of the protocol layer, `own_updates_in_results`, off by default.
+  The connections this library makes turn it on. A driver of its own built on
+  `Encrypted` sees what it saw before.
+- The measured builds differ from the commits by tests and comments.
+
+## What is left, and why this round stops here
+
+The last three changes were kept on allocations with no measurable CPU gain, which is the
+stopping rule. What the profile still shows, largest first:
+
+| Candidate | Share at `f1dd333` | Why it is not done |
+|---|---|---|
+| Large TL values moved by value: `Update` is 760 B, `Updates` over 1 kB, `types::Message` about 2.5 kB, each copied out of a `Result`, into its enum and into a box or a vector as it is decoded | 16% of CPU as copies | Smaller values mean boxed variants or fields in generated types every caller matches on. Layer 233 boxed only what it added, to leave those shapes alone |
+| The reply to a send decoded by its connection and again by its caller | 5.4% and 4.4% | Measured above: a copy costs what the decode costs. One shared decoded message means `message::Message::raw` behind an `Arc` |
+| The allocator: 17.69 allocations per request are left | 15% of CPU | What remains is the decoded data itself (vectors of updates, users and chats, strings, the boxed message) and one reply buffer and one channel per request |
+| The peers of a batch converted and cached (`peer_map_from_raw`, `cache_peer_map`) | 4.8% and about 2%, before `9fd5e44` | The conversion wraps each raw user and chat, which the consumer may read. The cache check is a hash per peer under a lock, and nothing contends for it at one connection per thread |
+| The connection's reading of the precise clock at each write | 0.2 readings per request, about 1% | It stamps `InvocationTracker::sent_at`, which callers read as a time. A coarse one would be 4 ms out |
+| The harness's own two readings per request | about 9% | Not the library's. It makes every share above look a tenth smaller than it is |
+| `send` and `recv` | 11% | One of each per packet. `io_uring` was measured on 2026-11-10 and is excluded by the owner on this kernel |
+
 ## What the earlier rounds had left unverified
 
 Each command ran alone, one crate at a time, `-j 2` (`-j 1` where noted), `nice`, under a
@@ -291,6 +368,8 @@ which are benchmarks and network probes; anything against Telegram.
 | `grammers_mtproto::coarse_clock::{instant, unix_time}`, re-exported as `grammers_mtsender::coarse_clock` | New |
 | `UpdatesReceiver::last_clock_read` | Unchanged signature. The reading can be a kernel tick old |
 | `grammers-mtproto` depends on `libc` on Linux and Android | New direct dependency, already in the build |
+| `mtp::Encrypted` builder: `own_updates_in_results` | New option, off by default. With it `Deserialization::OwnUpdate::update` is empty |
+| `PeerMap::iter`, `PeerMap::iter_peers` | Unchanged signatures. Up to sixteen peers come in the order they arrived |
 
 ## Reproduction
 
