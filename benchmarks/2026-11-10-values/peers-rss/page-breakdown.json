@@ -1,0 +1,96 @@
+{
+  "normal": {
+    "page_table_kib": {
+      "base": 8506.0,
+      "final": 8600.0,
+      "paired_delta_kib": 92.0,
+      "bootstrap95_delta_kib": [
+        26.0,
+        194.0
+      ]
+    },
+    "anonymous_kib": {
+      "base": 1252.0,
+      "final": 1250.0,
+      "paired_delta_kib": -4.0,
+      "bootstrap95_delta_kib": [
+        -10.0,
+        2.0
+      ]
+    },
+    "non_anonymous_kib": {
+      "base": 7260.0,
+      "final": 7328.0,
+      "paired_delta_kib": 94.0,
+      "bootstrap95_delta_kib": [
+        18.0,
+        196.0
+      ]
+    },
+    "private_clean_kib": {
+      "base": 2406.0,
+      "final": 2496.0,
+      "paired_delta_kib": 42.0,
+      "bootstrap95_delta_kib": [
+        -10.0,
+        270.0
+      ]
+    },
+    "pss_file_kib": {
+      "base": 3880.5,
+      "final": 3932.5,
+      "paired_delta_kib": 43.0,
+      "bootstrap95_delta_kib": [
+        -10.0,
+        236.0
+      ]
+    }
+  },
+  "tcache0": {
+    "page_table_kib": {
+      "base": 8414.0,
+      "final": 8632.0,
+      "paired_delta_kib": 184.0,
+      "bootstrap95_delta_kib": [
+        12.0,
+        252.0
+      ]
+    },
+    "anonymous_kib": {
+      "base": 1226.0,
+      "final": 1224.0,
+      "paired_delta_kib": 0.0,
+      "bootstrap95_delta_kib": [
+        -12.0,
+        12.0
+      ]
+    },
+    "non_anonymous_kib": {
+      "base": 7188.0,
+      "final": 7378.0,
+      "paired_delta_kib": 158.0,
+      "bootstrap95_delta_kib": [
+        4.0,
+        256.0
+      ]
+    },
+    "private_clean_kib": {
+      "base": 2438.0,
+      "final": 2480.0,
+      "paired_delta_kib": 166.0,
+      "bootstrap95_delta_kib": [
+        -64.0,
+        300.0
+      ]
+    },
+    "pss_file_kib": {
+      "base": 3850.5,
+      "final": 3951.0,
+      "paired_delta_kib": 114.5,
+      "bootstrap95_delta_kib": [
+        1.0,
+        289.0
+      ]
+    }
+  }
+}

@@ -1,0 +1,2 @@
+GUARD start rss-snapshot-tool-reviewed: avail=3657MB swap_used=1297MB swap_free=2798MB vlimit=4000000
+GUARD end rss-snapshot-tool-reviewed: rc=0 secs=0 peak_rss_one_proc=18MB peak_rss_all=24MB min_avail=3657MB swap_used_max=1297MB (start 1297MB, moved 0MB)

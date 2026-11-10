@@ -28,7 +28,7 @@ The outcome column is completed by the lead as commands run.
 | mtsender | `benchmark_warm_connection_route` | Local mock, up to four threads | pending |
 | mtsender | `benchmark_prepared_request_clones` | Local shared/owned buffers | pending |
 | mtsender | `loopback_large_reply_retention` | 32 sessions, 1 MiB replies, 61 s idle | pending |
-| mtsender | `loopback_session_footprint` | 400 sessions, 1,100 RPC/session | pending |
+| mtsender | `loopback_session_footprint` | 400 sessions, 1,100 RPC/session | passed before/after step 1 |
 | mtsender | `loopback_rpc_cost` | 64 sessions, 16 callers, bounded window | pending |
 | mtsender | `loopback_blocking_control` | 64 sessions, 16 worker threads | pending |
 | mtsender | `loopback_open_loop` | Local two-DC mock, bounded rate/window | pending |
@@ -38,8 +38,8 @@ The outcome column is completed by the lead as commands run.
 | session | `benchmark_sqlite_cache_peers_transaction` | Local in-memory SQLite | pending |
 | tl-types | `benchmark_vector_deserialization` | Local vectors | pending |
 | client | `benchmark_sqlite_self_lookup_and_live_receiver` | Local in-memory SQLite, session-file | pending |
-| client | `bot_workload` | Separate local mock process | pending |
-| client | `bot_mock_server` | Child role launched by bot_workload | pending |
+| client | `bot_workload` | Separate local mock process | passed in all step-1 paired runs |
+| client | `bot_mock_server` | Child role launched by bot_workload | exercised by passing parent runs |
 | mtsender | `test_no_updates_initialization_on_public_test_dc` | Test-DC handshake, literal api_id=1, no account | pending |
 | mtsender | `test_invoke_encrypted_method` | Test-DC handshake/read-only query, literal api_id=1 | pending |
 | mtsender | `test_connection_through_proxy` | Local SOCKS5 proxy, test-DC handshake | pending |

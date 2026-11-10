@@ -1,0 +1,8 @@
+
+running 1 test
+test bot_workload ... RSS_ACCOUNTING status_kib=6592 page_table_kib=8636 anonymous_kib=1284 private_clean_kib=2444 private_dirty_kib=1284 pss_file_kib=3927
+RSS_ACCOUNTING status_kib=6592 page_table_kib=8700 anonymous_kib=1284 private_clean_kib=2444 private_dirty_kib=1284 pss_file_kib=3929
+BOT rate=159834 updates_per_s=199793 user_us=4.89 sys_us=1.35 cpu_us=6.24 core_share=0.998 voluntary_switches_per_rpc=0.000 involuntary_switches_per_rpc=0.000 allocs_per_rpc=18.19 bytes_per_rpc=12148 p50_us=397.3 p95_us=471.0 p99_us=532.5 rss_steady_kib=8636 rss_peak_kib=6592 live_heap_b=424400 errors=0 dropped=0 completed=1918168 updates_lost=0 update_errors=0
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 16.05s

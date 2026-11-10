@@ -21,7 +21,7 @@ Part 1, what the last report listed as not done or not verified:
 - [ ] 1.5 Ignored tests that need no credentials: run (benchmarks, and probes of Telegram's
       servers without an account)
 - [ ] 1.6 The coarse clock's open loops (5,000 and 500 RPC/s) measured again at the head
-- [ ] 1.7 The 1.53% rise of RSS in the peers step: its cause, or shown to be noise
+- [!] 1.7 The peers-step RSS rise persists in non-anonymous pages; exact mapping/function cause unresolved after the 20-minute time box (see peers-rss)
 
 Part 2, the decisions the owner delegated:
 

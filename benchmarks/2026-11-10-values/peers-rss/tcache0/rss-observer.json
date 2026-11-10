@@ -1,0 +1,7 @@
+{
+  "preload_sha256": "9e6e8fed4ee9c58c03042bd8cbdb07ed0968e5eb10e6d52dfe234bee1a13769d",
+  "source_sha256": "70a571d4000405d8852f080c44280681332945aba8bc37e1d4000e13217b4666",
+  "GLIBC_TUNABLES": "glibc.malloc.tcache_count=0",
+  "method": "identical preload on both retained binaries; page-table VmRSS; closed64 only",
+  "limits": "DSO/stack pages and proc-read allocation differ from uninstrumented runs"
+}

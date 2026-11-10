@@ -1,0 +1,17 @@
+Fresh observer review: /root/validation_inventory; inherited Codex session.
+Native model/effort not exposed. Read actual C and Python wrapper after fixes.
+
+Requested corrections: reject observer fallback/missing readings/mismatches and
+timeouts, restrict the wrapper to closed64, pass unusual open flags through.
+The corrected files were reviewed and approved without remaining blockers.
+Preload/source hashes and GLIBC_TUNABLES are saved per comparison. Buffer bounds,
+EINTR handling, newline replacement and descriptor cleanup were reviewed.
+
+Observer instrumentation adds DSO/stack pages and changes proc-reading scratch
+allocation; compare identically instrumented binaries only. Reviewer ran no
+builds, edits or benchmarks. The exact ELF/function cause remains unresolved.
+
+Follow-up review corrected the derived field to non_anonymous_kib, qualified
+executable/library attribution, and required exact round-ID pairing. Actual
+corrected files were confirmed publication-ready with no remaining blocker.
+Seven Python regressions pass and saved analysis reproduces.
