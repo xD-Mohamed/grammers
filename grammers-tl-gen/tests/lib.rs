@@ -281,3 +281,34 @@ fn large_media_leaves_are_boxed_and_wrappers_stay_inline() -> io::Result<()> {
     assert!(types.contains("crate::enums::Update::ChannelWebPage(x) => Ok(x),"));
     Ok(())
 }
+
+#[test]
+fn input_rich_message_leaves_are_boxed_with_owned_conversions() -> io::Result<()> {
+    let definitions = get_definitions(
+        "
+        inputRichMessage#e4c449fc flags:# rtl:flags.0?true blocks:Vector<int> photos:flags.2?Vector<int> = InputRichMessage;
+        inputRichMessageHTML#dacb836a flags:# rtl:flags.0?true html:string = InputRichMessage;
+        inputRichMessageMarkdown#004b572c flags:# rtl:flags.0?true markdown:string = InputRichMessage;
+        sample.inputRichMessage#70000001 blocks:Vector<int> = sample.InputRichMessage;
+    ",
+    );
+    let (_, types, _, enums) = gen_rust_code(&definitions)?;
+    for (variant, payload) in [
+        ("Message", "InputRichMessage"),
+        ("Html", "InputRichMessageHtml"),
+        ("Markdown", "InputRichMessageMarkdown"),
+    ] {
+        assert!(enums.contains(&format!("{variant}(Box<crate::types::{payload}>),")));
+        assert!(enums.contains(&format!(
+            "Self::{variant}(Box::new(crate::types::{payload}::deserialize(buf)?)),"
+        )));
+        assert!(enums.contains(&format!("InputRichMessage::{variant}(Box::new(x))")));
+        assert!(types.contains(&format!(
+            "crate::enums::InputRichMessage::{variant}(x) => Ok(*x),"
+        )));
+    }
+    assert!(types.contains("pub blocks: Vec<i32>,"));
+    assert!(types.contains("pub photos: Option<Vec<i32>>,"));
+    assert!(enums.contains("Message(crate::types::sample::InputRichMessage),"));
+    Ok(())
+}

@@ -580,3 +580,96 @@ fn update_types_stay_small_enough_to_move_around() {
         size_of::<enums::Updates>()
     );
 }
+
+fn input_rich_bytes(kind: u8, with_collections: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    match kind {
+        0 => id::<types::InputRichMessage>(&mut bytes),
+        1 => id::<types::InputRichMessageHtml>(&mut bytes),
+        2 => id::<types::InputRichMessageMarkdown>(&mut bytes),
+        _ => panic!("unknown rich-message fixture"),
+    }
+    let flags = 3u32
+        | if with_collections {
+            if kind == 0 { 0x1c } else { 4 }
+        } else {
+            0
+        };
+    flags.serialize(&mut bytes);
+    match kind {
+        0 => {
+            one_item_vector(&mut bytes);
+            id::<types::PageBlockParagraph>(&mut bytes);
+            bytes.extend_from_slice(&rich_text(0));
+            if with_collections {
+                empty_vector(&mut bytes);
+                empty_vector(&mut bytes);
+                empty_vector(&mut bytes);
+            }
+        }
+        1 | 2 => {
+            if kind == 1 {
+                b"<b>owned</b>".as_slice().serialize(&mut bytes);
+            } else {
+                b"**owned**".as_slice().serialize(&mut bytes);
+            }
+            if with_collections {
+                empty_vector(&mut bytes);
+            }
+        }
+        _ => unreachable!(),
+    }
+    bytes
+}
+
+#[test]
+fn boxed_input_rich_messages_keep_their_wire_format() {
+    for kind in 0..=2 {
+        for with_collections in [false, true] {
+            let bytes = input_rich_bytes(kind, with_collections);
+            round_trip::<enums::InputRichMessage>(&bytes);
+            let value = enums::InputRichMessage::from_bytes(&bytes).unwrap();
+            match &value {
+                enums::InputRichMessage::Message(message) => {
+                    assert_eq!(kind, 0);
+                    assert!(message.rtl && message.noautolink);
+                    assert_eq!(message.blocks.len(), 1);
+                    assert_eq!(message.photos.is_some(), with_collections);
+                    assert_eq!(message.documents.is_some(), with_collections);
+                    assert_eq!(message.users.is_some(), with_collections);
+                }
+                enums::InputRichMessage::Html(message) => {
+                    assert_eq!(kind, 1);
+                    assert!(message.rtl && message.noautolink);
+                    assert_eq!(message.html, "<b>owned</b>");
+                    assert_eq!(message.files.is_some(), with_collections);
+                }
+                enums::InputRichMessage::Markdown(message) => {
+                    assert_eq!(kind, 2);
+                    assert!(message.rtl && message.noautolink);
+                    assert_eq!(message.markdown, "**owned**");
+                    assert_eq!(message.files.is_some(), with_collections);
+                }
+            }
+            let rebuilt: enums::InputRichMessage = match kind {
+                0 => types::InputRichMessage::try_from(value).unwrap().into(),
+                1 => types::InputRichMessageHtml::try_from(value).unwrap().into(),
+                2 => types::InputRichMessageMarkdown::try_from(value)
+                    .unwrap()
+                    .into(),
+                _ => unreachable!(),
+            };
+            assert_eq!(rebuilt.to_bytes(), bytes);
+            for end in 0..bytes.len() {
+                assert_error::<enums::InputRichMessage>(&bytes[..end], Error::UnexpectedEof);
+            }
+        }
+    }
+    eprintln!(
+        "InputRichMessage={} SendMessage={}",
+        size_of::<enums::InputRichMessage>(),
+        size_of::<crate::functions::messages::SendMessage>()
+    );
+    assert!(size_of::<enums::InputRichMessage>() <= 16);
+    assert!(size_of::<crate::functions::messages::SendMessage>() <= 512);
+}

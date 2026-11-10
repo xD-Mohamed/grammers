@@ -1,0 +1,27 @@
+GUARD start input-rich-types-tests: avail=3634MB swap_used=1325MB swap_free=2770MB vlimit=4000000
+GUARD end input-rich-types-tests: rc=0 secs=32 peak_rss_one_proc=1262MB peak_rss_all=1342MB min_avail=2470MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+test grammers-tl-types/src/deserialize.rs - deserialize::Vec<u8>::deserialize (line 506) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::[u8;16]::deserialize (line 326) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::[u8;32]::deserialize (line 348) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::bool::deserialize (line 230) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::crate::RawVec<T>::deserialize (line 444) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::f64::deserialize (line 371) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::i32::deserialize (line 255) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::i64::deserialize (line 302) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::u32::deserialize (line 279) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::&'_[u8]::serialize (line 287) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::String::serialize (line 226) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::Vec<T>::serialize (line 184) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::Vec<u8>::serialize (line 269) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::[u8;16]::serialize (line 121) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::[u8;32]::serialize (line 140) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::bool::serialize (line 37) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::crate::RawVec<T>::serialize (line 207) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::f64::serialize (line 161) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::i32::serialize (line 57) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::i64::serialize (line 100) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::u32::serialize (line 79) ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+all doctests ran in 0.29s; merged doctests compilation took 0.27s

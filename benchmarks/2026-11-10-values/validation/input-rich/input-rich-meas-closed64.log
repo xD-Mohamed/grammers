@@ -1,0 +1,48 @@
+closed64 round 1/30 load=0.59
+closed64 round 2/30 load=0.73
+closed64 round 3/30 load=0.86
+closed64 round 4/30 load=0.95
+closed64 round 5/30 load=0.96
+closed64 round 6/30 load=1.04
+closed64 round 7/30 load=1.11
+closed64 round 8/30 load=1.24
+closed64 round 9/30 load=1.28
+closed64 round 10/30 load=1.32
+closed64 round 11/30 load=1.27
+closed64 round 12/30 load=1.38
+closed64 round 13/30 load=1.48
+closed64 round 14/30 load=1.48
+closed64 round 15/30 load=1.48
+closed64 round 16/30 load=1.56
+closed64 round 17/30 load=1.63
+closed64 round 18/30 load=1.61
+closed64 round 19/30 load=1.67
+closed64 round 20/30 load=1.64
+closed64 round 21/30 load=1.70
+closed64 round 22/30 load=1.67
+closed64 round 23/30 load=1.64
+closed64 round 24/30 load=1.62
+closed64 round 25/30 load=1.60
+closed64 round 26/30 load=1.75
+closed64 round 27/30 load=1.94
+closed64 round 28/30 load=1.88
+closed64 round 29/30 load=1.74
+closed64 round 30/30 load=1.78
+
+closed64
+metric                  base       final   vs base
+rate               213475.50   217879.00    +1.83% [+0.39,+2.70]*
+updates_per_s      266844.50   272348.50    +1.83% [+0.45,+2.70]*
+updates_lost            0.00        0.00  no ratio
+cpu_us                  4.68        4.58    -1.92% [-2.59,-0.33]*
+user_us                 3.54        3.50    -1.36% [-3.23,+1.01]
+sys_us                  1.12        1.08    -2.19% [-7.74,+1.43]
+core_share              1.00        1.00    +0.00% [+0.00,+0.00]
+allocs_per_rpc         17.63       17.63    +0.00% [+0.00,+0.00]
+bytes_per_rpc        8237.00     8070.50    -2.02% [-2.10,-1.94]*
+p50_us                290.80      282.60    -1.42% [-2.86,+0.00]
+p95_us                364.50      360.40    -1.12% [-3.30,+0.00]
+p99_us                413.70      405.50    -1.49% [-3.45,+1.04]
+rss_steady_kib       8376.00     8366.00    -0.74% [-1.15,+0.17]
+rss_peak_kib         6256.00     6164.00    -1.86% [-2.23,-0.72]*
+live_heap_b        465264.00   450024.00    -3.32% [-4.39,-1.89]*

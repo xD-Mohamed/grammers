@@ -1,0 +1,4 @@
+GUARD start input-rich-final-client-clippy: avail=3656MB swap_used=1323MB swap_free=2772MB vlimit=4000000
+GUARD end input-rich-final-client-clippy: rc=0 secs=7 peak_rss_one_proc=403MB peak_rss_all=528MB min_avail=3379MB swap_used_max=1323MB (start 1323MB, moved 0MB)
+    Checking grammers-client v0.10.0 (/root/grammers/grammers-client)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.07s

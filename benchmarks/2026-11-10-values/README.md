@@ -17,6 +17,7 @@ Part 1, what the last report listed as not done or not verified:
 - [x] 1.1 `grammers-tl-types` with `impl-serde` as one API unit: check passes, 3.28 GiB peak; all-features stopped by watchdog
 - [x] 1.2 The same API unit under Clippy: clean, 3.30 GiB peak; all-target/all-features stopped by watchdog
 - [ ] 1.3 Windows and macOS: `cargo check --target` on the real targets, crate by crate
+      (36 representative checks passed on the round's first source; the matrix at the final head is open)
 - [x] 1.4 Ignored tests: every one listed with what it needs, in [the inventory](ignored-tests.md)
 - [ ] 1.5 Ignored tests that need no credentials: run (benchmarks, and probes of Telegram's
       servers without an account)
@@ -27,6 +28,7 @@ Part 2, the decisions the owner delegated:
 
 - [ ] 2.1 The coarse clock: decision recorded, its `unsafe` block reviewed once more
 - [ ] 2.2 Large TL values moved by value (`Update`, `Updates`, `types::Message`), on `main`
+      (steps 1, 2, 3 and 5 kept; step 4 measured and reverted; shared ownership of a message is open)
 - [ ] 2.3 A send's reply decoded once for its caller and for the update stream
 - [ ] 2.4 A fresh profile at the head, and the rest of "what is left", largest first
 - [ ] 2.5 The allocator's share
@@ -119,9 +121,10 @@ use the same coarse-clock optimization. These deltas measure the new field layou
 | | old VmRSS KiB | 3,360 | 4,622 | +20.46% [+1.69, +43.86] |
 
 Raw logs: [saturated](reply-media/closed64), [5,000 RPC/s](reply-media/open5000).
-The sub-1% heap difference is not interpreted as retention: a tcache-disabled repeat
-has been repeated with tcache disabled: 420,040 to 417,736 B, -0.53%
-[-0.56, +0.52], eight rounds. Neither establishes retained growth.
+The sub-1% heap difference is not interpreted as retention. Eight more saturated
+rounds with tcache disabled measure 420,040 to 417,736 B, -0.53% [-0.56, +0.52].
+Neither reading establishes retained growth. The `old VmRSS` row above is the counter
+the next paragraph replaces: it is kept as measured, and is not this step's RSS result.
 
 The low-rate VmRSS increase was unresolved after the first comparison. The unchanged
 allocator heap is not used to dismiss it. [The RSS accounting correction](rss-accounting.md)
@@ -308,12 +311,73 @@ one dependency test, two loopback integration tests and five doctests; the eight
 unit benchmarks and eight integration/network tests remain ignored in that run.
 Sender-only strict all-target Clippy (`--no-deps`) and all-feature Rustdoc pass.
 The ordinary Clippy command exposed a dependency's `UpdatesLike` size warning
-after the preceding TL shrink: short-sent payload 920 B versus 648 B. It remains
-an explicit blocker for the next full check; it has not been called a passing
-workspace check. The timestamp fix is committed separately and publication waits
-for that blocker to be resolved. [Receipts](validation/tracker-origin).
+after the preceding TL shrink: short-sent payload 920 B versus 648 B. The timestamp
+fix was committed separately as `b912fa9` and held back until step 5 below removed
+that warning; the two were pushed together. [Receipts](validation/tracker-origin).
 
 The active compiler is Rust/Cargo 1.99.1. Executable `.comment` sections verify
 that the fixed-RSS baseline, webpage/game candidate and reply-forward candidate
 also used Rust 1.99.1; older toolchain mentions in historical documentation are
 not this round's compiler identity.
+
+## Step 5: rich-message inputs are boxed at their leaves
+
+After step 3 the session crate's `UpdatesLike` failed strict Clippy
+(`large_enum_variant`): its short-sent variant holds the `messages.sendMessage`
+request, 920 B, beside 648 B for the next variant. Boxing that request would add an
+allocation to every sent message. The request is large because its optional
+`rich_message` reserves the largest of three `InputRichMessage` bodies inline, in
+every send. Those three leaves now use the definition rule: `InputRichMessage` falls
+to 16 B and `SendMessage` from 920 to 472 B. A request without a rich message
+allocates nothing more; one with a rich message allocates once. The unfulfilled
+`large_enum_variant` expectation on `grammers_client::media::Media` is removed with
+it: since step 3 that enum no longer has a large variant.
+
+The base is `b912fa9`, the candidate differs in this rule and its tests. Same
+release profile, features (`session-file`) and fixed RSS harness; local mocks; both
+use the coarse clock on this host, where the precise clock is a system call. Paired
+median-ratio bootstrap as before.
+
+| Scenario | CPU/RPC change, 95% interval | Other result |
+|---|---:|---|
+| Saturated 64 callers, 30 pairs | -1.92% [-2.59, -0.33] | rate +1.83% [+0.39, +2.70] |
+| 5,000 RPC/s, 8 pairs | +0.48% [-2.93, +3.23] | no resolved change |
+| 500 RPC/s, first 12 pairs | +1.87% [-0.00, +3.68] | on the edge: repeated |
+| 500 RPC/s, all 24 pairs | +1.77% [-1.28, +3.96] | no resolved change |
+| Raw plain, 14 pairs | -5.71% [-7.13, -2.50] | not claimed, see below |
+| Raw gzip, 14 pairs | +1.41% [-4.26, +3.22] | no resolved change |
+
+Saturated: 4.68 to 4.585 us/RPC, 213,475.5 to 217,879 RPC/s. Allocations stay
+17.63/RPC; allocated bytes fall 2.02% [-2.10, -1.94] (8,237 to 8,070.5 B/RPC), 1.92%
+at 5,000/s and 1.49% at 500/s. `mallinfo` heap is -3.32% [-4.39, -1.89], and with
+tcache disabled -4.27% [-4.30, -3.18] over eight more pairs (393,568 to 376,696 B).
+Page-table steady RSS is -0.74% [-1.15, +0.17] saturated, -0.40% [-2.74, +0.70] at
+5,000/s and -1.21% [-2.04, +0.05] at 500/s: no resolved change. The 400-session raw
+census is exactly 2,143 / 5,959 / 6,031 / 12,079 B per session, as in every step.
+
+The first 500 RPC/s phase ended with its interval touching zero from above, so a
+second phase of twelve pairs was run and both are kept: the second alone is +0.22%
+[-4.20, +5.84], and all 24 pairs do not resolve. `combine-bot-pairs.py` gained a
+`--scenario` option for this; it still reproduces step 4's combined summary byte for
+byte. The raw path never builds a `SendMessage`, so its plain-reply result is read
+as layout noise between two binaries, not as a gain of this step.
+
+**Decision: keep.** The saturated gain resolves, allocated bytes and heap fall, no
+scenario resolves as a loss, and the workspace is free of the Clippy error without
+an allocation on the send path. [Measurements](input-rich),
+[validation](validation/input-rich).
+
+Generator tests (28 unit, 11 integration and the dependency test) and TL tests (17, one ignored, plus the
+dependency test and 24 doctests) pass. Strict Clippy passes for the generator, the TL
+types, the sender and the client (all targets, all features, which lints the session
+and MTProto libraries as path dependencies). Client all-feature tests pass, 69
+doctests included. Rustdoc with warnings denied passes for the generator, the client
+and the TL types (all features). Two of those needed care: under the 4,000,000 KiB
+address-space cap, rustdoc aborts while merging the shared search index in
+`target/doc` (an allocation failure, not a diagnostic). The generator is therefore
+documented into its own directory under the cap, and the client and TL types run as
+single units under the watchdog: 1,750 MiB and 3,541 MiB peak (time -v). The TL
+types' Rustdoc left 179 MiB available at its lowest sample, for less than the
+watchdog's four seconds: it is now the heaviest command of the round. The whole-API
+serde unit passes check and Clippy again at 3,357 / 3,378 MiB peak, 447 / 453 MiB
+available at the lowest, swap moving 67 / 42 MiB.

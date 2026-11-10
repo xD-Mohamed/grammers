@@ -1,0 +1,27 @@
+GUARD start input-rich-final-client-doc: avail=3640MB swap_used=1323MB swap_free=2772MB vlimit=4000000
+GUARD end input-rich-final-client-doc: rc=101 secs=14 peak_rss_one_proc=1465MB peak_rss_all=1562MB min_avail=2378MB swap_used_max=1324MB (start 1323MB, moved 1MB)
+   4:     0x7f0d1d0f2806 - std[68c81ae915296b05]::alloc::rust_oom::{closure#0}
+   5:     0x7f0d1d0e9869 - std[68c81ae915296b05]::sys::backtrace::__rust_end_short_backtrace::<std[68c81ae915296b05]::alloc::rust_oom::{closure#0}, !>
+   6:     0x7f0d1d11355a - std[68c81ae915296b05]::alloc::rust_oom
+   7:     0x7f0d1d0f4543 - __rustc[3d2f79520d6fa809]::__rust_alloc_error_handler
+   8:     0x7f0d198e15b1 - alloc[c23e483dde3f7cfb]::alloc::handle_alloc_error
+   9:     0x7f0d198fe67c - alloc[c23e483dde3f7cfb]::raw_vec::handle_error
+  10:     0x556a2c75ea15 - <alloc[c23e483dde3f7cfb]::raw_vec::RawVec<stringdex[f6ca39572b79d3]::internals::tree::ImplicitTreeNode>>::grow_one
+  11:     0x556a2c76e7ef - stringdex[f6ca39572b79d3]::internals::tree::encode_search_tree_ukkonen::phase
+  12:     0x556a2c760839 - <rustdoc[6234e183190cf48a]::html::render::search_index::SerializedSearchIndex>::write_to
+  13:     0x556a2c737f85 - rustdoc[6234e183190cf48a]::html::render::write_shared::write_rendered_cross_crate_info
+  14:     0x556a2c8a58c9 - rustdoc[6234e183190cf48a]::html::render::write_shared::write_not_crate_specific
+  15:     0x556a2c77a48b - rustdoc[6234e183190cf48a]::html::render::write_shared::write_shared
+  16:     0x556a2c8b1969 - <rustdoc[6234e183190cf48a]::html::render::context::Context>::init
+  17:     0x556a2c8ab087 - rustdoc[6234e183190cf48a]::main_args::{closure#2}::{closure#0}
+  18:     0x556a2c8b861a - rustc_interface[8fa331b5442ffbb0]::interface::run_compiler::<(), rustdoc[6234e183190cf48a]::main_args::{closure#2}>::{closure#2}
+  19:     0x556a2c8b6103 - std[68c81ae915296b05]::sys::backtrace::__rust_begin_short_backtrace::<rustc_interface[8fa331b5442ffbb0]::util::run_in_thread_with_globals<rustc_interface[8fa331b5442ffbb0]::util::run_in_thread_pool_with_globals<rustc_interface[8fa331b5442ffbb0]::interface::run_compiler<(), rustdoc[6234e183190cf48a]::main_args::{closure#2}>::{closure#2}, ()>::{closure#0}, ()>::{closure#0}::{closure#0}, ()>
+  20:     0x556a2c8b5e6f - <std[68c81ae915296b05]::thread::lifecycle::spawn_unchecked<rustc_interface[8fa331b5442ffbb0]::util::run_in_thread_with_globals<rustc_interface[8fa331b5442ffbb0]::util::run_in_thread_pool_with_globals<rustc_interface[8fa331b5442ffbb0]::interface::run_compiler<(), rustdoc[6234e183190cf48a]::main_args::{closure#2}>::{closure#2}, ()>::{closure#0}, ()>::{closure#0}::{closure#0}, ()>::{closure#1} as core[efd5e57aef94d71e]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+  21:     0x7f0d1ec0c607 - <std[68c81ae915296b05]::sys::thread::unix::Thread>::new::thread_start
+  22:     0x7f0d1806ba83 - <unknown>
+  23:     0x7f0d180fd8e0 - <unknown>
+  24:                0x0 - <unknown>
+error: could not document `grammers-client`
+
+Caused by:
+  process didn't exit successfully: `/root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustdoc --edition=2024 --crate-type lib --crate-name grammers_client grammers-client/src/lib.rs -o /root/grammers/target/doc --cfg 'feature="default"' --cfg 'feature="dispatcher"' --cfg 'feature="fs"' --cfg 'feature="html"' --cfg 'feature="markdown"' --cfg 'feature="parse_invite_link"' --cfg 'feature="proxy"' --cfg 'feature="qr-login"' --cfg 'feature="session-file"' --cfg 'feature="session-import"' --cfg 'feature="session-import-files"' --cfg 'feature="session-string"' --check-cfg 'cfg(docsrs,test ...

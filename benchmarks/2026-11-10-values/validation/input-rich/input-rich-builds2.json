@@ -1,0 +1,56 @@
+[
+ [
+  "gen-doc-own-dir",
+  [
+   "cargo",
+   "doc",
+   "--locked",
+   "-j",
+   "1",
+   "-p",
+   "grammers-tl-gen",
+   "--all-features",
+   "--no-deps"
+  ],
+  {
+   "RUSTDOCFLAGS": "-D warnings",
+   "CARGO_TARGET_DIR": "/tmp/claude-0/de27/target-gendoc"
+  }
+ ],
+ [
+  "build-loop",
+  [
+   "cargo",
+   "test",
+   "--locked",
+   "--release",
+   "-j",
+   "1",
+   "-p",
+   "grammers-mtsender",
+   "--test",
+   "loopback",
+   "--no-run"
+  ],
+  {}
+ ],
+ [
+  "build-bot",
+  [
+   "cargo",
+   "test",
+   "--locked",
+   "--release",
+   "-j",
+   "1",
+   "-p",
+   "grammers-client",
+   "--features",
+   "session-file",
+   "--test",
+   "bot_workload",
+   "--no-run"
+  ],
+  {}
+ ]
+]

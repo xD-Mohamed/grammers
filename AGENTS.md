@@ -8,6 +8,15 @@
 - Full `webPage` and `game` payloads are boxed at their leaves, shrinking
   `MessageMedia` to 304 B and `Message` to 1,608 B. Their update and media wrappers
   stay inline; do not reintroduce a redundant outer box on webpage updates.
+- The three `InputRichMessage` leaves are boxed, so `messages.sendMessage` is 472 B
+  instead of 920 B and a send without a rich message allocates nothing for it. That
+  is what keeps the session's `UpdatesLike` under Clippy's `large_enum_variant`
+  without boxing the request of every short-sent message. `depth_tests.rs` guards
+  `SendMessage` at 512 B: a new optional body in that request needs the same rule.
+- Rustdoc for a workspace crate merges the shared search index in `target/doc` and
+  aborts there under the 4,000,000 KiB address-space cap. Document `grammers-tl-gen`
+  into its own target directory; `grammers-client` and `grammers-tl-types` run as
+  single units under the watchdog (1.7 and 3.5 GiB resident).
 - Enum deserializers charge TL constructor depth independently of Rust heap
   boxing. A storage change must preserve the cursor's RAII depth scope.
 - `messageReplyHeader.reply_media` is an optional boxed field, using the existing
@@ -569,9 +578,9 @@ PERFORMANCE.md for verification and component benchmark limitations.
 Workspace all-target/all-feature Clippy passes with -D warnings. Cleanup uses
 behavior-preserving helpers and Rust 1.87-compatible syntax. Example runner tasks
 are explicitly detached. Private module aliases avoid repeated module names.
-The public Media enum retains its inline variants with one documented
-large_enum_variant expectation: boxing would break constructors and introduce
-allocations. There is no blanket warning suppression. Stable rustfmt no longer
+The public Media enum retains its inline variants. Its large_enum_variant
+expectation was removed on 2026-11-10, when boxed webpage and game leaves left it
+without a large variant. There is no blanket warning suppression. Stable rustfmt no longer
 requests the nightly-only group_imports option. Recheck after upstream merges.
 
 

@@ -1,0 +1,6 @@
+   Compiling crc32fast v1.5.3
+    Checking cfg-if v1.0.5
+    Checking grammers-tl-parser v1.2.2 (/root/grammers/grammers-tl-parser)
+ Documenting grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.47s
+   Generated /tmp/claude-0/de27/target-gendoc/doc/grammers_tl_gen/index.html

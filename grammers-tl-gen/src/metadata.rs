@@ -20,13 +20,18 @@ use grammers_tl_parser::tl::{Category, Definition, Parameter, ParameterType, Typ
 /// allocating. Their payload structs and generated conversions keep their shape.
 /// Full webpages and games are boxed at the leaf, shrinking their media wrappers
 /// too. The webpage update wrappers then stay inline without a second allocation.
-const BOXED_FOR_SIZE: [&str; 16] = [
+/// Rich input leaves otherwise reserve their largest body in every send request,
+/// even when its optional rich message is absent.
+const BOXED_FOR_SIZE: [&str; 19] = [
     "message",
     "messageService",
     "ephemeralMessage",
     "wallet.card",
     "webPage",
     "game",
+    "inputRichMessage",
+    "inputRichMessageHTML",
+    "inputRichMessageMarkdown",
     "updateSentWalletTransaction",
     "updateServiceNotification",
     "updateSentPhoneCode",

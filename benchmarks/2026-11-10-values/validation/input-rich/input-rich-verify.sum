@@ -1,0 +1,19 @@
+input-rich-fmt exit 0
+GUARD end input-rich-fmt: rc=0 secs=0 peak_rss_one_proc=18MB peak_rss_all=35MB min_avail=3660MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+input-rich-gen-tests exit 0
+GUARD end input-rich-gen-tests: rc=0 secs=4 peak_rss_one_proc=158MB peak_rss_all=237MB min_avail=3576MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+test result: ok. 0 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+input-rich-types-tests exit 0
+GUARD end input-rich-types-tests: rc=0 secs=32 peak_rss_one_proc=1262MB peak_rss_all=1342MB min_avail=2470MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+input-rich-gen-clippy exit 0
+GUARD end input-rich-gen-clippy: rc=0 secs=0 peak_rss_one_proc=18MB peak_rss_all=35MB min_avail=3629MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+input-rich-types-clippy exit 0
+GUARD end input-rich-types-clippy: rc=0 secs=15 peak_rss_one_proc=1106MB peak_rss_all=1211MB min_avail=2633MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+input-rich-sender-clippy exit 0
+GUARD end input-rich-sender-clippy: rc=0 secs=20 peak_rss_one_proc=1155MB peak_rss_all=1274MB min_avail=2567MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+input-rich-client-clippy exit 101
+GUARD end input-rich-client-clippy: rc=101 secs=4 peak_rss_one_proc=332MB peak_rss_all=458MB min_avail=3437MB swap_used_max=1324MB (start 1324MB, moved 0MB)
+error: this lint expectation is unfulfilled
+error: could not compile `grammers-client` (lib) due to 1 previous error

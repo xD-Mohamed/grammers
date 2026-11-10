@@ -36,9 +36,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--phase',type=Path,action='append',required=True)
     parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--scenario',default='closed64',
+                        help='The one scenario every phase measured (default closed64).')
     parser.add_argument('--allocator-provenance',required=True,
                         help='Separate execution evidence; original configurations omit GLIBC_TUNABLES.')
     args = parser.parse_args()
+    scenario = args.scenario
     phases = [phase.resolve() for phase in args.phase]
     if len(set(phases))!=len(phases):
         raise ValueError('A phase may appear only once')
@@ -59,16 +62,16 @@ def main():
         identity = {key:value for key,value in config.items() if key!='rounds'}
         if configuration is None:
             configuration = identity
-        if identity!=configuration or set(identity['scenarios'])!={'closed64'}:
+        if identity!=configuration or set(identity['scenarios'])!={scenario}:
             raise ValueError('Mismatched binary, scenario or affinity configuration')
-        samples = json.loads((phase/'closed64-samples.json').read_text())
+        samples = json.loads((phase/f'{scenario}-samples.json').read_text())
         if set(samples)!={'base','final'}:
             raise ValueError('Exactly base and final binaries are required')
         for name,rows in samples.items():
             if len(rows)!=config['rounds'] or any(row is None for row in rows):
                 raise ValueError('Incomplete phase')
             for index,row in enumerate(rows):
-                path = phase/f'closed64-{name}-{index:02d}.log'
+                path = phase/f'{scenario}-{name}-{index:02d}.log'
                 resolved = path.resolve()
                 status = path.stat()
                 inode = (status.st_dev,status.st_ino)
@@ -87,11 +90,11 @@ def main():
                 if parsed!=row or parsed['errors']!=0:
                     raise ValueError(f'Log/sample mismatch: {path}')
         expected = json.loads((phase/'summary.json').read_text())
-        if expected!={'closed64':summarize(samples)}:
+        if expected!={scenario:summarize(samples)}:
             raise ValueError(f'Existing summary was not reproduced: {phase}')
         for index in range(config['rounds']):
             membership.append(dict(round=len(membership),phase=str(phase.relative_to(ROOT)),
-                                   source_round=index, logs={name:str((phase/f'closed64-{name}-{index:02d}.log').relative_to(ROOT))
+                                   source_round=index, logs={name:str((phase/f'{scenario}-{name}-{index:02d}.log').relative_to(ROOT))
                                                             for name in merged}))
         for name in merged:
             merged[name].extend(samples[name])
@@ -101,8 +104,8 @@ def main():
         allocator_provenance=args.allocator_provenance,
         method='Unadjusted paired bootstrap 95% intervals, same seeded median-ratio method as original harness; all phases retained.'),indent=2)+'\n')
     (output/'membership.json').write_text(json.dumps(membership,indent=2)+'\n')
-    (output/'closed64-samples.json').write_text(json.dumps(merged,indent=2)+'\n')
-    summary = {'closed64':summarize(merged)}
+    (output/f'{scenario}-samples.json').write_text(json.dumps(merged,indent=2)+'\n')
+    summary = {scenario:summarize(merged)}
     (output/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))
 

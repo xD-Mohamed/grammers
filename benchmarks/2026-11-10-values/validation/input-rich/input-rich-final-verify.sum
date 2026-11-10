@@ -1,0 +1,8 @@
+input-rich-final-client-clippy exit 0
+GUARD end input-rich-final-client-clippy: rc=0 secs=7 peak_rss_one_proc=403MB peak_rss_all=528MB min_avail=3379MB swap_used_max=1323MB (start 1323MB, moved 0MB)
+input-rich-final-client-tests exit 0
+GUARD end input-rich-final-client-tests: rc=0 secs=292 peak_rss_one_proc=691MB peak_rss_all=791MB min_avail=3106MB swap_used_max=1323MB (start 1323MB, moved 0MB)
+test result: ok. 69 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+input-rich-final-client-doc exit 101
+GUARD end input-rich-final-client-doc: rc=101 secs=14 peak_rss_one_proc=1465MB peak_rss_all=1562MB min_avail=2378MB swap_used_max=1324MB (start 1323MB, moved 1MB)
+error: could not document `grammers-client`

@@ -1,0 +1,218 @@
+[
+  {
+    "round": 0,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 0,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-00.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-00.log"
+    }
+  },
+  {
+    "round": 1,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 1,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-01.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-01.log"
+    }
+  },
+  {
+    "round": 2,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 2,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-02.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-02.log"
+    }
+  },
+  {
+    "round": 3,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 3,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-03.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-03.log"
+    }
+  },
+  {
+    "round": 4,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 4,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-04.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-04.log"
+    }
+  },
+  {
+    "round": 5,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 5,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-05.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-05.log"
+    }
+  },
+  {
+    "round": 6,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 6,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-06.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-06.log"
+    }
+  },
+  {
+    "round": 7,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 7,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-07.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-07.log"
+    }
+  },
+  {
+    "round": 8,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 8,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-08.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-08.log"
+    }
+  },
+  {
+    "round": 9,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 9,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-09.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-09.log"
+    }
+  },
+  {
+    "round": 10,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 10,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-10.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-10.log"
+    }
+  },
+  {
+    "round": 11,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500",
+    "source_round": 11,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500/open500-base-11.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500/open500-final-11.log"
+    }
+  },
+  {
+    "round": 12,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 0,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-00.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-00.log"
+    }
+  },
+  {
+    "round": 13,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 1,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-01.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-01.log"
+    }
+  },
+  {
+    "round": 14,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 2,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-02.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-02.log"
+    }
+  },
+  {
+    "round": 15,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 3,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-03.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-03.log"
+    }
+  },
+  {
+    "round": 16,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 4,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-04.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-04.log"
+    }
+  },
+  {
+    "round": 17,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 5,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-05.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-05.log"
+    }
+  },
+  {
+    "round": 18,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 6,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-06.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-06.log"
+    }
+  },
+  {
+    "round": 19,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 7,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-07.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-07.log"
+    }
+  },
+  {
+    "round": 20,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 8,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-08.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-08.log"
+    }
+  },
+  {
+    "round": 21,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 9,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-09.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-09.log"
+    }
+  },
+  {
+    "round": 22,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 10,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-10.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-10.log"
+    }
+  },
+  {
+    "round": 23,
+    "phase": "benchmarks/2026-11-10-values/input-rich/open500-extra12",
+    "source_round": 11,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-base-11.log",
+      "final": "benchmarks/2026-11-10-values/input-rich/open500-extra12/open500-final-11.log"
+    }
+  }
+]

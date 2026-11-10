@@ -1,0 +1,6 @@
+input-rich-client-doc-unit exit 0
+GUARD end input-rich-client-doc-unit: rc=0 secs=7 peak_rss_one_proc=1532MB peak_rss_all=1629MB min_avail=2299MB swap_used_max=1324MB (start 1324MB, moved 0MB)
+	Maximum resident set size (kbytes): 1791604
+input-rich-gen-doc exit 101
+GUARD end input-rich-gen-doc: rc=101 secs=4 peak_rss_one_proc=1351MB peak_rss_all=1433MB min_avail=2372MB swap_used_max=1324MB (start 1324MB, moved 0MB)
+error: could not document `grammers-tl-gen`

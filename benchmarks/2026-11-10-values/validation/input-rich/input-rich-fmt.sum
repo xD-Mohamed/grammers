@@ -1,0 +1,2 @@
+GUARD start input-rich-fmt: avail=3662MB swap_used=1325MB swap_free=2770MB vlimit=4000000
+GUARD end input-rich-fmt: rc=0 secs=0 peak_rss_one_proc=18MB peak_rss_all=35MB min_avail=3660MB swap_used_max=1325MB (start 1325MB, moved 0MB)

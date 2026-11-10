@@ -1,0 +1,14 @@
+    Checking grammers-session v0.10.0 (/root/grammers/grammers-session)
+    Checking grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Checking grammers-client v0.10.0 (/root/grammers/grammers-client)
+error: this lint expectation is unfulfilled
+   --> grammers-client/src/media/media.rs:102:5
+    |
+102 |     clippy::large_enum_variant,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: Keep public variants inline: boxing breaks constructors and adds allocations
+    = note: `-D unfulfilled-lint-expectations` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(unfulfilled_lint_expectations)]`
+
+error: could not compile `grammers-client` (lib) due to 1 previous error

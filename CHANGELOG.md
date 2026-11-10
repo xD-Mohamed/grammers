@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased: smaller rich-message inputs
+
+- `tl::enums::InputRichMessage::{Message, Html, Markdown}` now hold their existing
+  payload structs in `Box`. Requests with no rich message add no allocation;
+  populated rich messages add one. Wire and session formats are unchanged.
+  `tl::functions::messages::SendMessage` shrinks from 920 to 472 B, which also
+  keeps `grammers_session::updates::UpdatesLike` clear of Clippy's
+  `large_enum_variant` without boxing the request of every sent message.
+- Payload struct literals, `.into()`, field access and rich-message builders keep
+  compiling. Direct enum construction must box the payload or use `.into()`;
+  moving out requires `*value`.
+
+  ```rust
+  // before
+  let rich = tl::enums::InputRichMessage::Html(raw);
+  if let tl::enums::InputRichMessage::Html(value) = rich { consume(value); }
+  // after
+  let rich: tl::enums::InputRichMessage = raw.into();
+  if let tl::enums::InputRichMessage::Html(value) = rich { consume(*value); }
+  ```
+
 ## Unreleased: accurate first write timestamps
 
 - `InvocationTracker::sent_at()` preserves the actual precise write time when

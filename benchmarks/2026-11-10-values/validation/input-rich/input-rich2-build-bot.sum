@@ -1,0 +1,5 @@
+GUARD start input-rich2-build-bot: avail=3478MB swap_used=1319MB swap_free=2776MB vlimit=4000000
+GUARD end input-rich2-build-bot: rc=0 secs=26 peak_rss_one_proc=408MB peak_rss_all=479MB min_avail=3227MB swap_used_max=1319MB (start 1319MB, moved 0MB)
+   Compiling grammers-client v0.10.0 (/root/grammers/grammers-client)
+    Finished `release` profile [optimized] target(s) in 25.46s
+  Executable tests/bot_workload.rs (target/release/deps/bot_workload-e073fa60169e44d9)

@@ -1,0 +1,70 @@
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Finished `release` profile [optimized] target(s) in 29.38s
+     Running unittests src/lib.rs (target/release/deps/grammers_tl_types-a6ac14dd26423cbe)
+
+running 18 tests
+test deserialize::borrowed_bytes_tests::borrowed_reads_reject_overflow_and_keep_lossy_string_behavior ... ok
+test deserialize::borrowed_bytes_tests::borrowed_strings_preserve_short_long_payloads_padding_and_positions ... ok
+test deserialize::depth_tests::boxed_input_rich_messages_keep_their_wire_format ... InputRichMessage=16 SendMessage=472
+ok
+test deserialize::depth_tests::boxed_media_leaves_keep_their_wire_format ... ok
+test deserialize::depth_tests::boxed_reply_media_keeps_its_wire_format ... ok
+test deserialize::depth_tests::boxed_updates_keep_wire_format_and_owned_conversions ... ok
+test deserialize::depth_tests::depth_scope_restores_after_unwind ...
+thread 'deserialize::depth_tests::depth_scope_restores_after_unwind' (741) panicked at grammers-tl-types/src/depth_tests.rs:300:9:
+exercise guard cleanup
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ok
+test deserialize::depth_tests::generated_values_are_bounded_on_standard_stack ... ok
+test deserialize::depth_tests::update_types_stay_small_enough_to_move_around ... TL sizes: MessageReplyHeader=336 Message=1608 MessageService=1128 Update=240 Updates=624 Media=304 WebPage=40 Game=8
+ok
+test deserialize::depth_tests::values_boxed_for_size_keep_their_wire_format ... ok
+test deserialize::vector_tests::benchmark_vector_deserialization ... ignored, local release microbenchmark; no network or live performance claim
+test deserialize::vector_tests::vectors_accept_elements_larger_than_initial_reservation_cap ... ok
+test deserialize::vector_tests::vectors_accept_zero_sized_and_zero_byte_elements ... ok
+test deserialize::vector_tests::vectors_drop_completed_elements_on_first_middle_and_last_errors ... ok
+test deserialize::vector_tests::vectors_preserve_constructor_validation ... ok
+test deserialize::vector_tests::vectors_preserve_empty_single_and_small_values ... ok
+test deserialize::vector_tests::vectors_reject_truncation_at_each_element_and_header ... ok
+test deserialize::vector_tests::vectors_reject_unbounded_counts_with_short_input ... ok
+
+test result: ok. 17 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/deps.rs (target/release/deps/deps-19c53caa08aecb16)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests grammers_tl_types
+
+running 24 tests
+test grammers-tl-types/src/deserialize.rs - deserialize::Deserializable::from_bytes (line 209) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::String::deserialize (line 463) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::Vec<T>::deserialize (line 418) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::Vec<u8>::deserialize (line 506) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::[u8;16]::deserialize (line 326) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::[u8;32]::deserialize (line 348) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::bool::deserialize (line 230) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::crate::RawVec<T>::deserialize (line 444) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::f64::deserialize (line 371) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::i32::deserialize (line 255) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::i64::deserialize (line 302) ... ok
+test grammers-tl-types/src/deserialize.rs - deserialize::u32::deserialize (line 279) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::&'_[u8]::serialize (line 287) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::String::serialize (line 226) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::Vec<T>::serialize (line 184) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::Vec<u8>::serialize (line 269) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::[u8;16]::serialize (line 121) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::[u8;32]::serialize (line 140) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::bool::serialize (line 37) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::crate::RawVec<T>::serialize (line 207) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::f64::serialize (line 161) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::i32::serialize (line 57) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::i64::serialize (line 100) ... ok
+test grammers-tl-types/src/serialize.rs - serialize::u32::serialize (line 79) ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+all doctests ran in 0.29s; merged doctests compilation took 0.27s

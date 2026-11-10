@@ -1,0 +1,164 @@
+completed pair 1/14
+completed pair 2/14
+completed pair 3/14
+completed pair 4/14
+completed pair 5/14
+completed pair 6/14
+completed pair 7/14
+completed pair 8/14
+completed pair 9/14
+completed pair 10/14
+completed pair 11/14
+completed pair 12/14
+completed pair 13/14
+completed pair 14/14
+{
+  "Plain": {
+    "rate": {
+      "baseline_median": 87701.0,
+      "candidate_median": 92500.0,
+      "paired_delta_percent": 6.013534989027058,
+      "bootstrap_95_percent": [
+        2.610708719171173,
+        7.837223934919457
+      ]
+    },
+    "user_us": {
+      "baseline_median": 4.265000000000001,
+      "candidate_median": 4.0,
+      "paired_delta_percent": -5.827294685990325,
+      "bootstrap_95_percent": [
+        -11.653605015673978,
+        4.5000512899420535
+      ]
+    },
+    "sys_us": {
+      "baseline_median": 7.14,
+      "candidate_median": 6.795,
+      "paired_delta_percent": -7.456097856364302,
+      "bootstrap_95_percent": [
+        -8.807588075880757,
+        -4.005524861878451
+      ]
+    },
+    "cpu_us": {
+      "baseline_median": 11.364999999999998,
+      "candidate_median": 10.795000000000002,
+      "paired_delta_percent": -5.713078889225831,
+      "bootstrap_95_percent": [
+        -7.130584192439859,
+        -2.499999999999991
+      ]
+    },
+    "p50_us": {
+      "baseline_median": 170.2,
+      "candidate_median": 165.8,
+      "paired_delta_percent": -4.4029388827538485,
+      "bootstrap_95_percent": [
+        -7.22819593787335,
+        -0.8689808513313302
+      ]
+    },
+    "p95_us": {
+      "baseline_median": 292.95,
+      "candidate_median": 277.3,
+      "paired_delta_percent": -5.505597977964083,
+      "bootstrap_95_percent": [
+        -8.874756924731791,
+        -2.419354838709664
+      ]
+    },
+    "p99_us": {
+      "baseline_median": 351.04999999999995,
+      "candidate_median": 330.6,
+      "paired_delta_percent": -4.803575641894114,
+      "bootstrap_95_percent": [
+        -8.877242987480106,
+        -2.3201856148491906
+      ]
+    },
+    "process_rss_kib": {
+      "baseline_median": 11324.0,
+      "candidate_median": 11324.0,
+      "paired_delta_percent": -0.017661603673613246,
+      "bootstrap_95_percent": [
+        -0.10587615460497246,
+        0.08832050447883377
+      ]
+    }
+  },
+  "Gzip": {
+    "rate": {
+      "baseline_median": 87734.0,
+      "candidate_median": 88177.0,
+      "paired_delta_percent": -1.6557726876666734,
+      "bootstrap_95_percent": [
+        -2.4505919775840934,
+        4.311442394499876
+      ]
+    },
+    "user_us": {
+      "baseline_median": 4.675,
+      "candidate_median": 4.71,
+      "paired_delta_percent": 1.403229893795932,
+      "bootstrap_95_percent": [
+        -4.255053010239735,
+        5.251641137855567
+      ]
+    },
+    "sys_us": {
+      "baseline_median": 6.65,
+      "candidate_median": 6.654999999999999,
+      "paired_delta_percent": 2.3192448451307746,
+      "bootstrap_95_percent": [
+        -6.184896394261835,
+        5.233419081701419
+      ]
+    },
+    "cpu_us": {
+      "baseline_median": 11.375,
+      "candidate_median": 11.33,
+      "paired_delta_percent": 1.4110090767488814,
+      "bootstrap_95_percent": [
+        -4.257328245229175,
+        3.222836095764281
+      ]
+    },
+    "p50_us": {
+      "baseline_median": 158.5,
+      "candidate_median": 160.35,
+      "paired_delta_percent": 1.4711184026894197,
+      "bootstrap_95_percent": [
+        -2.6967788347783515,
+        3.8025350233488853
+      ]
+    },
+    "p95_us": {
+      "baseline_median": 305.75,
+      "candidate_median": 306.05,
+      "paired_delta_percent": 1.1891955564641288,
+      "bootstrap_95_percent": [
+        -4.664536741214064,
+        3.4943963617218743
+      ]
+    },
+    "p99_us": {
+      "baseline_median": 360.8,
+      "candidate_median": 365.35,
+      "paired_delta_percent": 1.8413264478485902,
+      "bootstrap_95_percent": [
+        -6.128759171223097,
+        7.673267326732658
+      ]
+    },
+    "process_rss_kib": {
+      "baseline_median": 11324.0,
+      "candidate_median": 11324.0,
+      "paired_delta_percent": -0.017661603673613246,
+      "bootstrap_95_percent": [
+        -0.10593220338983578,
+        0.08832050447883377
+      ]
+    }
+  }
+}

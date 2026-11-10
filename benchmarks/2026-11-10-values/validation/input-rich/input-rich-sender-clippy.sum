@@ -1,0 +1,10 @@
+GUARD start input-rich-sender-clippy: avail=3615MB swap_used=1325MB swap_free=2770MB vlimit=4000000
+GUARD end input-rich-sender-clippy: rc=0 secs=20 peak_rss_one_proc=1155MB peak_rss_all=1274MB min_avail=2567MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+   Compiling grammers-tl-parser v1.2.2 (/root/grammers/grammers-tl-parser)
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Checking grammers-crypto v0.10.0 (/root/grammers/grammers-crypto)
+    Checking grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+    Checking grammers-session v0.10.0 (/root/grammers/grammers-session)
+    Checking grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.98s

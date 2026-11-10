@@ -1,0 +1,84 @@
+[
+  [
+    "client-doc-unit",
+    [
+      "/usr/bin/time",
+      "-v",
+      "cargo",
+      "doc",
+      "--locked",
+      "-j",
+      "1",
+      "-p",
+      "grammers-client",
+      "--all-features",
+      "--no-deps"
+    ],
+    {
+      "GUARD_VLIMIT": "none",
+      "GUARD_NICE": "19",
+      "GUARD_MIN_AVAIL": "300",
+      "GUARD_MIN_AVAIL_SECS": "8",
+      "GUARD_MIN_SWAPFREE": "1200",
+      "GUARD_MAX_SWAP_GROWTH": "2000",
+      "RUSTDOCFLAGS": "-D warnings"
+    }
+  ],
+  [
+    "gen-doc",
+    [
+      "cargo",
+      "doc",
+      "--locked",
+      "-j",
+      "1",
+      "-p",
+      "grammers-tl-gen",
+      "--all-features",
+      "--no-deps"
+    ],
+    {
+      "RUSTDOCFLAGS": "-D warnings"
+    }
+  ],
+  [
+    "build-loop",
+    [
+      "cargo",
+      "test",
+      "--locked",
+      "--release",
+      "-j",
+      "1",
+      "-p",
+      "grammers-mtsender",
+      "--test",
+      "loopback",
+      "--no-run"
+    ],
+    {
+      "RUSTDOCFLAGS": "-D warnings"
+    }
+  ],
+  [
+    "build-bot",
+    [
+      "cargo",
+      "test",
+      "--locked",
+      "--release",
+      "-j",
+      "1",
+      "-p",
+      "grammers-client",
+      "--features",
+      "session-file",
+      "--test",
+      "bot_workload",
+      "--no-run"
+    ],
+    {
+      "RUSTDOCFLAGS": "-D warnings"
+    }
+  ]
+]

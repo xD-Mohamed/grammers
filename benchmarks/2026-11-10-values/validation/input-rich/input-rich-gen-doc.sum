@@ -1,0 +1,27 @@
+GUARD start input-rich-gen-doc: avail=3626MB swap_used=1324MB swap_free=2771MB vlimit=4000000
+GUARD end input-rich-gen-doc: rc=101 secs=4 peak_rss_one_proc=1351MB peak_rss_all=1433MB min_avail=2372MB swap_used_max=1324MB (start 1324MB, moved 0MB)
+   2:     0x7f55f025ce2c - <std[68c81ae915296b05]::sys::stdio::unix::Stderr as core[efd5e57aef94d71e]::io::write::Write>::write_fmt
+   3:     0x7f55ee9134d8 - std[68c81ae915296b05]::alloc::default_alloc_error_hook
+   4:     0x7f55ee8f2806 - std[68c81ae915296b05]::alloc::rust_oom::{closure#0}
+   5:     0x7f55ee8e9869 - std[68c81ae915296b05]::sys::backtrace::__rust_end_short_backtrace::<std[68c81ae915296b05]::alloc::rust_oom::{closure#0}, !>
+   6:     0x7f55ee91355a - std[68c81ae915296b05]::alloc::rust_oom
+   7:     0x7f55ee8f4543 - __rustc[3d2f79520d6fa809]::__rust_alloc_error_handler
+   8:     0x7f55eb0e15b1 - alloc[c23e483dde3f7cfb]::alloc::handle_alloc_error
+   9:     0x7f55eb0fe67c - alloc[c23e483dde3f7cfb]::raw_vec::handle_error
+  10:     0x564820a80f9c - <rustdoc[6234e183190cf48a]::html::render::search_index::SerializedSearchIndex>::write_to
+  11:     0x564820a4ef85 - rustdoc[6234e183190cf48a]::html::render::write_shared::write_rendered_cross_crate_info
+  12:     0x564820bbc8c9 - rustdoc[6234e183190cf48a]::html::render::write_shared::write_not_crate_specific
+  13:     0x564820a9148b - rustdoc[6234e183190cf48a]::html::render::write_shared::write_shared
+  14:     0x564820bc8969 - <rustdoc[6234e183190cf48a]::html::render::context::Context>::init
+  15:     0x564820bc2087 - rustdoc[6234e183190cf48a]::main_args::{closure#2}::{closure#0}
+  16:     0x564820bcf61a - rustc_interface[8fa331b5442ffbb0]::interface::run_compiler::<(), rustdoc[6234e183190cf48a]::main_args::{closure#2}>::{closure#2}
+  17:     0x564820bcd103 - std[68c81ae915296b05]::sys::backtrace::__rust_begin_short_backtrace::<rustc_interface[8fa331b5442ffbb0]::util::run_in_thread_with_globals<rustc_interface[8fa331b5442ffbb0]::util::run_in_thread_pool_with_globals<rustc_interface[8fa331b5442ffbb0]::interface::run_compiler<(), rustdoc[6234e183190cf48a]::main_args::{closure#2}>::{closure#2}, ()>::{closure#0}, ()>::{closure#0}::{closure#0}, ()>
+  18:     0x564820bcce6f - <std[68c81ae915296b05]::thread::lifecycle::spawn_unchecked<rustc_interface[8fa331b5442ffbb0]::util::run_in_thread_with_globals<rustc_interface[8fa331b5442ffbb0]::util::run_in_thread_pool_with_globals<rustc_interface[8fa331b5442ffbb0]::interface::run_compiler<(), rustdoc[6234e183190cf48a]::main_args::{closure#2}>::{closure#2}, ()>::{closure#0}, ()>::{closure#0}::{closure#0}, ()>::{closure#1} as core[efd5e57aef94d71e]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+  19:     0x7f55f040c607 - <std[68c81ae915296b05]::sys::thread::unix::Thread>::new::thread_start
+  20:     0x7f55e9836a83 - <unknown>
+  21:     0x7f55e98c88e0 - <unknown>
+  22:                0x0 - <unknown>
+error: could not document `grammers-tl-gen`
+
+Caused by:
+  process didn't exit successfully: `/root/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustdoc --edition=2024 --crate-type lib --crate-name grammers_tl_gen grammers-tl-gen/src/lib.rs -o /root/grammers/target/doc --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat -C metadata=2419ad62c4067771 -L dependency=/root/grammers/target/debug/deps --extern grammers_tl_parser=/root/grammers/target/debug/deps/libgrammers_tl_parser-6fecfad383fbbf78.rmeta -D warnings --crate-version 0.10.0` (signal: 6, S ...

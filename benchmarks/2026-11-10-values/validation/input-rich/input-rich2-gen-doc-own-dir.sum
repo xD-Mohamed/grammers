@@ -1,0 +1,8 @@
+GUARD start input-rich2-gen-doc-own-dir: avail=3463MB swap_used=1319MB swap_free=2776MB vlimit=4000000
+GUARD end input-rich2-gen-doc-own-dir: rc=0 secs=0 peak_rss_one_proc=10MB peak_rss_all=19MB min_avail=3462MB swap_used_max=1319MB (start 1319MB, moved 0MB)
+   Compiling crc32fast v1.5.3
+    Checking cfg-if v1.0.5
+    Checking grammers-tl-parser v1.2.2 (/root/grammers/grammers-tl-parser)
+ Documenting grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.47s
+   Generated /tmp/claude-0/de27/target-gendoc/doc/grammers_tl_gen/index.html

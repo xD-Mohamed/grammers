@@ -1,0 +1,5 @@
+GUARD start input-rich-types-clippy: avail=3618MB swap_used=1325MB swap_free=2770MB vlimit=4000000
+GUARD end input-rich-types-clippy: rc=0 secs=15 peak_rss_one_proc=1106MB peak_rss_all=1211MB min_avail=2633MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 14.35s
