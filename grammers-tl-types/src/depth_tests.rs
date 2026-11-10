@@ -147,6 +147,37 @@ fn realistic_instant_view() -> Vec<u8> {
     message_update(web_page_media(details))
 }
 
+// `wallet.nftItem`, whose optional `gift` is held in a `Box` for size.
+fn nft_item(with_gift: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    id::<types::wallet::NftItem>(&mut bytes);
+    (if with_gift { 1u32 << 9 } else { 0 }).serialize(&mut bytes);
+    b"address".as_slice().serialize(&mut bytes);
+    b"owner".as_slice().serialize(&mut bytes);
+    b"1".as_slice().serialize(&mut bytes);
+    if with_gift {
+        id::<types::StarGift>(&mut bytes);
+        0u32.serialize(&mut bytes);
+        7i64.serialize(&mut bytes);
+        id::<types::DocumentEmpty>(&mut bytes);
+        2i64.serialize(&mut bytes);
+        3i64.serialize(&mut bytes);
+        4i64.serialize(&mut bytes);
+    }
+    bytes
+}
+
+// `wallet.card`, boxed for size, holding one item as its background.
+fn wallet_card(item: Vec<u8>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    id::<types::wallet::Card>(&mut bytes);
+    (1u32 << 1).serialize(&mut bytes);
+    bytes.extend(item);
+    b"address".as_slice().serialize(&mut bytes);
+    5i64.serialize(&mut bytes);
+    bytes
+}
+
 fn round_trip<T: Deserializable + Serializable + Clone + std::fmt::Debug>(bytes: &[u8]) {
     let mut cursor = Cursor::from_slice(bytes);
     let value = T::deserialize(&mut cursor).unwrap();
@@ -272,12 +303,46 @@ fn depth_scope_restores_after_unwind() {
     assert_eq!(cursor.depth, 0);
 }
 
+// Boxing for size changes where a value lives, never its bytes: with and without the
+// boxed field, inside the boxed definition, and when the input ends inside either.
+#[test]
+fn values_boxed_for_size_keep_their_wire_format() {
+    round_trip::<enums::wallet::NftItem>(&nft_item(false));
+    round_trip::<enums::wallet::NftItem>(&nft_item(true));
+    let enums::wallet::NftItem::Item(item) =
+        enums::wallet::NftItem::from_bytes(&nft_item(true)).unwrap();
+    assert!(matches!(item.gift.as_deref(), Some(enums::StarGift::Gift(gift)) if gift.id == 7));
+    let enums::wallet::NftItem::Item(item) =
+        enums::wallet::NftItem::from_bytes(&nft_item(false)).unwrap();
+    assert!(item.gift.is_none());
+
+    let card = wallet_card(nft_item(true));
+    round_trip::<enums::wallet::Card>(&card);
+    let enums::wallet::Card::Card(decoded) = enums::wallet::Card::from_bytes(&card).unwrap();
+    assert_eq!(decoded.balance, 5);
+    assert!(decoded.bg_nft_item.is_some());
+    // A value built by hand takes the same form on the wire as a decoded one.
+    let rebuilt: enums::wallet::Card = (*decoded).clone().into();
+    assert_eq!(rebuilt.to_bytes(), card);
+    for end in [card.len() - 4, card.len() - 20, 40, 12] {
+        assert_error::<enums::wallet::Card>(&card[..end], Error::UnexpectedEof);
+    }
+}
+
 // These values move through every step of the update path. Holding the largest variants
 // inline made a single update over 5 KiB, so a schema change undoing this must be noticed.
+// Layer 233 measured 1,264 B with `wallet.card` and `wallet.nftItem`'s `gift` inline, and
+// 760 B with the first boxed and the second a boxed field.
 #[test]
 fn update_types_stay_small_enough_to_move_around() {
     assert!(size_of::<enums::Message>() <= 32);
     assert!(size_of::<enums::EphemeralMessage>() <= 32);
+    assert!(size_of::<enums::wallet::Card>() <= 8);
+    assert!(
+        size_of::<types::UpdateSentWalletTransaction>() <= 768,
+        "{}",
+        size_of::<types::UpdateSentWalletTransaction>()
+    );
     assert!(
         size_of::<enums::Update>() <= 1024,
         "{}",

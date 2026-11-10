@@ -387,6 +387,7 @@ fn user(id: i64, photo: bool) -> tl::enums::User {
         bot_can_manage_bots: false,
         bot_guestchat: false,
         bot_guard: false,
+        bot_forum_sidebar: false,
         id,
         access_hash: Some(id.wrapping_mul(0x1e37_79b9_7f4a_7c15)),
         first_name: Some(format!("First{id}")),

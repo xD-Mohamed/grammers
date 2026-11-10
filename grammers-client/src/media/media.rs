@@ -847,6 +847,7 @@ impl Media {
             M::PaidMedia(_) => None,
             M::ToDo(_) => None,
             M::VideoStream(_) => None,
+            M::Widget(_) => None,
         }
     }
 

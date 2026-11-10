@@ -157,3 +157,43 @@ fn generic_bytes_with_serde_bytes() -> io::Result<()> {
     assert!(types.contains("pub stripped_thumb: Option<Vec<u8>>,"));
     Ok(())
 }
+
+#[test]
+fn namespaced_definitions_are_boxed_for_size() -> io::Result<()> {
+    let definitions = get_definitions(
+        "
+        wallet.card#8ed043b1 address:string balance:long = wallet.Card;
+        card#11111111 address:string = Card;
+    ",
+    );
+    let (_, _, _, enums) = gen_rust_code(&definitions)?;
+    eprintln!("{enums}");
+
+    // Matched by full name: the same name outside its namespace stays inline.
+    assert!(enums.contains("Card(Box<crate::types::wallet::Card>),"));
+    assert!(enums.contains("Card(crate::types::Card),"));
+    assert!(enums.contains("Self::Card(Box::new(crate::types::wallet::Card::deserialize(buf)?)),"));
+    Ok(())
+}
+
+#[test]
+fn fields_boxed_for_size_keep_their_variant_inline() -> io::Result<()> {
+    let definitions = get_definitions(
+        "
+        starGift#313a9547 id:long = StarGift;
+        wallet.nftItem#173dfaf3 flags:# name:flags.1?string gift:flags.9?StarGift = wallet.NftItem;
+        nftItem#22222222 flags:# gift:flags.9?StarGift = NftItem;
+    ",
+    );
+    let (_, types, _, enums) = gen_rust_code(&definitions)?;
+    eprintln!("{types}");
+
+    assert!(types.contains("pub gift: Option<Box<crate::enums::StarGift>>,"));
+    assert!(types.contains("Some(Box::new(crate::enums::StarGift::deserialize(buf)?))"));
+    // Other fields of that definition, and the same field elsewhere, are untouched.
+    assert!(types.contains("pub name: Option<String>,"));
+    assert!(types.contains("pub gift: Option<crate::enums::StarGift>,"));
+    // The definition itself is not boxed: existing matches on the variant keep working.
+    assert!(enums.contains("Item(crate::types::wallet::NftItem),"));
+    Ok(())
+}

@@ -10,15 +10,31 @@ use std::collections::{HashMap, HashSet};
 
 use grammers_tl_parser::tl::{Category, Definition, Parameter, ParameterType, Type};
 
-/// Definitions boxed although they do not recurse.
+/// Definitions boxed although they do not recurse, by full name (`namespace.name`).
 ///
 /// Holding them inline makes `Message` over 2.5 KiB, `Update` over 5 KiB and every
 /// value containing those a large copy at each move through the update path.
-const BOXED_FOR_SIZE: [&str; 3] = ["message", "messageService", "ephemeralMessage"];
+/// `wallet.card` (new in layer 233) sits in three bot widget updates: inline it made
+/// `Update` 1,264 B, and boxed it only allocates when an update carries a card.
+const BOXED_FOR_SIZE: [&str; 4] = [
+    "message",
+    "messageService",
+    "ephemeralMessage",
+    "wallet.card",
+];
+
+/// Optional fields held as `Option<Box<T>>`, by definition full name and field name.
+///
+/// For a large field added to a definition that already existed: boxing the field
+/// leaves the definition's enum variant, and with it existing callers, unchanged.
+/// `wallet.nftItem` gained `gift` in layer 233, 432 B inline, and it reaches `Update`
+/// through `updateSentWalletTransaction`.
+const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 1] = [("wallet.nftItem", "gift")];
 
 /// Additional metadata required by several parts of the generation.
 pub(crate) struct Metadata<'a> {
     boxed_defs: HashSet<u32>,
+    boxed_fields: HashSet<(u32, &'a str)>,
     defs_with_type: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Definition>>,
     unused_flags: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Parameter>>,
 }
@@ -27,6 +43,7 @@ impl<'a> Metadata<'a> {
     pub fn new(definitions: &'a [Definition]) -> Self {
         let mut metadata = Self {
             boxed_defs: HashSet::new(),
+            boxed_fields: HashSet::new(),
             defs_with_type: HashMap::new(),
             unused_flags: HashMap::new(),
         };
@@ -69,12 +86,29 @@ impl<'a> Metadata<'a> {
                 metadata.boxed_defs.insert(d.id);
             }
         });
-        type_definitions
-            .iter()
-            .filter(|d| d.namespace.is_empty() && BOXED_FOR_SIZE.contains(&d.name.as_str()))
-            .for_each(|d| {
+        type_definitions.iter().for_each(|d| {
+            let full_name = d.full_name();
+            if BOXED_FOR_SIZE.contains(&full_name.as_str()) {
                 metadata.boxed_defs.insert(d.id);
-            });
+            }
+            for (_, field) in BOXED_FIELDS_FOR_SIZE
+                .iter()
+                .filter(|(def, _)| *def == full_name)
+            {
+                let param = d
+                    .params
+                    .iter()
+                    .find(|p| p.name == *field)
+                    .unwrap_or_else(|| panic!("{full_name} has no field {field} to box"));
+                // Only optional values: `None` then costs a pointer, and the accessors
+                // generated for fields shared by every variant never cover optional ones.
+                assert!(
+                    matches!(&param.ty, ParameterType::Normal { ty, flag: Some(_) } if ty.name != "true"),
+                    "{full_name}.{field} must be an optional value to be boxed"
+                );
+                metadata.boxed_fields.insert((d.id, param.name.as_str()));
+            }
+        });
 
         metadata
     }
@@ -91,6 +125,12 @@ impl<'a> Metadata<'a> {
     /// itself (meaning it recurses), or it is one of [`BOXED_FOR_SIZE`].
     pub fn is_boxed_def(&self, def: &Definition) -> bool {
         self.boxed_defs.contains(&def.id)
+    }
+
+    /// Returns `true` if this optional parameter of `def` is held as `Option<Box<T>>`:
+    /// it is one of [`BOXED_FIELDS_FOR_SIZE`].
+    pub fn is_boxed_field(&self, def: &Definition, param: &Parameter) -> bool {
+        self.boxed_fields.contains(&(def.id, param.name.as_str()))
     }
 
     pub fn defs_with_type(&self, ty: &'a Type) -> &Vec<&Definition> {

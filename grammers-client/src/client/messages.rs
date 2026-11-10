@@ -228,6 +228,7 @@ fn input_reply_to(reply_to_msg_id: i32) -> tl::enums::InputReplyTo {
         monoforum_peer_id: None,
         todo_item_id: None,
         poll_option: None,
+        quote_rich: None,
     }
     .into()
 }

@@ -102,6 +102,7 @@ impl Message {
                         quote_offset: None,
                         todo_item_id: None,
                         poll_option: None,
+                        quote_rich: None,
                     }
                     .into()
                 }),

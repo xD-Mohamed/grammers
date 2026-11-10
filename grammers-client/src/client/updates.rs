@@ -366,6 +366,7 @@ mod tests {
             bot_can_manage_bots: false,
             bot_guestchat: false,
             bot_guard: false,
+            bot_forum_sidebar: false,
             id,
             access_hash: None,
             first_name: None,

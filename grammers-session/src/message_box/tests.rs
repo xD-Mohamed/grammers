@@ -1657,6 +1657,90 @@ fn test_process_socket_updates_flow_common_ok() {
     );
 }
 
+fn widget_data(peer: tl::enums::Peer, pts: i32) -> tl::enums::Update {
+    tl::enums::Update::MessageWidgetData(tl::types::UpdateMessageWidgetData {
+        peer,
+        msg_id: 1,
+        public_data: None,
+        public_data_hash: None,
+        chat_data: Some("state".into()),
+        pts,
+        pts_count: 1,
+    })
+}
+
+fn one_update(update: tl::enums::Update) -> UpdatesLike {
+    UpdatesLike::Updates(tl::enums::Updates::Updates(tl::types::Updates {
+        updates: vec![update],
+        users: Vec::new(),
+        chats: Vec::new(),
+        date: NO_DATE,
+        seq: NO_SEQ,
+    }))
+}
+
+// Layer 233. TDLib, Telegram Desktop and Telegram for Android apply this update to the
+// common sequence; treated as an update without one, each would be followed by a gap.
+#[test]
+fn widget_data_advances_the_common_sequence() {
+    reset_time();
+    let mut boxes = MessageBoxes::new();
+    boxes.set_state(state(12, 34, 56, 78));
+    let user = tl::enums::Peer::User(tl::types::PeerUser { user_id: 1 });
+    let chat = tl::enums::Peer::Chat(tl::types::PeerChat { chat_id: 2 });
+
+    for (peer, pts) in [(user.clone(), 57), (chat, 58)] {
+        let (delivered, _, _) = boxes
+            .process_updates(one_update(widget_data(peer, pts)))
+            .unwrap();
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0].1.message_box, Some(MessageBox::Common { pts }));
+        assert_eq!(boxes.session_state().pts, pts);
+    }
+    // The update after it continues the same sequence: no gap and no difference request.
+    assert_eq!(
+        boxes.process_updates(updates(NO_DATE, NO_SEQ, 59)),
+        updates_ok(12, 34, 59)
+    );
+    assert_eq!(boxes.get_difference(), None);
+
+    // One already applied is not delivered again.
+    let (delivered, _, _) = boxes
+        .process_updates(one_update(widget_data(user.clone(), 58)))
+        .unwrap();
+    assert!(delivered.is_empty());
+    assert_eq!(boxes.session_state().pts, 59);
+
+    // One ahead of the sequence waits as a possible gap and is recovered by a difference.
+    let (delivered, _, _) = boxes
+        .process_updates(one_update(widget_data(user, 61)))
+        .unwrap();
+    assert!(delivered.is_empty());
+    assert_eq!(boxes.session_state().pts, 59);
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    assert_eq!(boxes.get_difference(), Some(get_difference(12, 59, 78)));
+}
+
+// The schema has no channel form of the update and no client applies it to a channel's
+// sequence. TDLib rejects one naming a channel; here that asks for the account difference
+// without moving any position, as for `updatePinnedMessages`.
+#[test]
+fn widget_data_for_a_channel_is_rejected_without_advancing() {
+    reset_time();
+    let mut boxes = MessageBoxes::new();
+    boxes.set_state(state(12, 34, 56, 78));
+    let channel = tl::enums::Peer::Channel(tl::types::PeerChannel { channel_id: 3 });
+
+    assert_eq!(
+        boxes.process_updates(one_update(widget_data(channel, 57))),
+        Err(Gap)
+    );
+    assert_eq!(boxes.session_state().pts, 56);
+    assert!(boxes.session_state().channels.is_empty());
+    assert_eq!(boxes.get_difference(), Some(get_difference(12, 56, 78)));
+}
+
 #[test]
 fn test_process_socket_updates_flow_common_seq_gap() {
     reset_time();

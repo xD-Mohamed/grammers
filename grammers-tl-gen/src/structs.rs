@@ -57,7 +57,7 @@ fn write_struct<W: Write>(
     file: &mut W,
     indent: &str,
     def: &Definition,
-    _metadata: &Metadata,
+    metadata: &Metadata,
     config: &Config,
 ) -> io::Result<()> {
     // Define struct
@@ -107,13 +107,23 @@ fn write_struct<W: Write>(
                 if config.impl_serde && ty.name.as_str() == "bytes" {
                     writeln!(file, "{}    #[serde(with = \"serde_bytes\")]", indent)?;
                 }
-                writeln!(
-                    file,
-                    "{}    pub {}: {},",
-                    indent,
-                    rustifier::parameters::attr_name(param),
-                    rustifier::parameters::qual_name(param),
-                )?;
+                if metadata.is_boxed_field(def, param) {
+                    writeln!(
+                        file,
+                        "{}    pub {}: Option<Box<{}>>,",
+                        indent,
+                        rustifier::parameters::attr_name(param),
+                        rustifier::types::qual_name(ty),
+                    )?;
+                } else {
+                    writeln!(
+                        file,
+                        "{}    pub {}: {},",
+                        indent,
+                        rustifier::parameters::attr_name(param),
+                        rustifier::parameters::qual_name(param),
+                    )?;
+                }
             }
         }
     }
@@ -322,6 +332,10 @@ fn write_deserializable<W: Write>(
                         writeln!(file, "if ({} & {}) != 0 {{", flag.name, 1 << flag.index)?;
                         write!(file, "{indent}            Some(")?;
                     }
+                    let boxed = metadata.is_boxed_field(def, param);
+                    if boxed {
+                        write!(file, "Box::new(")?;
+                    }
                     if ty.generic_ref {
                         write!(file, "{}::deserialize(buf)?", ty.name)?;
                     } else {
@@ -330,6 +344,9 @@ fn write_deserializable<W: Write>(
                             "{}::deserialize(buf)?",
                             rustifier::types::item_path(ty)
                         )?;
+                    }
+                    if boxed {
+                        write!(file, ")")?;
                     }
                     if flag.is_some() {
                         writeln!(file, ")")?;

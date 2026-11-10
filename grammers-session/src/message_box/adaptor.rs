@@ -299,6 +299,7 @@ pub(super) fn adapt(updates: UpdatesLike) -> Result<tl::types::UpdatesCombined, 
                                         quote_offset: i.quote_offset,
                                         todo_item_id: None,
                                         poll_option: None,
+                                        quote_rich: i.quote_rich,
                                     },
                                 ))
                             }
@@ -487,6 +488,7 @@ impl PtsInfo {
             ReadHistoryInbox(u) => !matches!(u.peer, tl::enums::Peer::Channel(_)),
             ReadHistoryOutbox(u) => !matches!(u.peer, tl::enums::Peer::Channel(_)),
             PinnedMessages(u) => !matches!(u.peer, tl::enums::Peer::Channel(_)),
+            MessageWidgetData(u) => !matches!(u.peer, tl::enums::Peer::Channel(_)),
             NewChannelMessage(u) => message_peer(&u.message)
                 .is_none_or(|peer| matches!(peer, tl::enums::Peer::Channel(_))),
             EditChannelMessage(u) => message_peer(&u.message)
@@ -766,6 +768,21 @@ impl PtsInfo {
                 count: 1, // TODO unsure if 1
             }),
             PaidReactionPrivacy(_) => None,
+            // Layer 233. These five carry neither `pts` nor `qts`.
+            EditForumTopic(_) => None,
+            BotWidgetQuery(_) => None,
+            InlineBotWidgetQuery(_) => None,
+            BotWidgetCopyQuery(_) => None,
+            TranscribedAudioFile(_) => None,
+            // The common sequence, like `updatePinnedMessages`: TDLib (`is_pts_update`),
+            // Telegram Desktop (`updateAndApply`) and Telegram for Android (`getUpdateType`
+            // 0) all apply it there, and the schema has no channel form of it. A channel
+            // `peer` is rejected by `valid_update`, as TDLib's `check_pts_update` does.
+            MessageWidgetData(u) => Some(Self {
+                key: Key::Common,
+                pts: u.pts,
+                count: u.pts_count,
+            }),
             _ => None,
         }
     }
