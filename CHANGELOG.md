@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased: accurate first write timestamps
+
+- `InvocationTracker::sent_at()` preserves the actual precise write time when
+  the first concurrent write reports arrive out of order. Previously, a later
+  write reported first could become the shared timestamp origin and make an
+  earlier write appear to have happened at that later time. The origin is now
+  initialized before returning the first tracked permit. This adds one initial
+  clock reading per process; timestamps remain precise and require no API changes.
+
 ## Unreleased: smaller webpage and game values
 
 - `tl::enums::WebPage::Page` and `tl::enums::Game::Game` now hold their existing

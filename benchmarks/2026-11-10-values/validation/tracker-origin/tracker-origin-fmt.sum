@@ -1,0 +1,2 @@
+GUARD start tracker-origin-fmt: avail=3642MB swap_used=1326MB swap_free=2769MB vlimit=4000000
+GUARD end tracker-origin-fmt: rc=0 secs=1 peak_rss_one_proc=57MB peak_rss_all=94MB min_avail=3620MB swap_used_max=1326MB (start 1326MB, moved 0MB)

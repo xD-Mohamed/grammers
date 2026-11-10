@@ -1,0 +1,8 @@
+tracker-origin-final-clippy exit 0
+GUARD end tracker-origin-final-clippy: rc=0 secs=18 peak_rss_one_proc=1138MB peak_rss_all=1258MB min_avail=2545MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+tracker-origin-final-doc exit 0
+GUARD end tracker-origin-final-doc: rc=0 secs=19 peak_rss_one_proc=1526MB peak_rss_all=1618MB min_avail=2300MB swap_used_max=1326MB (start 1325MB, moved 1MB)
+tracker-origin-final-build-bot exit 0
+GUARD end tracker-origin-final-build-bot: rc=0 secs=57 peak_rss_one_proc=408MB peak_rss_all=497MB min_avail=3389MB swap_used_max=1326MB (start 1326MB, moved 0MB)
+tracker-origin-final-build-loop exit 0
+GUARD end tracker-origin-final-build-loop: rc=0 secs=30 peak_rss_one_proc=311MB peak_rss_all=398MB min_avail=1993MB swap_used_max=1326MB (start 1326MB, moved 0MB)

@@ -1,0 +1,9 @@
+GUARD start tracker-origin-final-doc: avail=3626MB swap_used=1325MB swap_free=2770MB vlimit=4000000
+GUARD end tracker-origin-final-doc: rc=0 secs=19 peak_rss_one_proc=1526MB peak_rss_all=1618MB min_avail=2300MB swap_used_max=1326MB (start 1325MB, moved 1MB)
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Checking grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+    Checking grammers-session v0.10.0 (/root/grammers/grammers-session)
+ Documenting grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.79s
+   Generated /root/grammers/target/doc/grammers_mtsender/index.html

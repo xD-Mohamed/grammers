@@ -1,0 +1,39 @@
+{
+  "base": "02f0df0",
+  "negative_control": "tracker-origin-red deliberately fails before the fix",
+  "clippy_scope": "sender-only --no-deps passes; ordinary command blocked by pre-existing dependency enum-size lint, next step",
+  "source_sha256": {
+    "grammers-mtsender/src/invocation_tracker.rs": "84551aec9e0483fce288d477d80a3aaec1692fc1c41dd36e27f13688483d96d7",
+    "CHANGELOG.md": "52c3ecd2c0bb9887be54e733900d826d98c9d6e2564ee0ab897238134122ed48"
+  },
+  "binaries": {
+    "origin-fixed-bot": "ffa62cf17447a524c2ff911b611912fd60cba68391669b5694e98766dc4c81e7",
+    "origin-fixed-loopback": "7aedd63b61f5aa73adc3fd66b5d9a17df7a2bd853fb8262fc60d55dfcf82057e"
+  },
+  "files": {
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-verify.json": "efafc8f8626e8f92cee73042aee4f0ac9648a61fe5a1acd63feac53479832a3b",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-clippy.sum": "1b32778d2f493a7ae8e899b9f684abc48e90057e59a62aeb2d72f8bc156e793d",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-final-doc.log": "8d54ea6f8c5b75a7733aba8a7c7529b24baf2b7a4a2855b0ee4c6a5becd82a21",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-final-verify.sum": "a4c1822fa0813348480ffc2131f37543902cda35236613b1acd7206f669dac2a",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/review.txt": "11387dab321a979d195efca8c101c09cc9fce2503c12acd327859083f8eaad6f",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-clippy.log": "cc2c6b9ac11241a55a0ca03e160c9d3362d1816acee402a4b1599d6933b0f1b8",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-tests.sum": "fa09a9d01dcfe63dd88ef6f34332f1c620168ec65e9937aae956e103c74d454d",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-final-build-loop.sum": "6ea6fd3a24a3e4e98c36318699a23d386bb7a49746c465b2df262de053f2854a",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-tests.log": "9df85e19e03de4706141e8736fcda60eea9d5333df06c8c0c7c7c8188261ef12",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-red.sum": "6e29f027ed0d2c50b067fdb4564e6777539a9fac8990de025e95d6095b8edf69",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-final-build-bot.log": "6e559cfd03acb21e9400bf285cc43059358ca6f051df96435b9026ddfb867ef6",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-final-clippy.log": "21ca061fb85e21be9cccb0dff70be098a7be18e17d36ce225b1a278036c0fe59",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-final-doc.sum": "fdb159162c04b9328901c771e5660138d484294efdc5829f28cc06779e4ccaab",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-green.log": "78c57bde1d0d20cf9a51f8bdacdd6bbd561fdeac5efe84dce5c36a983526ff8d",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-fmt.sum": "4d0c6d0e93ade8360934bfaaf8cc09435eb4f9a01f4eb9a961d6165c99705417",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-fmt.log": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-final-clippy.sum": "52abca4929f36a0a8c2597ca11f48e1aab4d89e5ba5ef814ce07f1aaf10cffe3",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-final-build-loop.log": "c28d0532bea59b5377039f20bad0f729175fe5809a2ea0d1e7af61f2e1927535",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/toolchain.txt": "3ea86dbe6713c1af7db667f9102072e7e1c78291a9d5d26280ee1eef433c1019",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-green.sum": "fdb3e00e67cfcc9c049836e73e120b2df86a4f3921062ee4cf1e35b7abbb6056",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-remaining.json": "e6bca63fe07764dc15016f3c88b74bfc4f482b952aedbf39b9dfa7c63a3b7f25",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-verify.sum": "f222135c4a4614537565f127d20a198e31bdee1c8e1585ba3500fbf58e767335",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-red.log": "06ead88313de70f2ee51234464bfcde562c8d48dc94ba993d6c869a2f5e169e5",
+    "benchmarks/2026-11-10-values/validation/tracker-origin/tracker-origin-final-build-bot.sum": "95fe3bd25ea567a2a4f639e940cbd9a0286040f78c39eeede8d6e44597898e4d"
+  }
+}

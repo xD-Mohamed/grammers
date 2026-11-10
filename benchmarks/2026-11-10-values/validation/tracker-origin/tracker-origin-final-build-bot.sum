@@ -1,0 +1,8 @@
+GUARD start tracker-origin-final-build-bot: avail=3635MB swap_used=1326MB swap_free=2769MB vlimit=4000000
+GUARD end tracker-origin-final-build-bot: rc=0 secs=57 peak_rss_one_proc=408MB peak_rss_all=497MB min_avail=3389MB swap_used_max=1326MB (start 1326MB, moved 0MB)
+   Compiling grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+   Compiling grammers-session v0.10.0 (/root/grammers/grammers-session)
+   Compiling grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+   Compiling grammers-client v0.10.0 (/root/grammers/grammers-client)
+    Finished `release` profile [optimized] target(s) in 56.18s
+  Executable tests/bot_workload.rs (target/release/deps/bot_workload-e073fa60169e44d9)

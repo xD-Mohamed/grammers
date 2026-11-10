@@ -1,0 +1,37 @@
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Checking grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+    Checking grammers-session v0.10.0 (/root/grammers/grammers-session)
+error: large size difference between variants
+   --> grammers-session/src/message_box/defs.rs:159:1
+    |
+159 | /  pub enum UpdatesLike {
+160 | |      /// The usual variant, received passively from Telegram.
+161 | |      Updates(tl::enums::Updates),
+162 | |      /// Special-case for short-sent messages,
+163 | |      /// where the request is also needed to construct a complete update.
+164 | |/     ShortSentMessage {
+165 | ||         /// The request that triggered the short update.
+166 | ||         request: tl::functions::messages::SendMessage,
+167 | ||         /// The incomplete update caused by the request.
+168 | ||         update: tl::types::UpdateShortSentMessage,
+169 | ||     },
+    | ||_____- the largest variant contains at least 920 bytes
+...   |
+181 | |      InvitedUsers(tl::types::messages::InvitedUsers),
+    | |      ----------------------------------------------- the second-largest variant contains at least 648 bytes
+...   |
+191 | |      MalformedUpdates,
+192 | |  }
+    | |__^ the entire enum is at least 920 bytes
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.99.0/index.html#large_enum_variant
+    = note: `-D clippy::large-enum-variant` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::large_enum_variant)]`
+help: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+    |
+166 -         request: tl::functions::messages::SendMessage,
+166 +         request: Box<tl::functions::messages::SendMessage>,
+    |
+
+error: could not compile `grammers-session` (lib) due to 1 previous error

@@ -287,3 +287,33 @@ Clippy passed in the same scopes as step 3. After the revert, the four changed
 files match `54731c2` byte for byte; fresh validation of that restored code is
 recorded with the candidate receipts. [Measurements](reply-forward),
 [candidate patch and validation](validation/reply-forward).
+
+## Correctness: concurrent first write timestamps
+
+`InvocationTracker` encoded a write relative to the first **reported** write.
+If thread A captured time `t1`, paused, and thread B reported later `t2` first,
+the origin became `t2`; A's negative offset saturated to zero and read back as
+`t2`. A fresh-child regression reproduced this with about 2 ms between writes.
+
+Successful tracked admission now initializes the shared origin before the permit
+escapes. Thus it precedes every real write, whichever report arrives first.
+`mark_sent` retains its first-write CAS and precise timestamp. There is one
+initial clock read per process and a OnceLock fast-path check per successful
+tracked acquisition; untracked and capacity-only requests are unchanged.
+
+The regression failed on the old code and passed after the fix. Its child must
+report exactly one passing test, preventing a stale test filter from passing
+without executing it. The full all-feature sender run passes 189 unit tests,
+one dependency test, two loopback integration tests and five doctests; the eight
+unit benchmarks and eight integration/network tests remain ignored in that run.
+Sender-only strict all-target Clippy (`--no-deps`) and all-feature Rustdoc pass.
+The ordinary Clippy command exposed a dependency's `UpdatesLike` size warning
+after the preceding TL shrink: short-sent payload 920 B versus 648 B. It remains
+an explicit blocker for the next full check; it has not been called a passing
+workspace check. The timestamp fix is committed separately and publication waits
+for that blocker to be resolved. [Receipts](validation/tracker-origin).
+
+The active compiler is Rust/Cargo 1.99.1. Executable `.comment` sections verify
+that the fixed-RSS baseline, webpage/game candidate and reply-forward candidate
+also used Rust 1.99.1; older toolchain mentions in historical documentation are
+not this round's compiler identity.

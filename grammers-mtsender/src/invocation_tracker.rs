@@ -58,6 +58,9 @@ impl InvocationTracker {
             .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Relaxed)
             .ok()
             .map(|_| {
+                // Every tracked write follows this shared timestamp origin,
+                // even when reports from concurrent writes arrive out of order.
+                let _ = origin();
                 self.0.sent_at.store(0, Ordering::Relaxed);
                 InvocationPermit {
                     tracker: Some(Arc::clone(&self.0)),
@@ -112,8 +115,8 @@ impl InvocationPermit {
         let Some(tracker) = &self.tracker else {
             return;
         };
-        // The first time ever recorded becomes the origin, so that it is exact too.
-        let origin = *ORIGIN.get_or_init(|| at);
+        // Acquiring the tracked permit initialized the origin before this write.
+        let origin = origin();
         let since_origin = at.saturating_duration_since(origin);
         let nanos = u64::try_from(since_origin.as_nanos()).unwrap_or(u64::MAX - 1);
         // The first complete write is the one that reached the network.
@@ -149,6 +152,54 @@ impl Future for PendingInvocation {
                 "request response channel was closed",
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn out_of_order_write_reports_keep_their_actual_times() {
+        const CHILD: &str = "GRAMMERS_TRACKER_ORIGIN_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "invocation_tracker::tests::out_of_order_write_reports_keep_their_actual_times",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout)
+                        .contains("test result: ok. 1 passed; 0 failed;"),
+                "child status: {}\nstdout: {}\nstderr: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        assert!(ORIGIN.get().is_none());
+        let earlier_tracker = InvocationTracker::default();
+        let later_tracker = InvocationTracker::default();
+        let earlier_permit = earlier_tracker.try_acquire().unwrap();
+        let later_permit = later_tracker.try_acquire().unwrap();
+        let earlier = Instant::now();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let later = Instant::now();
+        assert!(earlier < later);
+        later_permit.mark_sent(later);
+        earlier_permit.mark_sent(earlier);
+        assert_eq!(earlier_tracker.sent_at(), Some(earlier));
+        assert_eq!(later_tracker.sent_at(), Some(later));
+        earlier_permit.mark_sent(later);
+        assert_eq!(earlier_tracker.sent_at(), Some(earlier));
     }
 }
 

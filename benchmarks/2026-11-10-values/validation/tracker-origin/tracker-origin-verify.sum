@@ -1,0 +1,9 @@
+tracker-origin-fmt exit 0
+GUARD end tracker-origin-fmt: rc=0 secs=1 peak_rss_one_proc=57MB peak_rss_all=94MB min_avail=3620MB swap_used_max=1326MB (start 1326MB, moved 0MB)
+tracker-origin-tests exit 0
+GUARD end tracker-origin-tests: rc=0 secs=236 peak_rss_one_proc=847MB peak_rss_all=940MB min_avail=1885MB swap_used_max=1326MB (start 1326MB, moved 0MB)
+test result: ok. 2 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+tracker-origin-clippy exit 101
+GUARD end tracker-origin-clippy: rc=101 secs=15 peak_rss_one_proc=1162MB peak_rss_all=1280MB min_avail=2555MB swap_used_max=1326MB (start 1326MB, moved 0MB)
+error: could not compile `grammers-session` (lib) due to 1 previous error

@@ -1,0 +1,1 @@
+Fresh independent reviewer /root/shared_reply (inherited Codex; exact native model/effort unavailable): approved origin initialization before tracked permit escape, first-write CAS, precision and unchanged admission/layout semantics. Requested exactly-one-child-test check applied. Reviewer ran no builds/tests.

@@ -1,0 +1,40 @@
+   Compiling grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+   Compiling grammers-session v0.10.0 (/root/grammers/grammers-session)
+   Compiling grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Finished `release` profile [optimized] target(s) in 1m 20s
+     Running unittests src/lib.rs (target/release/deps/grammers_mtsender-0c05a9361c8f0979)
+
+running 1 test
+test invocation_tracker::tests::out_of_order_write_reports_keep_their_actual_times ...
+thread 'invocation_tracker::tests::out_of_order_write_reports_keep_their_actual_times' (1243) panicked at grammers-mtsender/src/invocation_tracker.rs:173:13:
+child status: exit status: 101
+stdout:
+running 1 test
+test invocation_tracker::tests::out_of_order_write_reports_keep_their_actual_times ... FAILED
+
+failures:
+
+failures:
+    invocation_tracker::tests::out_of_order_write_reports_keep_their_actual_times
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 196 filtered out; finished in 0.00s
+
+
+stderr:
+thread 'invocation_tracker::tests::out_of_order_write_reports_keep_their_actual_times' (1246) panicked at grammers-mtsender/src/invocation_tracker.rs:194:9:
+assertion `left == right` failed
+  left: Some(Instant { tv_sec: 85244, tv_nsec: 995139027 })
+ right: Some(Instant { tv_sec: 85244, tv_nsec: 993064368 })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    invocation_tracker::tests::out_of_order_write_reports_keep_their_actual_times
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 196 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p grammers-mtsender --lib`

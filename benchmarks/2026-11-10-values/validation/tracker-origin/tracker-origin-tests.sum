@@ -1,0 +1,27 @@
+GUARD start tracker-origin-tests: avail=3634MB swap_used=1326MB swap_free=2769MB vlimit=4000000
+GUARD end tracker-origin-tests: rc=0 secs=236 peak_rss_one_proc=847MB peak_rss_all=940MB min_avail=1885MB swap_used_max=1326MB (start 1326MB, moved 0MB)
+     Running tests/loopback.rs (target/release/deps/loopback-ca2a528cdf387021)
+
+running 7 tests
+test loopback_blocking_control ... ignored, local non-Tokio client control
+test loopback_large_reply_retention ... ignored, local loopback retention after a large reply; waits over a minute
+test loopback_open_loop ... ignored, local open-loop multiple-DC and cross-pool latency/fairness
+test loopback_rpc_cost ... ignored, local loopback client CPU and allocation cost; run explicitly
+test loopback_session_footprint ... ignored, local loopback heap census; run explicitly with --ignored --nocapture
+test maximum_download_reply_survives_real_encryption_and_transport ... ok
+test silent_dc_does_not_block_a_healthy_cold_dc ... ok
+
+test result: ok. 2 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+   Doc-tests grammers_mtsender
+
+running 5 tests
+test grammers-mtsender/src/configuration.rs - configuration::RetryBudget (line 296) ... ok
+test grammers-mtsender/src/errors.rs - errors::InvocationError::is (line 516) ... ok
+test grammers-mtsender/src/errors.rs - errors::RpcError::is (line 199) ... ok
+test grammers-mtsender/src/errors.rs - errors::RpcError::name (line 119) ... ok
+test grammers-mtsender/src/errors.rs - errors::RpcError::value (line 129) ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.30s; merged doctests compilation took 0.29s

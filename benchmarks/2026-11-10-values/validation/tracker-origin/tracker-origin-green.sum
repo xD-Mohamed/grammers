@@ -1,0 +1,10 @@
+GUARD start tracker-origin-green: avail=3651MB swap_used=1326MB swap_free=2769MB vlimit=4000000
+GUARD end tracker-origin-green: rc=0 secs=69 peak_rss_one_proc=842MB peak_rss_all=925MB min_avail=2987MB swap_used_max=1326MB (start 1326MB, moved 0MB)
+   Compiling grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Finished `release` profile [optimized] target(s) in 1m 08s
+     Running unittests src/lib.rs (target/release/deps/grammers_mtsender-0c05a9361c8f0979)
+
+running 1 test
+test invocation_tracker::tests::out_of_order_write_reports_keep_their_actual_times ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 196 filtered out; finished in 0.00s
