@@ -1,0 +1,19 @@
+{
+  "base": "59069f38bd08dcdb61fe3886373964917f56ef4e",
+  "log_normalization": "trailing whitespace and empty EOF lines only",
+  "files": {
+    "benchmarks/2026-11-10-values/validation/rss-harness/review.txt": "d980c7a7f67ee09ba3b18c9c401df422592373621ed23306f38a3c6f39c184d8",
+    "benchmarks/2026-11-10-values/validation/rss-harness/rss-harness-build-bot.log": "95bb2208b8de923e1cc598ff8758fb86a0e0da72caa6f1f21905383a8e7cd5c3",
+    "benchmarks/2026-11-10-values/validation/rss-harness/rss-harness-build-bot.sum": "9d0eee92ff266c923ecfffb7c526eefb8aa5906737087dcead4ded3d431fbfe2",
+    "benchmarks/2026-11-10-values/validation/rss-harness/rss-harness-fixed-client-clippy.log": "62f11f49d0e90e3f42407d3e7c2459db7afd8b5e9f1a74ef254aeb95f534e1bf",
+    "benchmarks/2026-11-10-values/validation/rss-harness/rss-harness-fixed-client-clippy.sum": "8c2d98360852689c9137b6cf531242638f4734bd1244cc137d34dbfa2c7dc6bc",
+    "benchmarks/2026-11-10-values/validation/rss-harness/rss-harness-fixed-client-doc.log": "1f2c1c0e23f14715c58b3524b0485e64df069c76c71a793885e42a978d21a15c",
+    "benchmarks/2026-11-10-values/validation/rss-harness/rss-harness-fixed-client-doc.sum": "a9a1c4b94469933ac0549fbc152d808afaf9c79d65898f066a1c024d3ff78519",
+    "benchmarks/2026-11-10-values/validation/rss-harness/rss-harness-fixed-client-test.log": "453170cc583aba3243d8f652213dd357768689c9dc88a8912405a136925c5cff",
+    "benchmarks/2026-11-10-values/validation/rss-harness/rss-harness-fixed-client-test.sum": "8c84a1ea30257dbf876fe46976142be3f5e5788884a4413fd2e567826739d07b",
+    "benchmarks/2026-11-10-values/validation/rss-harness/rss-harness-smoke.log": "828d871e544a4c8de22189ebd018e873c9f4cdaac819ad319d5034b5c9e02259",
+    "benchmarks/2026-11-10-values/validation/rss-harness/rss-harness-smoke.sum": "f2fc70df0696544f37c8df75e921cff2dc3bf674b6489e37801d697bddab3f31",
+    "benchmarks/2026-11-10-values/rss-accounting.md": "d1f5805d7e08a3a292df16cda8b1b06fe3f2392c1fb045d915958e9aaa567c79",
+    "grammers-client/tests/bot_workload.rs": "63aa1f9c46b14af7cb537219755a1d340e14d6a056c852156bbea9186fd58fe8"
+  }
+}

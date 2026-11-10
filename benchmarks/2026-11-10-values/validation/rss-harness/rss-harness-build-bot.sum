@@ -1,5 +1,5 @@
 GUARD start rss-harness-build-bot: avail=3433MB swap_used=1211MB swap_free=2884MB vlimit=4000000
-GUARD end rss-harness-build-bot: rc=0 secs=102 peak_rss_one_proc=1209MB peak_rss_all=1298MB min_avail=2294MB swap_used_max=1211MB (start 1211MB, moved 0MB) 
+GUARD end rss-harness-build-bot: rc=0 secs=102 peak_rss_one_proc=1209MB peak_rss_all=1298MB min_avail=2294MB swap_used_max=1211MB (start 1211MB, moved 0MB)
    Compiling grammers-tl-parser v1.2.2 (/tmp/claude-0/de27/work/rss-base/grammers-tl-parser)
    Compiling grammers-tl-gen v0.10.0 (/tmp/claude-0/de27/work/rss-base/grammers-tl-gen)
    Compiling grammers-tl-types v0.10.0 (/tmp/claude-0/de27/work/rss-base/grammers-tl-types)
