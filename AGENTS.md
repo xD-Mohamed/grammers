@@ -1,5 +1,22 @@
 # grammers fork
 
+## Typed client path (2026-11-10)
+
+[Measurements, the profile and what was verified](benchmarks/2026-11-10-typed/README.md).
+
+- `update::Message` holds its message once. `Update::from_raw` moves it out of the raw
+  update: do not add a field that keeps that update, and do not clone the message there.
+  The update is put back together from the message, its `Kind` and its position, by
+  `Message::raw()` on first use, by `into_raw()` without a clone, and for `Update::Raw`
+  when the message names no peer. A fifth update carrying a message needs its `Kind`.
+- The bot workload's "live heap" is `mallinfo`, which counts chunks parked in the
+  allocator's thread cache. Before reading a shift under 1% as retained memory, repeat
+  the comparison with `GLIBC_TUNABLES=glibc.malloc.tcache_count=0`.
+- `grammers-tl-types` with `impl-serde` does not type-check as one unit on this host: it
+  passed 2.8 GB with the API schema alone. Check it in parts with
+  `benchmarks/2026-11-10-typed/tools/serde_parts.py`. Do not raise the memory limit.
+- A closed-loop change of 5% needed 30 rounds to resolve on a noisy day; 10 did not.
+
 ## Update path clock, and `io_uring` assessed (2026-11-10)
 
 [Measurements, the tools and what is left](benchmarks/2026-11-10/README.md).

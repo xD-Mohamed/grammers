@@ -1,0 +1,7 @@
+
+running 1 test
+test bot_workload ... BOT rate=171424 updates_per_s=214281 user_us=4.51 sys_us=1.32 cpu_us=5.83 core_share=0.999 voluntary_switches_per_rpc=0.000 involuntary_switches_per_rpc=0.000 allocs_per_rpc=21.44 bytes_per_rpc=16845 p50_us=364.5 p95_us=450.6 p99_us=512.0 rss_steady_kib=6300 rss_peak_kib=6300 live_heap_b=494176 errors=0 dropped=0 completed=514424 updates_lost=0 update_errors=0
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 5.04s
+
