@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased: smaller raw updates
+
+- Twelve large `tl::enums::Update` variants now hold their existing payload structs
+  in `Box`: `SentWalletTransaction`, `ServiceNotification`, `SentPhoneCode`,
+  `DraftMessage`, `ChannelWebPage`, `WebPage`, `ChannelParticipant`, `NotifySettings`,
+  `BotPrecheckoutQuery`, `PeerWallpaper`, `Theme`, and `ChatParticipant`.
+  Ordinary message-update variants stay inline. The TL wire and session formats
+  are unchanged. These twelve variants add one allocation when present.
+- Payload struct literals, `.into()`, field access, `Update::Variant(_)` matches
+  and accessors keep compiling. Direct enum construction must box the payload or
+  use `.into()`. Moving out requires `*value`; destructure that owned value for a
+  nested struct pattern.
+
+  ```rust
+  // before
+  let update = tl::enums::Update::WebPage(value);
+  if let tl::enums::Update::WebPage(value) = update { consume(value); }
+  // after
+  let update: tl::enums::Update = value.into();
+  if let tl::enums::Update::WebPage(value) = update { consume(*value); }
+  ```
+
 ## Unreleased: smaller reply headers
 
 - `tl::types::MessageReplyHeader::reply_media` is now

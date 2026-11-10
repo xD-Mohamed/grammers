@@ -1,0 +1,4 @@
+GUARD start update-variants-gen-clippy: avail=3588MB swap_used=1269MB swap_free=2826MB vlimit=4000000
+GUARD end update-variants-gen-clippy: rc=0 secs=1 peak_rss_one_proc=18MB peak_rss_all=36MB min_avail=3588MB swap_used_max=1269MB (start 1269MB, moved 0MB)
+    Checking grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.40s

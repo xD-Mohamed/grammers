@@ -16,11 +16,25 @@ use grammers_tl_parser::tl::{Category, Definition, Parameter, ParameterType, Typ
 /// value containing those a large copy at each move through the update path.
 /// `wallet.card` (new in layer 233) sits in three bot widget updates: inline it made
 /// `Update` 1,264 B, and boxed it only allocates when an update carries a card.
-const BOXED_FOR_SIZE: [&str; 4] = [
+/// Rare, large update variants are boxed so ordinary updates stay small without
+/// allocating. Their payload structs and generated conversions keep their shape.
+const BOXED_FOR_SIZE: [&str; 16] = [
     "message",
     "messageService",
     "ephemeralMessage",
     "wallet.card",
+    "updateSentWalletTransaction",
+    "updateServiceNotification",
+    "updateSentPhoneCode",
+    "updateDraftMessage",
+    "updateChannelWebPage",
+    "updateWebPage",
+    "updateChannelParticipant",
+    "updateNotifySettings",
+    "updateBotPrecheckoutQuery",
+    "updatePeerWallpaper",
+    "updateTheme",
+    "updateChatParticipant",
 ];
 
 /// Optional fields held as `Option<Box<T>>`, by definition full name and field name.

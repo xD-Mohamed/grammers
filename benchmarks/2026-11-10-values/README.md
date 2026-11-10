@@ -146,3 +146,42 @@ corrected RSS and session census show no resolved increase. A populated reply
 preview now costs one extra allocation; absent media remains allocation-free.
 Wire/depth/partial-drop tests, per-crate tests, strict Clippy and Rustdoc pass in
 the scopes recorded below. Full all-feature serde checking remains watchdog-limited.
+
+## Step 2: rare update payloads are boxed
+
+Twelve variants listed in CHANGELOG use the existing definition-boxing rule;
+common message updates and payload struct literals stay inline/unchanged. Populated
+rare variants add one allocation. `Update` falls from 760 to 240 B, `Updates` from
+768 to 712 B. Independent raw-wire fixtures, owned conversions, every truncated
+prefix, the ordinary inline control and existing depth/RAII tests pass.
+
+Both binaries use the fixed RSS harness and identical release/features. Local
+mocks on the same host where the precise clock is a syscall; both already use
+its coarse-clock optimization. Paired median-ratio bootstrap, as before.
+
+| Scenario | CPU/RPC change, 95% interval | Other result |
+|---|---:|---|
+| Saturated 64 callers, 30 pairs | -4.75% [-6.03, -3.56] | rate +5.20% [+3.59, +6.68] |
+| 5,000 RPC/s, 8 pairs | -0.19% [-3.94, +2.50] | no resolved change |
+| 500 RPC/s, 12 pairs | +0.12% [-3.70, +4.03] | no resolved change |
+| Raw plain, 14 pairs | -0.38% [-3.42, +2.36] | no resolved change |
+| Raw gzip, 14 pairs | +1.28% [-0.70, +2.60] | no resolved change |
+
+Allocated bytes/RPC fall 14.03% at saturation (11,152 to 9,577 B), 13.79% at
+5,000/s and 14.58% at 500/s. Allocation counts stay 17.69 at saturation. Page-table
+steady RSS is -0.26% [-0.84, +0.76], unresolved; the old approximate VmHWM is not a
+reliable peak. With tcache disabled, eight additional closed pairs show mallinfo
+heap -0.51% [-0.52, -0.49]; this small process result is not a per-session claim.
+The 400-session census remains exactly 2,143 / 5,959 / 6,031 / 12,079 B per session
+before connecting / after one / nine / 1,100 replies, matching step 1.
+
+Decision: keep. The saturated gain is resolved, allocation traffic falls, and
+open loops, raw CPU and the session census show no resolved regression.
+[Measurements](update-variants), [validation](validation/update-variants).
+Generator tests and TL tests (15 unit, 1 dependency, 24 doctests) pass; strict
+all-target Clippy passes without serde; the whole API serde unit passes check and
+Clippy without defaults. All-feature Rustdoc passes with warnings denied. It first
+hit the 4,000,000 KiB virtual cap, then passed as a proven single heavy unit under
+the owner's exception, peaking at 2,750 MiB reported RSS with at least 1,011 MiB
+available and 26 MiB swap movement. Full all-feature check/Clippy remains distinct
+from these narrower passing scopes and watchdog-limited as recorded above.

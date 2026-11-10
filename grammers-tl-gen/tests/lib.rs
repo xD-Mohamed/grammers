@@ -204,3 +204,44 @@ fn fields_boxed_for_size_keep_their_variant_inline() -> io::Result<()> {
     assert!(enums.contains("Header(crate::types::MessageReplyHeader),"));
     Ok(())
 }
+
+#[test]
+fn large_update_variants_are_boxed_with_owned_conversions() -> io::Result<()> {
+    let variants = [
+        ("updateSentWalletTransaction", "SentWalletTransaction"),
+        ("updateServiceNotification", "ServiceNotification"),
+        ("updateSentPhoneCode", "SentPhoneCode"),
+        ("updateDraftMessage", "DraftMessage"),
+        ("updateChannelWebPage", "ChannelWebPage"),
+        ("updateWebPage", "WebPage"),
+        ("updateChannelParticipant", "ChannelParticipant"),
+        ("updateNotifySettings", "NotifySettings"),
+        ("updateBotPrecheckoutQuery", "BotPrecheckoutQuery"),
+        ("updatePeerWallpaper", "PeerWallpaper"),
+        ("updateTheme", "Theme"),
+        ("updateChatParticipant", "ChatParticipant"),
+    ];
+    let mut schema = String::new();
+    for (index, (definition, _)) in variants.iter().enumerate() {
+        schema.push_str(&format!(
+            "{definition}#{:08x} value:int = Update;\n",
+            0x70000000u32 + index as u32
+        ));
+    }
+    schema.push_str("updateChannel#635b4c09 channel_id:long = Update;\n");
+    let definitions = get_definitions(&schema);
+    let (_, types, _, enums) = gen_rust_code(&definitions)?;
+    for (_, variant) in variants {
+        let payload = format!("crate::types::Update{variant}");
+        assert!(enums.contains(&format!("{variant}(Box<{payload}>),")));
+        assert!(enums.contains(&format!(
+            "Self::{variant}(Box::new({payload}::deserialize(buf)?)),"
+        )));
+        assert!(enums.contains(&format!("Update::{variant}(Box::new(x))")));
+        assert!(types.contains(&format!("crate::enums::Update::{variant}(x) => Ok(*x),")));
+    }
+    assert!(enums.contains("Channel(crate::types::UpdateChannel),"));
+    assert!(enums.contains("Update::Channel(x)"));
+    assert!(types.contains("crate::enums::Update::Channel(x) => Ok(x),"));
+    Ok(())
+}

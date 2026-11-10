@@ -377,10 +377,68 @@ fn boxed_reply_media_keeps_its_wire_format() {
     }
 }
 
+fn service_notification(with_inbox_date: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    id::<types::UpdateServiceNotification>(&mut bytes);
+    let flags = 1u32 | (1 << 2) | if with_inbox_date { 1 << 1 } else { 0 };
+    flags.serialize(&mut bytes);
+    if with_inbox_date {
+        123i32.serialize(&mut bytes);
+    }
+    b"service".as_slice().serialize(&mut bytes);
+    b"owned message".as_slice().serialize(&mut bytes);
+    id::<types::MessageMediaContact>(&mut bytes);
+    b"123".as_slice().serialize(&mut bytes);
+    b"first".as_slice().serialize(&mut bytes);
+    b"last".as_slice().serialize(&mut bytes);
+    b"card".as_slice().serialize(&mut bytes);
+    7i64.serialize(&mut bytes);
+    empty_vector(&mut bytes);
+    bytes
+}
+
+#[test]
+fn boxed_updates_keep_wire_format_and_owned_conversions() {
+    for with_inbox_date in [false, true] {
+        let bytes = service_notification(with_inbox_date);
+        round_trip::<enums::Update>(&bytes);
+        let update = enums::Update::from_bytes(&bytes).unwrap();
+        let enums::Update::ServiceNotification(notification) = &update else {
+            panic!("expected a service notification");
+        };
+        assert!(notification.popup);
+        assert!(notification.invert_media);
+        assert_eq!(notification.inbox_date, with_inbox_date.then_some(123));
+        assert_eq!(notification.r#type, "service");
+        assert_eq!(notification.message, "owned message");
+        assert!(notification.entities.is_empty());
+        assert!(matches!(
+            &notification.media,
+            enums::MessageMedia::Contact(contact) if contact.user_id == 7
+        ));
+        let owned = types::UpdateServiceNotification::try_from(update).unwrap();
+        let rebuilt: enums::Update = owned.into();
+        assert_eq!(rebuilt.to_bytes(), bytes);
+        for end in 0..bytes.len() {
+            assert_error::<enums::Update>(&bytes[..end], Error::UnexpectedEof);
+        }
+    }
+    let mut bytes = Vec::new();
+    id::<types::UpdateChannel>(&mut bytes);
+    7i64.serialize(&mut bytes);
+    round_trip::<enums::Update>(&bytes);
+    let enums::Update::Channel(channel) = enums::Update::from_bytes(&bytes).unwrap() else {
+        panic!("expected a channel update");
+    };
+    let channel: types::UpdateChannel = channel;
+    assert_eq!(channel.channel_id, 7);
+}
+
 // These values move through every step of the update path. Holding the largest variants
 // inline made a single update over 5 KiB, so a schema change undoing this must be noticed.
 // At layer 233 `Update` measured 1,264 B with `wallet.card` and `wallet.nftItem`'s `gift`
-// inline, and is 760 B with the first boxed and the second a boxed field.
+// inline, and measured 760 B with the first boxed and the second a boxed field,
+// before the rare update variants were boxed too.
 #[test]
 fn update_types_stay_small_enough_to_move_around() {
     eprintln!(
@@ -410,7 +468,7 @@ fn update_types_stay_small_enough_to_move_around() {
         size_of::<types::UpdateSentWalletTransaction>()
     );
     assert!(
-        size_of::<enums::Update>() <= 1024,
+        size_of::<enums::Update>() <= 256,
         "{}",
         size_of::<enums::Update>()
     );

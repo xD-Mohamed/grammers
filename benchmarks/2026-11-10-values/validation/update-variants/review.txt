@@ -1,0 +1,5 @@
+Fresh review: /root/shared_reply, inherited Codex session; native model/effort not exposed.
+Read actual rare-update boxing, generator/wire tests and migrations. No correctness blocker.
+All twelve names match root constructors; existing boxing preserves IDs/order/depth/owned conversions.
+Service fixture/truncation/inline control reviewed. Requested historical size-comment correction applied.
+Reviewer ran no edits or builds; lead verification and benchmarks are recorded separately.

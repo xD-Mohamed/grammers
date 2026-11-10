@@ -1,0 +1,22 @@
+{
+  "binaries": {
+    "baseline": {
+      "name": "reply-media-loopback",
+      "sha256": "6aaeea9871d8cb27ff5578807396db4dc5090428d422307dadcfa57d13e5fe4a"
+    },
+    "candidate": {
+      "name": "update-variants-loopback",
+      "sha256": "7109ac23ab4c316e48b951b3d73baec6a0ccdb3734aa1ed297b443fcbbada79d"
+    }
+  },
+  "environment": {
+    "LOOPBACK_SHORT": "1",
+    "LOOPBACK_WINDOW_MS": "1500",
+    "LOOPBACK_CLIENT_CPUS": "0",
+    "LOOPBACK_SERVER_CPUS": "2,3",
+    "LOOPBACK_RUNTIME": "current"
+  },
+  "pairs": 14,
+  "command": "<binary> --exact loopback_rpc_cost --ignored --nocapture --test-threads=1",
+  "cpu_affinity": "client thread 0; responder threads 2,3"
+}

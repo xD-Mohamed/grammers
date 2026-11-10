@@ -2,6 +2,11 @@
 
 ## Large TL values (2026-11-10, evening)
 
+- Twelve rare, large update payloads are boxed by the existing full-name rule.
+  `Update` measured 240 B instead of 760 B; normal message updates stay inline.
+  Keep the owned-conversion/wire/partial-drop tests and the 256 B size guard.
+- Enum deserializers charge TL constructor depth independently of Rust heap
+  boxing. A storage change must preserve the cursor's RAII depth scope.
 - `messageReplyHeader.reply_media` is an optional boxed field, using the existing
   generator rule. It keeps absent reply previews from reserving the full media
   enum in every message and short update. Keep ordinary replies allocation-free.

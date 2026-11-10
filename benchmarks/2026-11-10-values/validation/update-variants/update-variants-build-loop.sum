@@ -1,0 +1,6 @@
+GUARD start update-variants-build-loop: avail=3622MB swap_used=1295MB swap_free=2800MB vlimit=4000000
+GUARD end update-variants-build-loop: rc=0 secs=34 peak_rss_one_proc=313MB peak_rss_all=400MB min_avail=3409MB swap_used_max=1295MB (start 1295MB, moved 0MB)
+   Compiling grammers-session v0.10.0 (/root/grammers/grammers-session)
+   Compiling grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Finished `release` profile [optimized] target(s) in 33.76s
+  Executable tests/loopback.rs (target/release/deps/loopback-e520a6d774a0950e)
