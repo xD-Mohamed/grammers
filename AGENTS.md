@@ -1,5 +1,17 @@
 # grammers fork
 
+## Large TL values (2026-11-10, evening)
+
+- `messageReplyHeader.reply_media` is an optional boxed field, using the existing
+  generator rule. It keeps absent reply previews from reserving the full media
+  enum in every message and short update. Keep ordinary replies allocation-free.
+  The wire tests cover absent/present media and every truncated prefix, including
+  failure after owned media fields have decoded. Preserve those cleanup checks.
+- This round's live checklist and measurements are in
+  [benchmarks/2026-11-10-values/README.md](benchmarks/2026-11-10-values/README.md).
+  The owner approved API changes on `main`; retain only measured gains and document
+  each migration. The previous 5% acceptance bar no longer applies.
+
 ## Typed client path and the coarse clock (2026-11-10)
 
 [Measurements, the profile, what was rejected and what was verified](benchmarks/2026-11-10-typed/README.md).
@@ -12,9 +24,13 @@
 - The bot workload's "live heap" is `mallinfo`, which counts chunks parked in the
   allocator's thread cache. Before reading a shift under 1% as retained memory, repeat
   the comparison with `GLIBC_TUNABLES=glibc.malloc.tcache_count=0`.
-- `grammers-tl-types` with `impl-serde` does not type-check as one unit on this host: it
-  passed 2.8 GB with the API schema alone. Check it in parts with
-  `benchmarks/2026-11-10-typed/tools/serde_parts.py`. Do not raise the memory limit.
+- The whole API schema now passes single-unit `impl-serde` check and Clippy at
+  3.28/3.30 GiB resident, without defaults (`impl-serde,tl-api`). This uses the owner's
+  heavy-unit exception: one compiler, nice/ionice, no address-space cap, memory and
+  swap watchdogs. Full all-feature expansion still hits the watchdog, at 3,554 MiB
+  sampled; check that graph in parts with
+  `benchmarks/2026-11-10-typed/tools/serde_parts.py` when the host cannot fit it.
+  Never disable the watchdog. The ordinary command cap is unchanged.
 - A closed-loop change of 5% needed 30 rounds to resolve on a noisy day; 10 did not.
 - `grammers_mtproto::coarse_clock` is the kernel's last tick, read without a system call:
   never later than the precise clock, up to a tick (1 to 10 ms) earlier. Message

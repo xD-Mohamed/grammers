@@ -29,7 +29,12 @@ const BOXED_FOR_SIZE: [&str; 4] = [
 /// leaves the definition's enum variant, and with it existing callers, unchanged.
 /// `wallet.nftItem` gained `gift` in layer 233, 432 B inline, and it reaches `Update`
 /// through `updateSentWalletTransaction`.
-const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 1] = [("wallet.nftItem", "gift")];
+/// `messageReplyHeader.reply_media` otherwise reserves the full media enum even
+/// for an ordinary text reply, including in short updates and message values.
+const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 2] = [
+    ("wallet.nftItem", "gift"),
+    ("messageReplyHeader", "reply_media"),
+];
 
 /// Additional metadata required by several parts of the generation.
 pub(crate) struct Metadata<'a> {

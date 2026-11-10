@@ -1,0 +1,8 @@
+GUARD start reply-media-build-bot-matched: avail=3327MB swap_used=1225MB swap_free=2870MB vlimit=4000000
+GUARD end reply-media-build-bot-matched: rc=0 secs=61 peak_rss_one_proc=407MB peak_rss_all=486MB min_avail=3081MB swap_used_max=1225MB (start 1225MB, moved 0MB)
+   Compiling grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+   Compiling grammers-session v0.10.0 (/root/grammers/grammers-session)
+   Compiling grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+   Compiling grammers-client v0.10.0 (/root/grammers/grammers-client)
+    Finished `release` profile [optimized] target(s) in 1m 00s
+  Executable tests/bot_workload.rs (target/release/deps/bot_workload-e073fa60169e44d9)

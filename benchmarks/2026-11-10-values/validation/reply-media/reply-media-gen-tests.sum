@@ -1,0 +1,27 @@
+GUARD start reply-media-gen-tests: avail=3417MB swap_used=1216MB swap_free=2879MB vlimit=4000000
+GUARD end reply-media-gen-tests: rc=0 secs=4 peak_rss_one_proc=156MB peak_rss_all=235MB min_avail=3350MB swap_used_max=1216MB (start 1216MB, moved 0MB)
+
+   Doc-tests grammers_tl_gen
+
+running 11 tests
+test grammers-tl-gen/src/enums.rs - enums::write_common_field_impl (line 94) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_deserializable (line 246) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_enum (line 26) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_impl_from (line 320) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_serializable (line 187) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_deserializable (line 273) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_identifiable (line 136) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_impl_from (line 419) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_rpc (line 387) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_serializable (line 166) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_struct (line 51) ... ignored
+
+test result: ok. 0 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test grammers-tl-gen/src/structs.rs - structs::get_generic_param_list (line 22) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.17s; merged doctests compilation took 0.16s

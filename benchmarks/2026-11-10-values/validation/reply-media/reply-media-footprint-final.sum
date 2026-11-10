@@ -1,0 +1,26 @@
+GUARD start reply-media-footprint-final: avail=3610MB swap_used=1275MB swap_free=2820MB vlimit=4000000
+GUARD end reply-media-footprint-final: rc=0 secs=38 peak_rss_one_proc=18MB peak_rss_all=54MB min_avail=3579MB swap_used_max=1275MB (start 1275MB, moved 0MB)
+        88 B x   2.00/session =     176 B
+       168 B x   1.00/session =     168 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+       144 B x   1.00/session =     144 B
+       104 B x   1.00/session =     104 B
+after 1100 RPCs per session (replay cache saturated): 12079 B/session live client heap
+      6144 B x   1.00/session =    6144 B
+      1408 B x   1.00/session =    1408 B
+       512 B x   2.00/session =    1023 B
+       256 B x   3.00/session =     768 B
+       384 B x   1.00/session =     384 B
+       352 B x   1.00/session =     352 B
+       280 B x   1.00/session =     280 B
+       224 B x   1.00/session =     224 B
+        96 B x   2.00/session =     192 B
+        88 B x   2.00/session =     176 B
+       168 B x   1.00/session =     168 B
+       160 B x   1.00/session =     160 B
+        72 B x   2.00/session =     144 B
+       144 B x   1.00/session =     144 B
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 37.81s

@@ -1,0 +1,12 @@
+Fresh source review: /root/validation_inventory, inherited Codex session.
+Native model/effort is not exposed in the agent result.
+
+No correctness blocker in the actual reply_media change. Fixture flags4/6/8 and
+wire order match layer233; contact fields/constructor match the schema. Every
+truncated prefix includes cleanup after owned media decoded. Full-name metadata
+targeting leaves other fields and the enum payload inline. Serialization preserves
+wire bytes. The migration covers populated construction, borrowed matches and
+owned extraction. Existing depth tests remain applicable.
+
+The reviewer did not edit code or run builds. Lead-run verification and measured
+before/after results accompany this review. The added size print is test-only.

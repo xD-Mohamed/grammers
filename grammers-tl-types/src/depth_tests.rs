@@ -329,15 +329,81 @@ fn values_boxed_for_size_keep_their_wire_format() {
     }
 }
 
+fn reply_header(with_media: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    id::<types::MessageReplyHeader>(&mut bytes);
+    let flags = (1u32 << 4) | (1 << 6) | if with_media { 1 << 8 } else { 0 };
+    flags.serialize(&mut bytes);
+    41i32.serialize(&mut bytes);
+    if with_media {
+        id::<types::MessageMediaContact>(&mut bytes);
+        b"123".as_slice().serialize(&mut bytes);
+        b"first".as_slice().serialize(&mut bytes);
+        b"last".as_slice().serialize(&mut bytes);
+        b"card".as_slice().serialize(&mut bytes);
+        7i64.serialize(&mut bytes);
+    }
+    b"quoted text".as_slice().serialize(&mut bytes);
+    bytes
+}
+
+#[test]
+fn boxed_reply_media_keeps_its_wire_format() {
+    for with_media in [false, true] {
+        let bytes = reply_header(with_media);
+        round_trip::<enums::MessageReplyHeader>(&bytes);
+        let enums::MessageReplyHeader::Header(header) =
+            enums::MessageReplyHeader::from_bytes(&bytes).unwrap()
+        else {
+            panic!("expected a message reply header");
+        };
+        assert_eq!(header.reply_to_msg_id, Some(41));
+        assert_eq!(header.quote_text.as_deref(), Some("quoted text"));
+        if with_media {
+            assert!(matches!(
+                header.reply_media.as_deref(),
+                Some(enums::MessageMedia::Contact(contact)) if contact.user_id == 7
+            ));
+        } else {
+            assert!(header.reply_media.is_none());
+        }
+        let rebuilt: enums::MessageReplyHeader = header.into();
+        assert_eq!(rebuilt.to_bytes(), bytes);
+        // Includes failure after media has allocated its strings, while reading
+        // the following quote: partially decoded fields must drop safely.
+        for end in 0..bytes.len() {
+            assert_error::<enums::MessageReplyHeader>(&bytes[..end], Error::UnexpectedEof);
+        }
+    }
+}
+
 // These values move through every step of the update path. Holding the largest variants
 // inline made a single update over 5 KiB, so a schema change undoing this must be noticed.
 // At layer 233 `Update` measured 1,264 B with `wallet.card` and `wallet.nftItem`'s `gift`
 // inline, and is 760 B with the first boxed and the second a boxed field.
 #[test]
 fn update_types_stay_small_enough_to_move_around() {
+    eprintln!(
+        "TL sizes: MessageReplyHeader={} Message={} MessageService={} Update={} Updates={}",
+        size_of::<types::MessageReplyHeader>(),
+        size_of::<types::Message>(),
+        size_of::<types::MessageService>(),
+        size_of::<enums::Update>(),
+        size_of::<enums::Updates>(),
+    );
     assert!(size_of::<enums::Message>() <= 32);
     assert!(size_of::<enums::EphemeralMessage>() <= 32);
     assert!(size_of::<enums::wallet::Card>() <= 8);
+    assert!(
+        size_of::<types::MessageReplyHeader>() <= 384,
+        "{}",
+        size_of::<types::MessageReplyHeader>()
+    );
+    assert!(
+        size_of::<types::Message>() <= 2048,
+        "{}",
+        size_of::<types::Message>()
+    );
     assert!(
         size_of::<types::UpdateSentWalletTransaction>() <= 768,
         "{}",
@@ -349,7 +415,7 @@ fn update_types_stay_small_enough_to_move_around() {
         size_of::<enums::Update>()
     );
     assert!(
-        size_of::<enums::Updates>() <= 2048,
+        size_of::<enums::Updates>() <= 1024,
         "{}",
         size_of::<enums::Updates>()
     );

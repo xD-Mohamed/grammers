@@ -1,0 +1,7 @@
+GUARD start reply-media-regenerated-types-doc: avail=3436MB swap_used=1216MB swap_free=2879MB vlimit=4000000
+GUARD end reply-media-regenerated-types-doc: rc=0 secs=29 peak_rss_one_proc=2458MB peak_rss_all=2539MB min_avail=1108MB swap_used_max=1236MB (start 1216MB, moved 20MB)
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+ Documenting grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 28.11s
+   Generated /root/grammers/target/doc/grammers_tl_types/index.html

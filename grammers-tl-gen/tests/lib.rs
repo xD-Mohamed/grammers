@@ -183,6 +183,9 @@ fn fields_boxed_for_size_keep_their_variant_inline() -> io::Result<()> {
         starGift#313a9547 id:long = StarGift;
         wallet.nftItem#173dfaf3 flags:# name:flags.1?string gift:flags.9?StarGift = wallet.NftItem;
         nftItem#22222222 flags:# gift:flags.9?StarGift = NftItem;
+        messageMediaEmpty#3ded6320 = MessageMedia;
+        messageReplyHeader#ddb5ab75 flags:# reply_media:flags.8?MessageMedia = MessageReplyHeader;
+        otherHeader#33333333 flags:# reply_media:flags.8?MessageMedia = OtherHeader;
     ",
     );
     let (_, types, _, enums) = gen_rust_code(&definitions)?;
@@ -195,5 +198,9 @@ fn fields_boxed_for_size_keep_their_variant_inline() -> io::Result<()> {
     assert!(types.contains("pub gift: Option<crate::enums::StarGift>,"));
     // The definition itself is not boxed: existing matches on the variant keep working.
     assert!(enums.contains("Item(crate::types::wallet::NftItem),"));
+    assert!(types.contains("pub reply_media: Option<Box<crate::enums::MessageMedia>>,"));
+    assert!(types.contains("Some(Box::new(crate::enums::MessageMedia::deserialize(buf)?))"));
+    assert!(types.contains("pub reply_media: Option<crate::enums::MessageMedia>,"));
+    assert!(enums.contains("Header(crate::types::MessageReplyHeader),"));
     Ok(())
 }

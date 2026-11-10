@@ -1,0 +1,4 @@
+GUARD start serde-final-check-all: avail=3559MB swap_used=1226MB swap_free=2869MB vlimit=none
+GUARD end serde-final-check-all: rc=143 secs=54 peak_rss_one_proc=3532MB peak_rss_all=3601MB min_avail=128MB swap_used_max=1280MB (start 1226MB, moved 54MB) STOPPED_EARLY avail=135MB swap_free=2815MB swap_growth=54MB
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)

@@ -1,0 +1,17 @@
+{
+  "scenarios": {
+    "open5000": {
+      "BOT_RATE": "5000",
+      "BOT_RUNTIME": "multi",
+      "BOT_WORKERS": "2",
+      "BOT_CONCURRENCY": "4096",
+      "BOT_CLIENT_CPUS": "0,1"
+    }
+  },
+  "rounds": 8,
+  "server_cpus": "2,3",
+  "binaries": {
+    "base": "9ab7fb56c93c8898867cc953cd95d4b2f1b17018f9428f3296822cbfba5ec329",
+    "final": "75bb3e643f655f87c2ba599d7945e4293c9dc8a83578e38c1ee131061a0276e7"
+  }
+}

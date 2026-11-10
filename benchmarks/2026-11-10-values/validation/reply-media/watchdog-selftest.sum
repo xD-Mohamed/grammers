@@ -1,0 +1,2 @@
+GUARD start watchdog-selftest: avail=3558MB swap_used=1226MB swap_free=2869MB vlimit=4000000
+GUARD end watchdog-selftest: rc=143 secs=0 peak_rss_one_proc=18MB peak_rss_all=36MB min_avail=3558MB swap_used_max=1226MB (start 1226MB, moved 0MB) STOPPED_EARLY avail=3558MB swap_free=2869MB swap_growth=0MB

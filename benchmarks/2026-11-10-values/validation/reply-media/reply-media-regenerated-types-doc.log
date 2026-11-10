@@ -1,0 +1,5 @@
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+ Documenting grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 28.11s
+   Generated /root/grammers/target/doc/grammers_tl_types/index.html

@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased: smaller reply headers
+
+- `tl::types::MessageReplyHeader::reply_media` is now
+  `Option<Box<tl::enums::MessageMedia>>`. Absent reply media reserves one pointer;
+  ordinary replies add no allocation. The TL wire and session formats are unchanged.
+  Callers constructing populated fields must box them; borrowed matches use
+  `as_deref()`, and moving out of a populated field uses `*media`.
+
+  ```rust
+  // before
+  header.reply_media = Some(media);
+  if let Some(tl::enums::MessageMedia::Photo(photo)) = &header.reply_media { /* ... */ }
+  // after
+  header.reply_media = Some(Box::new(media));
+  if let Some(tl::enums::MessageMedia::Photo(photo)) = header.reply_media.as_deref() { /* ... */ }
+  ```
+
 ## Unreleased: the typed client path, and the kernel's coarse clock
 
 [Measurements](benchmarks/2026-11-10-typed/README.md). Public types change in this section,

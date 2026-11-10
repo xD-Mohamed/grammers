@@ -1,0 +1,4 @@
+GUARD start reply-media-regenerated-gen-clippy: avail=3421MB swap_used=1216MB swap_free=2879MB vlimit=4000000
+GUARD end reply-media-regenerated-gen-clippy: rc=0 secs=1 peak_rss_one_proc=18MB peak_rss_all=36MB min_avail=3421MB swap_used_max=1216MB (start 1216MB, moved 0MB)
+    Checking grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.46s

@@ -1,0 +1,60 @@
+#!/bin/bash
+# guard.sh <label> <cmd...>: run one heavy command under nice/ionice with a memory
+# watchdog. The watchdog stops the command when the machine gets tight.
+# Env (MB unless said):
+#   GUARD_VLIMIT          address-space cap in KiB, default 4000000; "none" for no cap
+#   GUARD_START_AVAIL     do not start under this much MemAvailable (default 1500)
+#   GUARD_MIN_AVAIL       stop when MemAvailable stays under this (default 700) ...
+#   GUARD_MIN_AVAIL_SECS  ... for this many consecutive samples of 0.5 s (default 2)
+#   GUARD_MIN_SWAPFREE    stop at once when SwapFree falls under this (default 1200)
+#   GUARD_MAX_SWAP_GROWTH stop when swap use grew by more than this (default 300)
+#   GUARD_NICE            niceness (default 10)
+#   GUARD_TAIL            lines of the log to print at the end (default 25)
+label=$1; shift
+LOGDIR=${GUARD_LOGDIR:-/tmp/claude-0/de27/logs}
+LOG=$LOGDIR/$label.log
+vlimit=${GUARD_VLIMIT:-4000000}
+min_avail=${GUARD_MIN_AVAIL:-700}
+min_secs=${GUARD_MIN_AVAIL_SECS:-2}
+min_swapfree=${GUARD_MIN_SWAPFREE:-1200}
+max_swap=${GUARD_MAX_SWAP_GROWTH:-300}
+start_avail=${GUARD_START_AVAIL:-1500}
+nicev=${GUARD_NICE:-10}
+avail() { awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo; }
+swapfree() { awk '/SwapFree/ {print int($2/1024)}' /proc/meminfo; }
+swapused() { awk '/SwapTotal/ {t=$2} /SwapFree/ {f=$2} END {print int((t-f)/1024)}' /proc/meminfo; }
+a0=$(avail); s0=$(swapused); f0=$(swapfree)
+if [ "$a0" -lt "$start_avail" ]; then echo "GUARD: only ${a0} MB available, not starting $label"; exit 90; fi
+if [ "$f0" -lt "$min_swapfree" ]; then echo "GUARD: only ${f0} MB swap free, not starting $label"; exit 90; fi
+echo "GUARD start $label: avail=${a0}MB swap_used=${s0}MB swap_free=${f0}MB vlimit=${vlimit}"
+(
+  [ "$vlimit" != none ] && ulimit -v "$vlimit"
+  exec setsid nice -n "$nicev" ionice -c 3 "$@"
+) >"$LOG" 2>&1 &
+pid=$!
+peak=0; peaksum=0; minav=$a0; maxsw=$s0; killed=""; low=0
+t0=$(date +%s)
+while kill -0 $pid 2>/dev/null; do
+  # This sandbox has its own PID namespace: every process listed is ours.
+  read -r r sum < <(ps -e -o rss=,comm= | awk '$2 !~ /^(ps|awk|bash|sleep|bwrap)$/ {s+=$1; if ($1>m) m=$1} END {print int(m/1024), int(s/1024)}')
+  [ -n "$r" ] && [ "$r" -gt "$peak" ] && peak=$r
+  [ -n "$sum" ] && [ "$sum" -gt "$peaksum" ] && peaksum=$sum
+  a=$(avail); s=$(swapused); f=$(swapfree)
+  [ "$a" -lt "$minav" ] && minav=$a
+  [ "$s" -gt "$maxsw" ] && maxsw=$s
+  if [ "$a" -lt "$min_avail" ]; then low=$((low+1)); else low=0; fi
+  if [ "$low" -ge "$min_secs" ] || [ "$f" -lt "$min_swapfree" ] || [ $((s - s0)) -gt "$max_swap" ]; then
+    killed="avail=${a}MB swap_free=${f}MB swap_growth=$((s-s0))MB"
+    kill -TERM -- -$pid 2>/dev/null; kill -TERM $pid 2>/dev/null
+    sleep 0.5
+    kill -KILL -- -$pid 2>/dev/null; kill -KILL $pid 2>/dev/null
+    pkill -KILL -x rustc 2>/dev/null; pkill -KILL -x rustdoc 2>/dev/null; pkill -KILL -x clippy-driver 2>/dev/null
+    break
+  fi
+  sleep 0.5
+done
+wait $pid; rc=$?
+t1=$(date +%s)
+echo "GUARD end $label: rc=$rc secs=$((t1-t0)) peak_rss_one_proc=${peak}MB peak_rss_all=${peaksum}MB min_avail=${minav}MB swap_used_max=${maxsw}MB (start ${s0}MB, moved $((maxsw-s0))MB) ${killed:+STOPPED_EARLY $killed}"
+tail -n "${GUARD_TAIL:-25}" "$LOG"
+exit $rc

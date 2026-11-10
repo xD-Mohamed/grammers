@@ -1,0 +1,104 @@
+[
+  {
+    "label": "serde-final-check-all",
+    "args": [
+      "cargo",
+      "check",
+      "--locked",
+      "-j",
+      "1",
+      "-p",
+      "grammers-tl-types",
+      "--all-features",
+      "--lib"
+    ],
+    "exit": 143,
+    "watchdog_env": {
+      "GUARD_VLIMIT": "none",
+      "GUARD_NICE": "19",
+      "GUARD_MIN_AVAIL": "300",
+      "GUARD_MIN_AVAIL_SECS": "8",
+      "GUARD_MIN_SWAPFREE": "1200",
+      "GUARD_MAX_SWAP_GROWTH": "2000"
+    }
+  },
+  {
+    "label": "serde-final-check-light",
+    "args": [
+      "cargo",
+      "check",
+      "--locked",
+      "-j",
+      "1",
+      "-p",
+      "grammers-tl-types",
+      "--no-default-features",
+      "--features",
+      "impl-serde,tl-api",
+      "--lib"
+    ],
+    "exit": 0,
+    "watchdog_env": {
+      "GUARD_VLIMIT": "none",
+      "GUARD_NICE": "19",
+      "GUARD_MIN_AVAIL": "300",
+      "GUARD_MIN_AVAIL_SECS": "8",
+      "GUARD_MIN_SWAPFREE": "1200",
+      "GUARD_MAX_SWAP_GROWTH": "2000"
+    }
+  },
+  {
+    "label": "serde-final-clippy-all",
+    "args": [
+      "cargo",
+      "clippy",
+      "--locked",
+      "-j",
+      "1",
+      "-p",
+      "grammers-tl-types",
+      "--all-features",
+      "--all-targets",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 143,
+    "watchdog_env": {
+      "GUARD_VLIMIT": "none",
+      "GUARD_NICE": "19",
+      "GUARD_MIN_AVAIL": "300",
+      "GUARD_MIN_AVAIL_SECS": "8",
+      "GUARD_MIN_SWAPFREE": "1200",
+      "GUARD_MAX_SWAP_GROWTH": "2000"
+    }
+  },
+  {
+    "label": "serde-final-clippy-light",
+    "args": [
+      "cargo",
+      "clippy",
+      "--locked",
+      "-j",
+      "1",
+      "-p",
+      "grammers-tl-types",
+      "--no-default-features",
+      "--features",
+      "impl-serde,tl-api",
+      "--lib",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 0,
+    "watchdog_env": {
+      "GUARD_VLIMIT": "none",
+      "GUARD_NICE": "19",
+      "GUARD_MIN_AVAIL": "300",
+      "GUARD_MIN_AVAIL_SECS": "8",
+      "GUARD_MIN_SWAPFREE": "1200",
+      "GUARD_MAX_SWAP_GROWTH": "2000"
+    }
+  }
+]

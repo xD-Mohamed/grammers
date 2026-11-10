@@ -1,0 +1,6 @@
+GUARD start reply-media-build-loop: avail=3559MB swap_used=1226MB swap_free=2869MB vlimit=4000000
+GUARD end reply-media-build-loop: rc=0 secs=34 peak_rss_one_proc=313MB peak_rss_all=391MB min_avail=3358MB swap_used_max=1226MB (start 1226MB, moved 0MB)
+   Compiling grammers-session v0.10.0 (/root/grammers/grammers-session)
+   Compiling grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Finished `release` profile [optimized] target(s) in 32.74s
+  Executable tests/loopback.rs (target/release/deps/loopback-e520a6d774a0950e)
