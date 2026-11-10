@@ -1,0 +1,14 @@
+{
+  "scenarios": {
+    "closed64": {
+      "BOT_CONCURRENCY": "64",
+      "BOT_CLIENT_CPUS": "0"
+    }
+  },
+  "rounds": 30,
+  "server_cpus": "2,3",
+  "binaries": {
+    "base": "7cf2b71cb19e386fd85f2f4a3a5973791f43894ee6afe990e23961745ee71a9c",
+    "final": "8d11bab36c38a3015ec502f568d349f7187b6b228ec3831eba63cef2874e9006"
+  }
+}

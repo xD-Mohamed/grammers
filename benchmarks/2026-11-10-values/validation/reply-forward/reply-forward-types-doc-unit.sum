@@ -1,0 +1,27 @@
+GUARD start reply-forward-types-doc-unit: avail=3645MB swap_used=1314MB swap_free=2781MB vlimit=none
+GUARD end reply-forward-types-doc-unit: rc=0 secs=29 peak_rss_one_proc=3037MB peak_rss_all=3118MB min_avail=704MB swap_used_max=1319MB (start 1314MB, moved 5MB)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 27.80s
+   Generated /root/grammers/target/doc/grammers_tl_types/index.html
+	Command being timed: "cargo doc --locked -j 1 -p grammers-tl-types --all-features --no-deps"
+	User time (seconds): 24.28
+	System time (seconds): 4.05
+	Percent of CPU this job got: 101%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:27.82
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 3127272
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 1721
+	Minor (reclaiming a frame) page faults: 1213812
+	Voluntary context switches: 9065
+	Involuntary context switches: 170
+	Swaps: 0
+	File system inputs: 91136
+	File system outputs: 598656
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

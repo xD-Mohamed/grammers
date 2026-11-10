@@ -1,0 +1,3 @@
+[main 19b852f] Revert "perf(tl-gen): try moving reply forward metadata out of inline headers"
+ Date: Tue Nov 10 22:13:41 2026 +0000
+ 4 files changed, 9 insertions(+), 72 deletions(-)

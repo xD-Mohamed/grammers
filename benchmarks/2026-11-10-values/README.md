@@ -237,3 +237,53 @@ session before connecting / after one / nine / 1,100 replies. Raw peak RSS chang
 +0.07% [-0.07, +0.14], unresolved. Decision: keep the resolved CPU and allocation
 gain, with no resolved open-loop/raw/RSS increase and an unchanged session census.
 [Measurements](media-leaves), [validation](validation/media-leaves).
+
+## Step 4, tested and reverted: optional reply-forward metadata
+
+Candidate `c792112` boxed `MessageReplyHeader.reply_from` using the existing
+optional-field rule. Its wire/depth/conversion tests passed; Header fell from
+336 to 168 B, Message from 1,608 to 1,440 B, Service from 1,128 to 960 B, and
+Updates from 624 to 456 B. Populated forward metadata added one allocation.
+The change was reverted normally by `19b852f`; the final API retains this field's
+original inline shape. No branch or rewritten history was used.
+
+| Scenario | CPU/RPC change, 95% interval | Other result |
+|---|---:|---|
+| Saturated, first 30 pairs | -1.29% [-2.75, +0.20] | unresolved |
+| Saturated, all 60 pairs | -0.49% [-1.59, +0.60] | rate +0.40% [-0.50, +1.41] |
+| 5,000 RPC/s, 8 pairs | -0.25% [-1.74, +1.60] | unresolved |
+| 500 RPC/s, 12 pairs | -0.58% [-1.91, +2.34] | unresolved |
+| Raw plain, 14 pairs | +2.01% [-3.22, +3.49] | unresolved |
+| Raw gzip, 14 pairs | -2.60% [-3.62, +1.43] | unresolved |
+
+One additional phase of 30 pairs was chosen to resolve the small initial CPU
+estimate; both phases and all 60 paired observations are retained. The combiner
+validates binary identities, disjoint logs, exact log/sample agreement and each
+original summary before joining them, using the original unadjusted paired
+bootstrap method. Its membership file identifies every source log. Both phases
+used the same task controller without allocator overrides; original harness
+configurations do not themselves record `GLIBC_TUNABLES`. Base and candidate
+within each pair inherited the same environment. Both binaries use the coarse
+clock on this host, where the precise clock is a syscall.
+
+Allocated-byte traffic **does improve**, by 2.99% [-3.17, -2.88] over all 60 pairs
+(process medians 8,224 to 7,971.5 B/RPC). Allocation count stays 17.63/RPC.
+The normal heap estimate is unresolved (-0.33% [-0.88, +0.19]); with tcache off,
+eight additional pairs show a tiny increase, +0.03% [+0.01, +0.04], from process
+medians 381,176 to 381,264 B. This provides no demonstrated retained-memory cut.
+Page-table steady RSS at saturation is +0.62% [-0.14, +1.61], unresolved; the
+open-loop RSS intervals also cross zero. The 400-session census remains exactly
+2,143 / 5,959 / 6,031 / 12,079 B before connecting / after one / nine / 1,100 replies.
+
+Decision: insufficient demonstrated net benefit. The byte-traffic saving is real,
+but CPU, allocation count and retained/session memory show no useful improvement,
+while populated fields pay another allocation. This is not a restored 5% bar:
+the smaller traffic saving alone does not establish that this trade helps the
+target workload. Further speculative cold-field boxing stops here; shared message
+ownership and reply decoding remain separately required work.
+
+Candidate generator/TL tests, strict Clippy, Rustdoc and whole-API serde check and
+Clippy passed in the same scopes as step 3. After the revert, the four changed
+files match `54731c2` byte for byte; fresh validation of that restored code is
+recorded with the candidate receipts. [Measurements](reply-forward),
+[candidate patch and validation](validation/reply-forward).

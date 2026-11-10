@@ -1,0 +1,2 @@
+reply-forward-extra-closed64 exit 0
+GUARD end reply-forward-extra-closed64: rc=0 secs=304 peak_rss_one_proc=29MB peak_rss_all=79MB min_avail=1982MB swap_used_max=1323MB (start 1323MB, moved 0MB)

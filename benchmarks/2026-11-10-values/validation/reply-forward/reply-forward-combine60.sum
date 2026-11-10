@@ -1,0 +1,27 @@
+GUARD start reply-forward-combine60: avail=3641MB swap_used=1320MB swap_free=2775MB vlimit=4000000
+GUARD end reply-forward-combine60: rc=0 secs=3 peak_rss_one_proc=18MB peak_rss_all=41MB min_avail=3632MB swap_used_max=1320MB (start 1320MB, moved 0MB)
+        "rss_steady_kib": {
+          "paired_delta_percent": 0.62,
+          "bootstrap_95_percent": [
+            -0.14,
+            1.61
+          ]
+        },
+        "rss_peak_kib": {
+          "paired_delta_percent": -1.22,
+          "bootstrap_95_percent": [
+            -2.0,
+            0.03
+          ]
+        },
+        "live_heap_b": {
+          "paired_delta_percent": -0.33,
+          "bootstrap_95_percent": [
+            -0.88,
+            0.19
+          ]
+        }
+      }
+    }
+  }
+}

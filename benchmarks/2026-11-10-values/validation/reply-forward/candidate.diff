@@ -1,0 +1,112 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index fbaa65a..b8e264a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -64,0 +65,15 @@
++- `tl::types::MessageReplyHeader::reply_from` is now
++  `Option<Box<tl::enums::MessageFwdHeader>>`. Absent forward metadata reserves one
++  pointer in ordinary replies, with no extra allocation. Populated metadata adds
++  one allocation. The containing message and short-update field types stay the same.
++  Box populated fields, use `as_deref()` for borrowed access, and `*forward` to move out.
++
++  ```rust
++  // before
++  header.reply_from = Some(forward);
++  let forward: Option<&tl::enums::MessageFwdHeader> = header.reply_from.as_ref();
++  // after
++  header.reply_from = Some(Box::new(forward));
++  let forward: Option<&tl::enums::MessageFwdHeader> = header.reply_from.as_deref();
++  ```
++
+diff --git a/grammers-tl-gen/src/metadata.rs b/grammers-tl-gen/src/metadata.rs
+index 35af693..6042f75 100644
+--- a/grammers-tl-gen/src/metadata.rs
++++ b/grammers-tl-gen/src/metadata.rs
+@@ -50 +50,2 @@ const BOXED_FOR_SIZE: [&str; 16] = [
+-const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 2] = [
++/// Forward metadata on a quoted message is likewise absent in ordinary replies.
++const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 3] = [
+@@ -52,0 +54 @@ const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 2] = [
++    ("messageReplyHeader", "reply_from"),
+diff --git a/grammers-tl-gen/tests/lib.rs b/grammers-tl-gen/tests/lib.rs
+index 103f9f3..df7d5c5 100644
+--- a/grammers-tl-gen/tests/lib.rs
++++ b/grammers-tl-gen/tests/lib.rs
+@@ -187,2 +187,3 @@ fn fields_boxed_for_size_keep_their_variant_inline() -> io::Result<()> {
+-        messageReplyHeader#ddb5ab75 flags:# reply_media:flags.8?MessageMedia = MessageReplyHeader;
+-        otherHeader#33333333 flags:# reply_media:flags.8?MessageMedia = OtherHeader;
++        messageFwdHeader#4e4df4bb date:int = MessageFwdHeader;
++        messageReplyHeader#ddb5ab75 flags:# reply_from:flags.5?MessageFwdHeader reply_media:flags.8?MessageMedia = MessageReplyHeader;
++        otherHeader#33333333 flags:# reply_from:flags.5?MessageFwdHeader reply_media:flags.8?MessageMedia = OtherHeader;
+@@ -203,0 +205,3 @@ fn fields_boxed_for_size_keep_their_variant_inline() -> io::Result<()> {
++    assert!(types.contains("pub reply_from: Option<Box<crate::enums::MessageFwdHeader>>,"));
++    assert!(types.contains("Some(Box::new(crate::enums::MessageFwdHeader::deserialize(buf)?))"));
++    assert!(types.contains("pub reply_from: Option<crate::enums::MessageFwdHeader>,"));
+diff --git a/grammers-tl-types/src/depth_tests.rs b/grammers-tl-types/src/depth_tests.rs
+index cc3e8fd..fc88983 100644
+--- a/grammers-tl-types/src/depth_tests.rs
++++ b/grammers-tl-types/src/depth_tests.rs
+@@ -332 +332 @@ fn values_boxed_for_size_keep_their_wire_format() {
+-fn reply_header(with_media: bool) -> Vec<u8> {
++fn reply_header(with_media: bool, with_forward: bool) -> Vec<u8> {
+@@ -335 +335,4 @@ fn reply_header(with_media: bool) -> Vec<u8> {
+-    let flags = (1u32 << 4) | (1 << 6) | if with_media { 1 << 8 } else { 0 };
++    let flags = (1u32 << 4)
++        | (1 << 6)
++        | if with_media { 1 << 8 } else { 0 }
++        | if with_forward { 1 << 5 } else { 0 };
+@@ -337,0 +341,6 @@ fn reply_header(with_media: bool) -> Vec<u8> {
++    if with_forward {
++        id::<types::MessageFwdHeader>(&mut bytes);
++        (1u32 << 5).serialize(&mut bytes);
++        b"forwarded".as_slice().serialize(&mut bytes);
++        123i32.serialize(&mut bytes);
++    }
+@@ -353 +362 @@ fn boxed_reply_media_keeps_its_wire_format() {
+-        let bytes = reply_header(with_media);
++        let bytes = reply_header(with_media, false);
+@@ -361,0 +371 @@ fn boxed_reply_media_keeps_its_wire_format() {
++        assert!(header.reply_from.is_none());
+@@ -379,0 +390,27 @@ fn boxed_reply_media_keeps_its_wire_format() {
++#[test]
++fn boxed_reply_forward_header_keeps_its_wire_format() {
++    for with_media in [false, true] {
++        let bytes = reply_header(with_media, true);
++        round_trip::<enums::MessageReplyHeader>(&bytes);
++        let enums::MessageReplyHeader::Header(mut header) =
++            enums::MessageReplyHeader::from_bytes(&bytes).unwrap()
++        else {
++            panic!("expected a message reply header");
++        };
++        assert_eq!(header.reply_to_msg_id, Some(41));
++        assert_eq!(header.quote_text.as_deref(), Some("quoted text"));
++        assert_eq!(header.reply_media.is_some(), with_media);
++        let forward = types::MessageFwdHeader::from(header.reply_from.as_deref().unwrap().clone());
++        assert_eq!(forward.from_name.as_deref(), Some("forwarded"));
++        assert_eq!(forward.date, 123);
++        assert!(forward.from_id.is_none());
++        let forward = types::MessageFwdHeader::from(*header.reply_from.take().unwrap());
++        header.reply_from = Some(Box::new(forward.into()));
++        let rebuilt: enums::MessageReplyHeader = header.into();
++        assert_eq!(rebuilt.to_bytes(), bytes);
++        for end in 0..bytes.len() {
++            assert_error::<enums::MessageReplyHeader>(&bytes[..end], Error::UnexpectedEof);
++        }
++    }
++}
++
+@@ -558 +595 @@ fn update_types_stay_small_enough_to_move_around() {
+-        size_of::<types::MessageReplyHeader>() <= 384,
++        size_of::<types::MessageReplyHeader>() <= 192,
+@@ -563 +600 @@ fn update_types_stay_small_enough_to_move_around() {
+-        size_of::<types::Message>() <= 1664,
++        size_of::<types::Message>() <= 1472,
+@@ -566,0 +604,5 @@ fn update_types_stay_small_enough_to_move_around() {
++    assert!(
++        size_of::<types::MessageService>() <= 1024,
++        "{}",
++        size_of::<types::MessageService>()
++    );
+@@ -578 +620 @@ fn update_types_stay_small_enough_to_move_around() {
+-        size_of::<enums::Updates>() <= 1024,
++        size_of::<enums::Updates>() <= 512,

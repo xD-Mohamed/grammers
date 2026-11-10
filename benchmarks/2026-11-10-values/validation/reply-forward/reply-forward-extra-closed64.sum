@@ -1,0 +1,27 @@
+GUARD start reply-forward-extra-closed64: avail=3648MB swap_used=1323MB swap_free=2772MB vlimit=4000000
+GUARD end reply-forward-extra-closed64: rc=0 secs=304 peak_rss_one_proc=29MB peak_rss_all=79MB min_avail=1982MB swap_used_max=1323MB (start 1323MB, moved 0MB)
+closed64 round 24/30 load=1.74
+closed64 round 25/30 load=1.63
+closed64 round 26/30 load=1.60
+closed64 round 27/30 load=1.51
+closed64 round 28/30 load=1.51
+closed64 round 29/30 load=1.43
+closed64 round 30/30 load=1.44
+
+closed64
+metric                  base       final   vs base
+rate               197522.50   195829.50    -0.54% [-1.56,+1.12]
+updates_per_s      246903.00   244786.50    -0.54% [-1.56,+1.12]
+updates_lost            0.00        0.00  no ratio
+cpu_us                  5.05        5.08    +0.50% [-1.08,+1.67]
+user_us                 3.75        3.73    +0.15% [-1.83,+2.30]
+sys_us                  1.33        1.33    +0.74% [-3.49,+5.15]
+core_share              1.00        1.00    +0.00% [+0.00,+0.10]
+allocs_per_rpc         17.63       17.63    +0.00% [+0.00,+0.00]
+bytes_per_rpc        8222.50     7971.00    -3.06% [-3.21,-2.79]*
+p50_us                315.40      315.40    +0.00% [-1.93,+2.52]
+p95_us                397.30      397.30    -0.98% [-1.04,+1.06]
+p99_us                448.55      454.70    +2.33% [+0.46,+3.63]*
+rss_steady_kib       8410.00     8414.00    +0.66% [-0.59,+1.54]
+rss_peak_kib         6292.00     6226.00    -0.80% [-2.35,+0.42]
+live_heap_b        445392.00   445456.00    +0.19% [-0.67,+0.71]

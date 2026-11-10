@@ -1,0 +1,27 @@
+GUARD start reply-forward-raw: avail=3642MB swap_used=1323MB swap_free=2772MB vlimit=4000000
+GUARD end reply-forward-raw: rc=0 secs=210 peak_rss_one_proc=22MB peak_rss_all=77MB min_avail=3580MB swap_used_max=1323MB (start 1323MB, moved 0MB)
+      "bootstrap_95_percent": [
+        -3.450327186198676,
+        1.730602826651273
+      ]
+    },
+    "p99_us": {
+      "baseline_median": 403.4,
+      "candidate_median": 403.1,
+      "paired_delta_percent": -4.540786339485719,
+      "bootstrap_95_percent": [
+        -9.673459366560289,
+        1.2680258577822068
+      ]
+    },
+    "process_rss_kib": {
+      "baseline_median": 11270.0,
+      "candidate_median": 11272.0,
+      "paired_delta_percent": -0.035479866293081086,
+      "bootstrap_95_percent": [
+        -0.0887091292230302,
+        0.035498757543495074
+      ]
+    }
+  }
+}

@@ -1,0 +1,542 @@
+[
+  {
+    "round": 0,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 0,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-00.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-00.log"
+    }
+  },
+  {
+    "round": 1,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 1,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-01.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-01.log"
+    }
+  },
+  {
+    "round": 2,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 2,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-02.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-02.log"
+    }
+  },
+  {
+    "round": 3,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 3,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-03.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-03.log"
+    }
+  },
+  {
+    "round": 4,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 4,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-04.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-04.log"
+    }
+  },
+  {
+    "round": 5,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 5,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-05.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-05.log"
+    }
+  },
+  {
+    "round": 6,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 6,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-06.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-06.log"
+    }
+  },
+  {
+    "round": 7,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 7,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-07.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-07.log"
+    }
+  },
+  {
+    "round": 8,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 8,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-08.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-08.log"
+    }
+  },
+  {
+    "round": 9,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 9,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-09.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-09.log"
+    }
+  },
+  {
+    "round": 10,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 10,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-10.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-10.log"
+    }
+  },
+  {
+    "round": 11,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 11,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-11.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-11.log"
+    }
+  },
+  {
+    "round": 12,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 12,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-12.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-12.log"
+    }
+  },
+  {
+    "round": 13,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 13,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-13.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-13.log"
+    }
+  },
+  {
+    "round": 14,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 14,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-14.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-14.log"
+    }
+  },
+  {
+    "round": 15,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 15,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-15.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-15.log"
+    }
+  },
+  {
+    "round": 16,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 16,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-16.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-16.log"
+    }
+  },
+  {
+    "round": 17,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 17,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-17.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-17.log"
+    }
+  },
+  {
+    "round": 18,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 18,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-18.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-18.log"
+    }
+  },
+  {
+    "round": 19,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 19,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-19.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-19.log"
+    }
+  },
+  {
+    "round": 20,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 20,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-20.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-20.log"
+    }
+  },
+  {
+    "round": 21,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 21,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-21.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-21.log"
+    }
+  },
+  {
+    "round": 22,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 22,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-22.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-22.log"
+    }
+  },
+  {
+    "round": 23,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 23,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-23.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-23.log"
+    }
+  },
+  {
+    "round": 24,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 24,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-24.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-24.log"
+    }
+  },
+  {
+    "round": 25,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 25,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-25.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-25.log"
+    }
+  },
+  {
+    "round": 26,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 26,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-26.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-26.log"
+    }
+  },
+  {
+    "round": 27,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 27,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-27.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-27.log"
+    }
+  },
+  {
+    "round": 28,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 28,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-28.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-28.log"
+    }
+  },
+  {
+    "round": 29,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64",
+    "source_round": 29,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-base-29.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64/closed64-final-29.log"
+    }
+  },
+  {
+    "round": 30,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 0,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-00.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-00.log"
+    }
+  },
+  {
+    "round": 31,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 1,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-01.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-01.log"
+    }
+  },
+  {
+    "round": 32,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 2,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-02.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-02.log"
+    }
+  },
+  {
+    "round": 33,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 3,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-03.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-03.log"
+    }
+  },
+  {
+    "round": 34,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 4,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-04.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-04.log"
+    }
+  },
+  {
+    "round": 35,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 5,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-05.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-05.log"
+    }
+  },
+  {
+    "round": 36,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 6,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-06.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-06.log"
+    }
+  },
+  {
+    "round": 37,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 7,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-07.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-07.log"
+    }
+  },
+  {
+    "round": 38,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 8,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-08.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-08.log"
+    }
+  },
+  {
+    "round": 39,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 9,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-09.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-09.log"
+    }
+  },
+  {
+    "round": 40,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 10,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-10.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-10.log"
+    }
+  },
+  {
+    "round": 41,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 11,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-11.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-11.log"
+    }
+  },
+  {
+    "round": 42,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 12,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-12.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-12.log"
+    }
+  },
+  {
+    "round": 43,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 13,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-13.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-13.log"
+    }
+  },
+  {
+    "round": 44,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 14,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-14.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-14.log"
+    }
+  },
+  {
+    "round": 45,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 15,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-15.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-15.log"
+    }
+  },
+  {
+    "round": 46,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 16,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-16.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-16.log"
+    }
+  },
+  {
+    "round": 47,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 17,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-17.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-17.log"
+    }
+  },
+  {
+    "round": 48,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 18,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-18.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-18.log"
+    }
+  },
+  {
+    "round": 49,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 19,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-19.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-19.log"
+    }
+  },
+  {
+    "round": 50,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 20,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-20.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-20.log"
+    }
+  },
+  {
+    "round": 51,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 21,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-21.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-21.log"
+    }
+  },
+  {
+    "round": 52,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 22,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-22.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-22.log"
+    }
+  },
+  {
+    "round": 53,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 23,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-23.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-23.log"
+    }
+  },
+  {
+    "round": 54,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 24,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-24.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-24.log"
+    }
+  },
+  {
+    "round": 55,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 25,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-25.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-25.log"
+    }
+  },
+  {
+    "round": 56,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 26,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-26.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-26.log"
+    }
+  },
+  {
+    "round": 57,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 27,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-27.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-27.log"
+    }
+  },
+  {
+    "round": 58,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 28,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-28.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-28.log"
+    }
+  },
+  {
+    "round": 59,
+    "phase": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30",
+    "source_round": 29,
+    "logs": {
+      "base": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-base-29.log",
+      "final": "benchmarks/2026-11-10-values/reply-forward/closed64-extra30/closed64-final-29.log"
+    }
+  }
+]

@@ -1,0 +1,4 @@
+GUARD start reply-forward-reverted-gen-clippy: avail=3618MB swap_used=1320MB swap_free=2775MB vlimit=4000000
+GUARD end reply-forward-reverted-gen-clippy: rc=0 secs=0 peak_rss_one_proc=18MB peak_rss_all=35MB min_avail=3618MB swap_used_max=1320MB (start 1320MB, moved 0MB)
+    Checking grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.39s

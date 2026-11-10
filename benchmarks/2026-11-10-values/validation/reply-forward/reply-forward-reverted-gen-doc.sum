@@ -1,0 +1,5 @@
+GUARD start reply-forward-reverted-gen-doc: avail=3608MB swap_used=1320MB swap_free=2775MB vlimit=4000000
+GUARD end reply-forward-reverted-gen-doc: rc=0 secs=4 peak_rss_one_proc=1158MB peak_rss_all=1239MB min_avail=2561MB swap_used_max=1320MB (start 1320MB, moved 0MB)
+ Documenting grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.07s
+   Generated /root/grammers/target/doc/grammers_tl_gen/index.html

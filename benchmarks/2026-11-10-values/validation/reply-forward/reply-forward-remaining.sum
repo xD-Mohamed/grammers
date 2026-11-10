@@ -1,0 +1,10 @@
+reply-forward-open5000 exit 0
+GUARD end reply-forward-open5000: rc=0 secs=82 peak_rss_one_proc=29MB peak_rss_all=83MB min_avail=3606MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+reply-forward-open500 exit 0
+GUARD end reply-forward-open500: rc=0 secs=242 peak_rss_one_proc=28MB peak_rss_all=84MB min_avail=3355MB swap_used_max=1325MB (start 1325MB, moved 0MB)
+reply-forward-tcache0 exit 0
+GUARD end reply-forward-tcache0: rc=0 secs=81 peak_rss_one_proc=28MB peak_rss_all=76MB min_avail=1772MB swap_used_max=1323MB (start 1323MB, moved 0MB)
+reply-forward-raw exit 0
+GUARD end reply-forward-raw: rc=0 secs=210 peak_rss_one_proc=22MB peak_rss_all=77MB min_avail=3580MB swap_used_max=1323MB (start 1323MB, moved 0MB)
+reply-forward-footprint exit 0
+GUARD end reply-forward-footprint: rc=0 secs=36 peak_rss_one_proc=18MB peak_rss_all=53MB min_avail=3609MB swap_used_max=1323MB (start 1323MB, moved 0MB)

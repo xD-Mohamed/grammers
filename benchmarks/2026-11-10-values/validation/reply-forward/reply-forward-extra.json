@@ -1,0 +1,20 @@
+[
+  [
+    "closed64",
+    [
+      "python3",
+      "scripts/compare-bot-workload.py",
+      "--binary",
+      "base=/tmp/claude-0/de27/bins/media-leaves-bot",
+      "--binary",
+      "final=/tmp/claude-0/de27/bins/reply-forward-bot",
+      "--scenario",
+      "closed64",
+      "--rounds",
+      "30",
+      "--output",
+      "benchmarks/2026-11-10-values/reply-forward/closed64-extra30"
+    ],
+    {}
+  ]
+]

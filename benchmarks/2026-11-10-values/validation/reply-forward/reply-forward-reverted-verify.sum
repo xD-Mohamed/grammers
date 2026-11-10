@@ -1,0 +1,15 @@
+reply-forward-reverted-fmt exit 0
+GUARD end reply-forward-reverted-fmt: rc=0 secs=1 peak_rss_one_proc=57MB peak_rss_all=94MB min_avail=3625MB swap_used_max=1320MB (start 1320MB, moved 0MB)
+reply-forward-reverted-gen-tests exit 0
+GUARD end reply-forward-reverted-gen-tests: rc=0 secs=4 peak_rss_one_proc=157MB peak_rss_all=235MB min_avail=3567MB swap_used_max=1320MB (start 1320MB, moved 0MB)
+test result: ok. 0 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+reply-forward-reverted-types-tests exit 0
+GUARD end reply-forward-reverted-types-tests: rc=0 secs=69 peak_rss_one_proc=1255MB peak_rss_all=1335MB min_avail=2465MB swap_used_max=1320MB (start 1320MB, moved 0MB)
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+reply-forward-reverted-gen-clippy exit 0
+GUARD end reply-forward-reverted-gen-clippy: rc=0 secs=0 peak_rss_one_proc=18MB peak_rss_all=35MB min_avail=3618MB swap_used_max=1320MB (start 1320MB, moved 0MB)
+reply-forward-reverted-types-clippy exit 0
+GUARD end reply-forward-reverted-types-clippy: rc=0 secs=15 peak_rss_one_proc=1118MB peak_rss_all=1224MB min_avail=2611MB swap_used_max=1320MB (start 1320MB, moved 0MB)
+reply-forward-reverted-gen-doc exit 0
+GUARD end reply-forward-reverted-gen-doc: rc=0 secs=4 peak_rss_one_proc=1158MB peak_rss_all=1239MB min_avail=2561MB swap_used_max=1320MB (start 1320MB, moved 0MB)

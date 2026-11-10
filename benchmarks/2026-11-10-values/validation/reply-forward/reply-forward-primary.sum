@@ -1,0 +1,11 @@
+reply-forward-types-doc-unit exit 0
+GUARD end reply-forward-types-doc-unit: rc=0 secs=29 peak_rss_one_proc=3037MB peak_rss_all=3118MB min_avail=704MB swap_used_max=1319MB (start 1314MB, moved 5MB)
+	Maximum resident set size (kbytes): 3127272
+reply-forward-serde-api-check exit 0
+GUARD end reply-forward-serde-api-check: rc=0 secs=45 peak_rss_one_proc=3349MB peak_rss_all=3420MB min_avail=421MB swap_used_max=1350MB (start 1319MB, moved 31MB)
+	Maximum resident set size (kbytes): 3437328
+reply-forward-serde-api-clippy exit 0
+GUARD end reply-forward-serde-api-clippy: rc=0 secs=46 peak_rss_one_proc=3293MB peak_rss_all=3390MB min_avail=496MB swap_used_max=1350MB (start 1350MB, moved 0MB)
+	Maximum resident set size (kbytes): 3457660
+reply-forward-closed64 exit 0
+GUARD end reply-forward-closed64: rc=0 secs=303 peak_rss_one_proc=29MB peak_rss_all=68MB min_avail=1825MB swap_used_max=1350MB (start 1350MB, moved 0MB)

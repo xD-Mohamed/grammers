@@ -1,0 +1,4 @@
+Fresh independent source review: /root/shared_reply, inherited Codex session; native model/effort unavailable. No blocker in optional field boxing, real TL flags/order, owned conversion, partial cleanup or unchanged depth scopes.
+Analysis tool review: /root/validation_inventory approved identity/log integrity, input-summary reproduction, bootstrap equivalence and separate allocator provenance.
+Decision: byte traffic improves, but useful net benefit is unproven; no resolved CPU/count/retained-heap gain, populated fields add an allocation. Normal experiment commit c792112 and revert19b852f preserve history. Final numeric/artifact review follows.
+Final artifact review /root/validation_inventory: actual summaries, qualified rejection rationale, 400-session census and restored-code validation verified; all-feature Rustdoc peak 3504724 KiB. Approved, no remaining blocker.

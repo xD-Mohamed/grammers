@@ -1,0 +1,2 @@
+GUARD start reply-forward-reverted-fmt: avail=3638MB swap_used=1320MB swap_free=2775MB vlimit=4000000
+GUARD end reply-forward-reverted-fmt: rc=0 secs=1 peak_rss_one_proc=57MB peak_rss_all=94MB min_avail=3625MB swap_used_max=1320MB (start 1320MB, moved 0MB)

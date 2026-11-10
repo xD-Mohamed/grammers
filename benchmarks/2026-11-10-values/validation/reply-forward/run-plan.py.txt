@@ -1,0 +1,13 @@
+import json,os,subprocess,sys
+from pathlib import Path
+p=Path('/tmp/claude-0/de27')
+prefix,plan=sys.argv[1:]
+for label,args,extra in json.loads(Path(plan).read_text()):
+ name=prefix+'-'+label
+ env=dict(os.environ,PATH='/root/.cargo/bin:'+os.environ['PATH'],**extra)
+ with (p/'logs'/(name+'.sum')).open('w') as out:
+  r=subprocess.run([str(p/'guard.sh'),name,*args],cwd='/root/grammers',env=env,stdout=out,stderr=subprocess.STDOUT)
+ print(name,'exit',r.returncode,flush=True)
+ for line in (p/'logs'/(name+'.sum')).read_text().splitlines():
+  if line.startswith(('GUARD end','error','warning')) or 'Maximum resident set size' in line: print(line,flush=True)
+ if r.returncode: raise SystemExit(r.returncode)

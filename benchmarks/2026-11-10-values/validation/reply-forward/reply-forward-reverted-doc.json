@@ -1,0 +1,27 @@
+[
+  [
+    "types-doc-unit",
+    [
+      "/usr/bin/time",
+      "-v",
+      "cargo",
+      "doc",
+      "--locked",
+      "-j",
+      "1",
+      "-p",
+      "grammers-tl-types",
+      "--all-features",
+      "--no-deps"
+    ],
+    {
+      "GUARD_VLIMIT": "none",
+      "GUARD_NICE": "19",
+      "GUARD_MIN_AVAIL": "300",
+      "GUARD_MIN_AVAIL_SECS": "8",
+      "GUARD_MIN_SWAPFREE": "1200",
+      "GUARD_MAX_SWAP_GROWTH": "2000",
+      "RUSTDOCFLAGS": "-D warnings"
+    }
+  ]
+]

@@ -1,0 +1,3 @@
+reply-forward-reverted-types-doc-unit exit 0
+GUARD end reply-forward-reverted-types-doc-unit: rc=0 secs=28 peak_rss_one_proc=3204MB peak_rss_all=3272MB min_avail=495MB swap_used_max=1327MB (start 1320MB, moved 7MB)
+	Maximum resident set size (kbytes): 3504724
