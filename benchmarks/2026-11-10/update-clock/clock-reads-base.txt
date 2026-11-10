@@ -1,0 +1,18 @@
+samples per thread: {'8': 18878}
+main thread samples: 18878
+100.0%  <>::now
+--- with callers
+ 15.8%  <>::now <- <>::check_deadlines <- <>::next::{closure#0} <- <>::next::{closure#0}
+ 15.5%  <>::now <- <>::forget_if_old <- <>::cache_peer_map::{closure#0} <- <>::next::{closure#0}
+ 15.5%  <>::now <- <>::next::{closure#0} <- <>::next::{closure#0} <- bot_workload::run_client_with::{closure}
+ 15.4%  <>::now <- <>::elapsed <- bot_workload::timed_act::{closure#0} <- bot_workload::run_client_with::{closure}
+ 15.4%  <>::now <- <>::process_updates_inner <- <>::process_updates <- <>::process_socket_updates::{closure#0}
+ 15.4%  <>::now <- bot_workload::run_client_with::{closure} <- <tokio::runtime::task::core::Core<bot_workload::run_client_with<>::{closure#0}::{closure#1}::{closure#0}, alloc::sync::Arc<>>>::poll <- <
+  3.9%  <>::now <- <>::forget_if_old <- <>::cache_peer_map::{closure#0} <- <>::send_message::<>::{closure#0}
+  1.2%  <>::now <- <grammers_mtsender::sender::Sender<>>::on_net_write <- <core::future::poll_fn::PollFn<> as core::future::future::Future>::poll <- _RNCNvNtCsbeNMVzhpql4_17grammers_mtsender11sender_p
+  0.9%  <>::now <- _RNvMNtNtCsdnF9ZRDE70f_5tokio7runtime4timeNtB2_6Driver13park_internal <- <>::park_internal <- <>::park
+  0.6%  <>::now <- <>::elapsed <- <>::end_processing_scheduled_tasks <- <std::thread::local::LocalKey<>>::with::<tokio::runtime::context::set_scheduler<(alloc::boxed::Box<>, core::option::Option<>), <
+  0.5%  <>::now <- <>::start_processing_scheduled_tasks <- <std::thread::local::LocalKey<>>::with::<tokio::runtime::context::set_scheduler<(alloc::boxed::Box<>, core::option::Option<>), <>::enter<<>::
+# BOT rate=153341 updates_per_s=191676 user_us=4.41 sys_us=2.11 cpu_us=6.52
+SYSC comm=tokio-rt-worker clock_mono=182297 clock_real=2322277 send=59800 recv=34860 epoll_wait=40092 getrandom=1
+SYSC comm=client-thread clock_mono=4968019 clock_real=59802 send=59801 recv=23967 epoll_wait=23972 getrandom=3741 read=28 write=7

@@ -1,5 +1,28 @@
 # grammers fork
 
+## Update path clock, and `io_uring` assessed (2026-11-10)
+
+[Measurements, the tools and what is left](benchmarks/2026-11-10/README.md).
+
+- The rule below about the clock covers the update path too. `UpdatesReceiver::next` reads
+  it once for a turn of its loop (`turn_now`), for the deadline check and for the batch it
+  applies, through `MessageBoxes::check_deadlines_at` and `process_updates_at`. That
+  reading is dropped at the start of a turn and after everything in it that can wait: a
+  step added after an `await` must not see a time from before it.
+- A recovery pause is an `Option` and is compared with the clock only while one is set.
+- The update stream ages the table of stored peers with `UpdatesReceiver::last_clock_read`.
+  A peer's lifetime still starts at the clock, and callers without a recent reading read
+  it: do not reuse an old reading there, or a client that stopped streaming never forgets.
+- Find who reads the clock with `benchmarks/2026-11-10/tools/clockbt.c` after touching
+  `UpdatesReceiver::next`, `MessageBoxes::process_updates` or `Client::cache_peer_map`.
+- `io_uring` is not used. Its ceiling on this kernel (5.15), in a loop with no library
+  around it, is 4.5% of client CPU at 64 connections per thread and a loss of 18 to 21%
+  for a client that only does I/O. Measure the ceiling again with
+  `benchmarks/2026-11-10/tools/uring_ceiling.c` on a newer kernel before building on it.
+- The typed path's remaining measured costs (`update::Message` cloning its message, a
+  send's reply decoded for the caller and again for the update stream) need public type
+  changes. They are the owner's decision, not an optimization to slip in.
+
 ## TL layer 233 (2026-11-10)
 
 [Measured sizes, the `pts` evidence and every handwritten site](UPSTREAM.md).

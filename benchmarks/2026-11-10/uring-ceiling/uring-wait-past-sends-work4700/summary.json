@@ -1,0 +1,272 @@
+{
+  "a": "epoll",
+  "b": "uring-wait-past-sends",
+  "pairs": 12,
+  "invocation": "2026-11-10T01:02:46Z",
+  "binary": {
+    "path": "<binary>",
+    "sha256": "40aea0222c8268323823cf5f6ea9b72dbe821243a3136b3f1c04bee48e7a43cd"
+  },
+  "arguments": [
+    "--work-iters",
+    "4700",
+    "--seconds",
+    "3.0",
+    "--pin",
+    "0,2"
+  ],
+  "configuration": {
+    "conns": 64,
+    "inflight": 16,
+    "req": 270,
+    "rep": 1592,
+    "work_iters": 4700,
+    "pin": "0,2",
+    "kernel": "5.15.0-124-generic"
+  },
+  "method": "median of the paired percentage changes 100*(B/A-1); unadjusted paired bootstrap 95% interval, 10000 resamples of the pairs; an interval that includes zero is no measured change",
+  "seconds_median": {
+    "A": 3.0000245,
+    "B": 3.000029
+  },
+  "compared": {
+    "rps": {
+      "a_median": 80255.85,
+      "b_median": 79846.0,
+      "paired_delta_percent": 1.0557635842483148,
+      "bootstrap_95_percent": [
+        -4.246850581698125,
+        3.9837921242842467
+      ],
+      "verdict": "no measured change",
+      "paired_changes_percent": [
+        1.7244137903872803,
+        0.1621561529251414,
+        2.0808064786997704,
+        -8.343404492637807,
+        7.396292802325299,
+        -4.364342715987412,
+        0.3871133781093494,
+        -10.130332105955064,
+        2.7249754190361797,
+        5.636953403254319,
+        5.242608829532314,
+        -4.129358447408837
+      ]
+    },
+    "cpu_us_per_rpc": {
+      "a_median": 12.45965,
+      "b_median": 12.484950000000001,
+      "paired_delta_percent": -1.0956122298703852,
+      "bootstrap_95_percent": [
+        -3.8407523815226554,
+        4.3884171950779205
+      ],
+      "verdict": "no measured change",
+      "paired_changes_percent": [
+        -1.748768873214257,
+        -0.23561828272629093,
+        -2.0937872588628004,
+        8.55880152419397,
+        -6.982291233493665,
+        4.525019308158207,
+        -0.4424555865265134,
+        11.126804375057798,
+        -2.6544000621093855,
+        -5.374400443968764,
+        -5.027104700935925,
+        4.251815081997634
+      ]
+    },
+    "user_us_per_rpc": {
+      "a_median": 6.34455,
+      "b_median": 5.8639,
+      "paired_delta_percent": -8.071899966023754,
+      "bootstrap_95_percent": [
+        -12.999174473096614,
+        -2.737125060972062
+      ],
+      "verdict": "B lower",
+      "paired_changes_percent": [
+        -16.73575288626874,
+        -10.383418418188228,
+        -9.253316877506945,
+        -14.004527732360717,
+        -6.75050975142808,
+        -2.189543016450113,
+        -15.341613931504472,
+        0.4013716163898673,
+        0.26119651294338464,
+        -11.993821213832511,
+        -3.2847071054940113,
+        -6.890483054540564
+      ]
+    },
+    "sys_us_per_rpc": {
+      "a_median": 6.20935,
+      "b_median": 6.652049999999999,
+      "paired_delta_percent": 10.778616116003569,
+      "bootstrap_95_percent": [
+        -2.2682830468697346,
+        15.889699443970418
+      ],
+      "verdict": "no measured change",
+      "paired_changes_percent": [
+        15.102808901472642,
+        10.351887396033277,
+        6.871703726600065,
+        36.512203198348246,
+        -7.217897601417633,
+        11.205344835973863,
+        16.676589986468194,
+        23.32027881575165,
+        -5.205467487663218,
+        0.6689013939237487,
+        -6.5600480212665735,
+        13.794835727921239
+      ]
+    },
+    "server_cpu_us_per_rpc": {
+      "a_median": 8.46255,
+      "b_median": 7.1545,
+      "paired_delta_percent": -17.340259012269996,
+      "bootstrap_95_percent": [
+        -20.486689262701457,
+        -10.187327358068966
+      ],
+      "verdict": "B lower",
+      "paired_changes_percent": [
+        -18.01798530675477,
+        -16.05483950783905,
+        -20.51946705376122,
+        -4.576412952563025,
+        -24.54590026148673,
+        -12.225345374080499,
+        -16.97466803370926,
+        0.5660688674814951,
+        -17.705849990830735,
+        -22.322116619573595,
+        -20.453911471641696,
+        -8.149309342057432
+      ]
+    },
+    "p50_us": {
+      "a_median": 193.1725,
+      "b_median": 190.928,
+      "paired_delta_percent": -1.4400353828599055,
+      "bootstrap_95_percent": [
+        -5.636797377101461,
+        4.152410748122836
+      ],
+      "verdict": "no measured change",
+      "paired_changes_percent": [
+        -3.49658507614643,
+        1.731647937219516,
+        -1.5619291194738816,
+        13.006203912345837,
+        -10.902794904445779,
+        4.722309218081211,
+        -2.959137306187587,
+        12.83723655337472,
+        -1.3181416462459294,
+        -8.776217492876025,
+        -7.777009678056491,
+        3.5825122781644625
+      ]
+    },
+    "p95_us": {
+      "a_median": 229.413,
+      "b_median": 227.989,
+      "paired_delta_percent": -1.5906818035433756,
+      "bootstrap_95_percent": [
+        -6.203348873287573,
+        2.4812597401785874
+      ],
+      "verdict": "no measured change",
+      "paired_changes_percent": [
+        -5.537942987536681,
+        -0.008726308073581102,
+        -8.253377854798039,
+        10.492977541703418,
+        -7.352525382341602,
+        2.815914884184867,
+        2.146604596172308,
+        9.184000743719057,
+        -3.991291421544896,
+        -6.868754759038465,
+        -2.745862141210975,
+        -0.4355014658757761
+      ]
+    },
+    "p99_us": {
+      "a_median": 252.236,
+      "b_median": 251.54000000000002,
+      "paired_delta_percent": -3.143035918626019,
+      "bootstrap_95_percent": [
+        -6.512586367639328,
+        5.491373440946967
+      ],
+      "verdict": "no measured change",
+      "paired_changes_percent": [
+        -5.696542664357795,
+        -0.3415367971350447,
+        -7.040111472679844,
+        8.265871874047125,
+        -5.985061262598812,
+        8.437846423666828,
+        2.7168750078468085,
+        9.73327900049994,
+        -7.468607369065261,
+        -10.38502548877024,
+        -3.9974399905838953,
+        -2.2886318466681432
+      ]
+    }
+  },
+  "per_request": {
+    "send_per_rpc": {
+      "a_median": 1.0,
+      "b_median": 0.0
+    },
+    "recv_per_rpc": {
+      "a_median": 1.0,
+      "b_median": 0.0
+    },
+    "epoll_wait_per_rpc": {
+      "a_median": 0.06785,
+      "b_median": 0.0
+    },
+    "uring_enter_per_rpc": {
+      "a_median": 0.0,
+      "b_median": 0.0626
+    },
+    "sqe_per_rpc": {
+      "a_median": 0.0,
+      "b_median": 2.0
+    },
+    "cqe_per_rpc": {
+      "a_median": 0.0,
+      "b_median": 2.0
+    },
+    "resched_irq_per_rpc": {
+      "a_median": 0.0,
+      "b_median": 0.3772
+    }
+  },
+  "checks": {
+    "A": {
+      "max_other_cpu_fraction": 4.000965566356681e-06,
+      "send_retries": 0,
+      "client_cpu_share_median": 0.9997103349143246
+    },
+    "B": {
+      "max_other_cpu_fraction": 9.341042807330317e-06,
+      "send_retries": 0,
+      "client_cpu_share_median": 0.9990866742827117
+    }
+  },
+  "diagnostics": {
+    "A": "uring_ceiling: epoll on Linux 5.15.0-124-generic, clocksource kvm-clock, TSC 4191.900 MHz before the run and 4191.888 MHz over the window\nuring_ceiling: 3.000 s, 243755 requests; client 1587718 us user + 1411893 us system (CPU clock 2999611), server 2013980, other threads 9; client switches 3 voluntary, 33 involuntary; 6 rescheduling interrupts on the host\n",
+    "B": "uring_ceiling: uring-wait-past-sends on Linux 5.15.0-124-generic, clocksource kvm-clock, TSC 4191.910 MHz before the run and 4191.925 MHz over the window\nuring_ceiling: ring features 0x7ff, 256 submission and 512 completion entries, 2.000 SQE and 2.000 CQE per request\nuring_ceiling: 3.000 s, 247958 requests; client 1344796 us user + 1653159 us system (CPU clock 2997955), server 1679580, other threads 14; client switches 16 voluntary, 37 involuntary; 93340 rescheduling interrupts on the host\n"
+  }
+}

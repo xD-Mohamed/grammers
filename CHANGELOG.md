@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased: the update path's clock
+
+[Measurements](benchmarks/2026-11-10/README.md). Nothing that compiled before stops compiling.
+
+- Receiving updates reads the clock once per batch instead of four times. Where the clock
+  is a system call, as on a KVM guest without a vDSO clock source, one busy bot connection
+  with updates handles 14% more requests per second at saturation with 12% less CPU per
+  request; where the kernel serves the clock from the vDSO nothing measurable changes.
+- `MessageBoxes::check_deadlines_at` and `MessageBoxes::process_updates_at` are new: the
+  same as the methods without a time, at a reading of the clock the caller already has.
+  `UpdatesReceiver::last_clock_read` is new and returns the receiver's last reading.
+- `io_uring` was measured as a ceiling for the socket path and not adopted on Linux 5.15:
+  see the measurements. Nothing in the library changed for it.
+
 ## Unreleased: TL layer 233
 
 [Sizes, evidence and sites](UPSTREAM.md). The handwritten API is unchanged.
