@@ -2,6 +2,102 @@
 
 Canonical upstream: https://codeberg.org/Lonami/grammers
 
+## Layer 233 (2026-11-10)
+
+The schema of upstream `8fb8135` is taken: `grammers-tl-types/tl/api.tl` is byte-identical
+to that commit's, and the advertised layer follows it (`tl::LAYER` is read from the file).
+Nothing else of the commit was copied: its two handwritten lines are among the sites listed
+below. From 230 it adds 52 definitions (35 constructors, 17 functions) and changes 11;
+none is removed or renamed.
+
+### Size of `Update`: two boxing rules, the guard unchanged
+
+Built and measured, where the 2026-11-09 review had only modelled it. With the schema
+alone `Update` is 1,264 B, against 752 B at layer 230 and the 1,024 B guard in
+`depth_tests.rs`. Four variants pass the guard:
+
+| Variant | Inline | Because of |
+|---|---:|---|
+| `updateInlineBotWidgetQuery` | 1,264 B | `wallet_card`, a `wallet.Card` of 1,032 B |
+| `updateBotWidgetQuery` | 1,256 B | the same |
+| `updateBotWidgetCopyQuery` | 1,192 B | the same |
+| `updateSentWalletTransaction` | 1,184 B | `WalletTransaction.nft`, a `wallet.NftItem` of 976 B, of which the new `gift` is 432 B |
+
+The guard stays at 1,024 B and `Update` is 760 B with two rules in `grammers-tl-gen`, both
+on things this layer adds, so that no generated type that existed at layer 230 changes shape:
+
+- `wallet.card` is boxed as a definition. `BOXED_FOR_SIZE` now matches full names
+  (`namespace.name`), which it could not. The three widget updates fall to 240 B or less,
+  and one allocates only when it carries a card.
+- `wallet.nftItem`'s `gift` is an `Option<Box<StarGift>>`. `BOXED_FIELDS_FOR_SIZE` is new:
+  a list of optional fields held in a `Box`. `wallet.NftItem` is 552 B instead of 976 B.
+
+Boxing `wallet.nftItem` as a definition instead would have given 752 B with one rule, but
+it changes the payload of a variant that existed at layer 230 (`wallet::NftItem::Item`),
+which code matching on it by value would have to follow. The 8 B are the price of not
+asking that. Raising the guard was not needed. `Updates` is 1,272 B against its 2,048 B
+guard; `messageReplyHeader` gained `quote_rich`, an `Option<Vec<_>>` of 24 B.
+
+Wire format is unchanged by either rule: `values_boxed_for_size_keep_their_wire_format`
+round-trips both, with and without the boxed field and on truncated input.
+
+Against the layer 230 build on the closed-loop bot workload (64 callers, 10 rounds): no
+measured change in RPC/s (+0.54% [-2.07, +3.49]), CPU per request (-0.23% [-2.52, +2.09])
+or p99 (-0.74% [-5.06, +2.35]). Bytes allocated per request are +1.13% [+0.15, +1.97] and
+live heap +1.95% [+0.74, +2.59], from the types the schema enlarged.
+[Measurement](benchmarks/2026-11-10/layer233/README.md).
+
+Not verified on this host: `grammers-tl-types` with `impl-serde`. Compiling it with every
+feature passes the 4 GB limit that builds run under here (a type-check aborted at 3.1 GB
+resident). No crate of this workspace enables that feature; the shape the generator emits
+for it, a derive on `Option<Box<T>>`, was compiled on its own.
+
+### `updateMessageWidgetData` belongs to the common `pts` sequence
+
+It carries `pts` and `pts_count`. Telegram's page for the constructor is not written yet
+(core.telegram.org answered "The page has not been saved" for it and for the other five new
+updates on 2026-11-09), so the evidence is the three official clients, each read on
+2026-11-09 from a source already at layer 233:
+
+| Client | Where | What it does |
+|---|---|---|
+| TDLib | `td/telegram/UpdatesManager.cpp`: `is_pts_update`, `get_update_pts`, and `on_update(updateMessageWidgetData)` calling `add_pending_pts_update` | Common sequence. `check_pts_update` accepts it only for a user or basic group `peer`, as it does `updatePinnedMessages`; for a channel it logs "Receive wrong PTS update" and drops it |
+| Telegram Desktop | `Telegram/SourceFiles/api/api_updates.cpp`: `updateAndApply(d.vpts().v, d.vpts_count().v, update)`, beside `updateEditMessage` | Common sequence. Channel updates go through `channel->ptsUpdateAndApply`; this one has no such branch |
+| Telegram for Android | `MessagesController.java`: `getUpdateType` returns 0 for it, with `updateNewMessage` and `updatePinnedMessages`; `getUpdatePts`, `getUpdatePtsCount` | Common sequence. The channel list (type 2) does not name it |
+
+The schema has no channel form of it, as `updatePinnedChannelMessages` is for pins. So in
+`PtsInfo` it is `Key::Common`, and `valid_update` rejects one whose `peer` is a channel,
+as for `updatePinnedMessages`: the batch asks for the account difference and no position
+moves. Accepting it instead could advance the account's `pts` on an event the server did
+not count there, which loses an update; rejecting costs one request.
+
+The other five new updates carry neither `pts` nor `qts` in the schema, and TDLib applies
+each at once: `updateEditForumTopic`, `updateBotWidgetQuery`,
+`updateInlineBotWidgetQuery`, `updateBotWidgetCopyQuery`, `updateTranscribedAudioFile`.
+Each has an explicit arm in `PtsInfo`.
+
+### Handwritten sites
+
+| Schema change | Where | What |
+|---|---|---|
+| `inputReplyToMessage.quote_rich`, `messageReplyHeader.quote_rich` | `message_box/adaptor.rs` | The message rebuilt for `updateShortSentMessage` carries the request's `quote_rich` |
+| the same | `client/messages.rs`, `message/message.rs` | Unset, as the other quote fields there |
+| `channel.in_news`, `forum_sidebar`, `pinned_msg_id` | `peer/channel.rs` | Unset in the channel built from `channelForbidden` |
+| `user.bot_forum_sidebar` | test fixtures and both benchmark mocks | Unset: the same bytes on the wire |
+| `messageMediaWidget` | `media/media.rs` | `Media::from_raw` returns `None`, as for the other media it has no type for |
+
+Nothing handwritten refers to the rest: `channelFull.share_theme`, `userFull.wallet_card`
+and `share_theme`, `urlAuthResultRequest`, `inputMediaWidget`, `inputMediaWidgetId`,
+`messageActionNoPaidMessagesTokenUsed`, and the functions `channels.toggleForum` (new
+`sidebar`), `messages.acceptUrlAuth` (new `tonconnect_session`) and
+`payments.getStarGiftWithdrawalUrl` (`tmp_password: bytes` replaces `password`). Those
+reach callers as generated types only. A caller that builds one of the changed types with
+a struct literal, or calls one of those three functions, has to add the new fields: that
+is Telegram's change to the request, not this fork's.
+
+The method reference marks the changed and new methods as unconfirmed until
+`refresh-telegram-docs.py` fetches their pages, which the documentation workflow does.
+
 Review intake (2026-11-09): fetched `refs/heads/master` from the canonical Git endpoint at
 `e61cf8585e1e9969ab81eda9fb4725a1500e2d86` and reviewed all 10 commits after the previous
 review tip `7b414b1`, which is its ancestor. The range holds no handwritten feature and no
@@ -13,7 +109,7 @@ cherry-picked: three ideas were written for this fork's own crates, each in its 
 | `174bd26` | Switch parser definition and type to store full name | Parser refactor, breaking | Not adopted: build-time only, and it would break field access on `Definition` and `Type` for no runtime effect |
 | `3f94fd9` | Separate NormalParameterType from the enum | Parser refactor, breaking | Not adopted, for the same reason |
 | `b4184af` | Address clippy lints | Chore | Not applicable: it rewrites acknowledgement code in upstream's `push` that this fork replaced; the fork passes strict Clippy |
-| `8fb8135` | Update to layer 233 | Schema | **Deferred**, see below |
+| `8fb8135` | Update to layer 233 | Schema | Deferred in this intake; taken on 2026-11-10, see above |
 | `d16333b` | Derive Clone for all parser types | Additive | Adopted in our form, `ccd7a1a`: the existing parser types keep their fields and gain `Clone`, and so do both error enums, which upstream left out |
 | `81fcef4` | Upgrade dependencies | Chore | Not adopted: manifest minimums only, and the fork has a committed lock. `aes` and `flate2` are on measured paths; moving them needs the byte-identity tests and benchmarks |
 | `b8b4be1` | Delete unused bytes dependency from mtproto | Chore | Adopted, `ecf4d86`: no source file of `grammers-mtproto` used it here either |
@@ -21,7 +117,8 @@ cherry-picked: three ideas were written for this fork's own crates, each in its 
 | `9d5de24` | Use imported alias instead of full crate name | Cosmetic | Not adopted: no behaviour |
 | `e61cf85` | Bump to v0.12.0 | Release label | Not applicable: the fork's versions are its own |
 
-Layer 233 is not taken in this intake, and layer 230 stays. It is not a safe drop-in:
+Layer 233 was not taken in this intake, and layer 230 stayed (since taken: see above, where
+the size is measured and the `pts` question answered). It was not a safe drop-in:
 
 - `Update` would outgrow its size guard. `wallet.nftItem` gains an inline `StarGift`, and
   it sits inline in `updateSentWalletTransaction` and, through `wallet.card`, in three new
@@ -167,9 +264,11 @@ compilation alone does not establish lower CPU use or better latency.
   flags, request/response shapes and the advertised layer; regenerate through
   the existing build pipeline and compile all examples. Never copy a newer
   layer number onto an older schema.
-- `tl-gen` boxes `message`, `messageService` and `ephemeralMessage` for size, which upstream
-  does not. Merge schema changes through it, and check the size guards in
-  `grammers-tl-types/src/depth_tests.rs` when one of those definitions is renamed.
+- `tl-gen` boxes `message`, `messageService`, `ephemeralMessage` and `wallet.card` for size,
+  and `wallet.nftItem`'s `gift` as a field, which upstream does not. Merge schema changes
+  through it, and check the size guards in `grammers-tl-types/src/depth_tests.rs` when one
+  of those definitions or that field is renamed. Build a new layer and read the guard's
+  failure message before anything else: it prints the size.
 - Preserve the contracts listed in `AGENTS.md`: raw request compatibility,
   update suppression, session-import isolation, lifetime tracking, cancellation,
   wire validation, routing and no replay after an uncertain response.

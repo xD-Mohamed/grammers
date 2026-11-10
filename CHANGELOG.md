@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased: TL layer 233
+
+[Sizes, evidence and sites](UPSTREAM.md). The handwritten API is unchanged.
+
+- The schema is layer 233, byte-identical to upstream `8fb8135`, and the advertised layer
+  follows it: 35 new constructors, 17 new functions, 11 changed definitions.
+- `Update` stays under its size guard: 760 B, where this schema alone made it 1,264 B
+  (752 B at layer 230). `wallet.card` is held in a `Box`, and `wallet.nftItem`'s new
+  `gift` is an `Option<Box<StarGift>>`. Both are new in this layer; wire format is unchanged.
+- `updateMessageWidgetData` advances the common `pts` sequence, as in TDLib, Telegram
+  Desktop and Telegram for Android. Unhandled, each would have been followed by a
+  difference request. One naming a channel is rejected like `updatePinnedMessages`.
+- `Media::from_raw` returns `None` for `messageMediaWidget`; the raw value stays on the message.
+- Replies rebuilt for `updateShortSentMessage` carry the request's `quote_rich`.
+
+### Compatibility
+
+- Generated types follow Telegram's schema. Code building `tl::types::{User, Channel,
+  ChannelFull, UserFull, MessageReplyHeader, InputReplyToMessage, UrlAuthResultRequest}`
+  or `tl::types::wallet::NftItem` with a struct literal needs their new fields, and so do
+  calls to `channels.toggleForum` (`sidebar`), `messages.acceptUrlAuth`
+  (`tonconnect_session`) and `payments.getStarGiftWithdrawalUrl` (`tmp_password` replaces
+  `password`). Exhaustive matches on `Update`, `MessageMedia`, `InputMedia`,
+  `MessageAction`, `BotInlineMessage`, `InputBotInlineMessage` and `WalletTransactionPeer`
+  need the new variants.
+- No variant that existed at layer 230 changed its payload.
+
 ## Unreleased: request path, and Codeberg upstream reviewed through e61cf85
 
 [Measurements](benchmarks/2026-11-09/README.md). Nothing that compiled before stops compiling.
@@ -23,8 +50,8 @@
   and `session-import-files`. The memory-only library no longer depends on it (idea from
   upstream `a852bec`).
 - `grammers-mtproto` no longer depends on `bytes`, which it never used (as upstream `b8b4be1`).
-- Reviewed all 10 upstream commits after `7b414b1`. Layer 233 is deferred and layer 230 is
-  unchanged: see [UPSTREAM.md](UPSTREAM.md) for each commit and the reasons.
+- Reviewed all 10 upstream commits after `7b414b1`. Layer 233 was left for its own change,
+  the section above: see [UPSTREAM.md](UPSTREAM.md) for each commit and the reasons.
 
 ## Unreleased: reviewed Codeberg upstream through 7b414b1
 

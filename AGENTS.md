@@ -1,5 +1,23 @@
 # grammers fork
 
+## TL layer 233 (2026-11-10)
+
+[Measured sizes, the `pts` evidence and every handwritten site](UPSTREAM.md).
+
+- `Update` is 760 B (752 B at layer 230; 1,264 B with this schema and no new rule).
+  `tl-gen` boxes `wallet.card` as a definition and `wallet.nftItem`'s `gift` as a field:
+  `BOXED_FOR_SIZE` matches full names, and `BOXED_FIELDS_FOR_SIZE` holds optional fields
+  in a `Box`. Box what a layer adds, as a field when its definition already existed, so
+  that generated types callers already use keep their shape. The guard stays at 1,024 B.
+- For a new layer, build `grammers-tl-types` alone and read the sizes first: the guard in
+  `depth_tests.rs` prints them.
+- `updateMessageWidgetData` is on the common `pts` sequence and rejected for a channel
+  `peer`, like `updatePinnedMessages`. TDLib, Telegram Desktop and Telegram for Android
+  agree; Telegram's page for it was not written when this was decided.
+- A new update needs an arm in `PtsInfo::raw_from_update` (and in `valid_update` if it
+  names a peer): one with `pts` or `qts` that falls through as `None` is delivered, and
+  the update after it then looks like a gap and costs a difference request.
+
 ## Request path, crypto and socket buffers (2026-11-09)
 
 [Measurements, the path of one request and what is left](benchmarks/2026-11-09/README.md).
@@ -26,7 +44,7 @@
   is the call into those functions after runtime detection. Encryption cannot be joined
   with its hash: the key depends on it.
 - Padding bytes come from the system generator 512 at a time, each used once and cleared.
-- TL layer 233 is deferred for the reasons in UPSTREAM.md: `Update` would outgrow its guard.
+- TL layer 233 was deferred in this round and taken on 2026-11-10: see the section above.
 
 ## Bot workload and compliance follow-up (2026-10-31)
 

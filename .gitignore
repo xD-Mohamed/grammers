@@ -20,3 +20,4 @@ testbed.rs
 !benchmarks/2026-10-30/final/**/*.json
 !benchmarks/2026-10-31-bot/**/*.json
 !benchmarks/2026-11-09/**/*.json
+!benchmarks/2026-11-10/**/*.json
