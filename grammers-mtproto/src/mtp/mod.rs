@@ -68,6 +68,11 @@ pub struct DeserializationFailure {
 /// Results from the deserialization of a response.
 pub enum Deserialization {
     /// Copy of an `rpc_result` that contained an `Updates` type.
+    ///
+    /// It comes just before the [`Deserialization::RpcResult`] it was copied from. Only
+    /// a driver that built its [`Encrypted`] with `own_updates_in_results` gets `update`
+    /// empty, and reads the update from the body of that result. It is never empty
+    /// otherwise.
     OwnUpdate { msg_id: MsgId, update: Vec<u8> },
     /// `Updates` body received passively when it did not match any `mtproto` constructor.
     Update(Vec<u8>),

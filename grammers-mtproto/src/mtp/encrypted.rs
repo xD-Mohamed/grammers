@@ -111,6 +111,7 @@ pub struct Builder {
     compression_threshold: Option<usize>,
 
     receive_updates: bool,
+    own_updates_in_results: bool,
     ack_batch: usize,
 }
 
@@ -193,6 +194,7 @@ pub struct Encrypted {
     deserialization: Vec<Deserialization>,
 
     receive_updates: bool,
+    own_updates_in_results: bool,
 
     /// How many messages are there in the buffer.
     msg_count: usize,
@@ -208,6 +210,24 @@ impl Builder {
     /// Disabled mode also wraps API requests with invokeWithoutUpdates.
     pub fn receive_updates(mut self, enabled: bool) -> Self {
         self.receive_updates = enabled;
+        self
+    }
+
+    /// Do not copy a reply that holds updates.
+    ///
+    /// Such a reply is reported twice, as [`Deserialization::OwnUpdate`] for the stream
+    /// of updates and as the [`Deserialization::RpcResult`] that follows it, each with
+    /// bytes of its own. A driver that asks for this is given the first one with an
+    /// empty `update` and reads the update from the body of the second, which it is
+    /// about to hand over anyway: one copy of the reply where there were two.
+    ///
+    /// What such a driver must do: take an `OwnUpdate` whose `update` is empty as naming
+    /// the result that comes immediately after it, for the same message, and read the
+    /// update from that result's body before retiring the request it answers, which a
+    /// short reply is completed from. When updates are not received there is no
+    /// `OwnUpdate` in either form. Off by default.
+    pub fn own_updates_in_results(mut self, enabled: bool) -> Self {
+        self.own_updates_in_results = enabled;
         self
     }
 
@@ -282,6 +302,7 @@ impl Builder {
             ack_batch: self.ack_batch,
             compression_threshold: self.compression_threshold,
             receive_updates: self.receive_updates,
+            own_updates_in_results: self.own_updates_in_results,
             deserialization: Vec::new(),
             msg_count: 0,
         })
@@ -351,6 +372,7 @@ impl Encrypted {
             time_offset: 0,
             compression_threshold: crate::DEFAULT_COMPRESSION_THRESHOLD,
             receive_updates: true,
+            own_updates_in_results: false,
             first_salt: 0,
             ack_batch: 1,
         }
@@ -1002,10 +1024,14 @@ impl Encrypted {
         match u32::from_bytes(body) {
             Ok(body_id) => {
                 if UPDATE_IDS.contains(&body_id) {
-                    self.deserialization.push(Deserialization::OwnUpdate {
-                        msg_id,
-                        update: body.to_vec(),
-                    });
+                    // Empty for a driver that reads it from the result that follows.
+                    let update = if self.own_updates_in_results {
+                        Vec::new()
+                    } else {
+                        body.to_vec()
+                    };
+                    self.deserialization
+                        .push(Deserialization::OwnUpdate { msg_id, update });
                 }
             }
             Err(_err) => {
@@ -2168,9 +2194,13 @@ mod tests {
 
     #[test]
     fn stale_rpc_siblings_complete_without_replaying_own_updates() {
-        for stale_error in [false, true] {
+        // With a copy for the stream, and with the empty marker a driver can ask for.
+        for (stale_error, in_results) in [(false, false), (true, false), (false, true)] {
             for reverse in [false, true] {
-                let mut mtp = Encrypted::build().first_salt(999).finish(auth_key());
+                let mut mtp = Encrypted::build()
+                    .first_salt(999)
+                    .own_updates_in_results(in_results)
+                    .finish(auth_key());
                 fill_replay_cache(&mut mtp, 1026);
                 assert_eq!(mtp.received_floor, 15);
                 let update = replay_updates();
@@ -2200,10 +2230,17 @@ mod tests {
                 let packet = plaintext_body(mtp.session_id, 6003, 2, container_body(children), 16);
                 let results = mtp.process_plaintext(&packet).unwrap();
                 assert_eq!(results.len(), 3);
-                assert!(results.iter().any(
-                    |r| matches!(r, Deserialization::OwnUpdate { msg_id, update: body }
-                    if *msg_id == MsgId(4) && *body == update)
-                ));
+                let copied = if in_results { &[][..] } else { &update[..] };
+                let own = results
+                    .iter()
+                    .position(|r| {
+                        matches!(r, Deserialization::OwnUpdate { msg_id, update: body }
+                        if *msg_id == MsgId(4) && body == copied)
+                    })
+                    .expect("the live reply is reported for the stream");
+                // Its result is the very next one, which is where the marker points.
+                assert!(matches!(&results[own + 1],
+                    Deserialization::RpcResult(r) if r.msg_id == MsgId(4) && r.body == update));
                 assert!(!results.iter().any(|r| matches!(r, Deserialization::OwnUpdate { msg_id, .. } if *msg_id == MsgId(8))));
                 assert!(results.iter().any(|r| matches!(r, Deserialization::RpcResult(r) if r.msg_id == MsgId(4) && r.body == update)));
                 if stale_error {
@@ -3614,6 +3651,82 @@ mod tests {
                 panic!("RPC reply was dropped");
             };
             assert_eq!(reply.body, own_update);
+        }
+    }
+
+    /// A driver that reads an own update from its result is not given a second copy:
+    /// the marker comes first, empty, and the result that follows has the reply.
+    #[test]
+    fn own_updates_are_reported_empty_to_a_driver_that_reads_them_from_the_result() {
+        let reply = UPDATE_IDS[0].to_bytes();
+        let other = tl::enums::Pong::Pong(tl::types::Pong {
+            msg_id: 1,
+            ping_id: 2,
+        })
+        .to_bytes();
+        for (in_results, receive_updates) in [(false, true), (true, true), (true, false)] {
+            let mut mtp = Encrypted::build()
+                .receive_updates(receive_updates)
+                .own_updates_in_results(in_results)
+                .finish(auth_key());
+            let rpc = test_rpc_body(42, &reply);
+            mtp.process_message(manual_tl::MessageView {
+                msg_id: 5,
+                seq_no: 1,
+                body: Cow::Borrowed(&rpc),
+            })
+            .unwrap();
+            let results = std::mem::take(&mut mtp.deserialization);
+            match results.as_slice() {
+                [
+                    Deserialization::OwnUpdate { msg_id, update },
+                    Deserialization::RpcResult(result),
+                ] => {
+                    assert!(receive_updates);
+                    assert_eq!((*msg_id, result.msg_id), (MsgId(42), MsgId(42)));
+                    assert_eq!(update, if in_results { &[][..] } else { &reply[..] });
+                    assert_eq!(result.body, reply);
+                }
+                // Without updates nothing is reported for the stream, in either form.
+                [Deserialization::RpcResult(result)] => {
+                    assert!(!receive_updates);
+                    assert_eq!(result.body, reply);
+                }
+                _ => panic!("unexpected results for a reply holding updates"),
+            }
+
+            // Packed, the reply is unpacked once and its result has the unpacked bytes.
+            let rpc = test_rpc_body(44, &manual_tl::GzipPacked::new(&reply).to_bytes());
+            mtp.process_message(manual_tl::MessageView {
+                msg_id: 7,
+                seq_no: 3,
+                body: Cow::Borrowed(&rpc),
+            })
+            .unwrap();
+            let results = std::mem::take(&mut mtp.deserialization);
+            let Some(Deserialization::RpcResult(result)) = results.last() else {
+                panic!("the packed reply has no result");
+            };
+            assert_eq!((result.msg_id, &result.body), (MsgId(44), &reply));
+            assert_eq!(results.len(), if receive_updates { 2 } else { 1 });
+            if receive_updates {
+                assert!(matches!(&results[0],
+                    Deserialization::OwnUpdate { msg_id, update }
+                    if *msg_id == MsgId(44) && update.is_empty() == in_results));
+            }
+
+            // A reply that holds no updates has no marker.
+            let rpc = test_rpc_body(43, &other);
+            mtp.process_message(manual_tl::MessageView {
+                msg_id: 9,
+                seq_no: 5,
+                body: Cow::Borrowed(&rpc),
+            })
+            .unwrap();
+            assert!(matches!(
+                mtp.deserialization.as_slice(),
+                [Deserialization::RpcResult(result)] if result.body == other
+            ));
         }
     }
 

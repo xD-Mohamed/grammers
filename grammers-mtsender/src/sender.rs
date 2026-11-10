@@ -116,20 +116,20 @@ pub(crate) fn generate_random_id() -> i64 {
     LAST_ID.fetch_add(1, Ordering::SeqCst)
 }
 
-fn deserialize_updates_like(update: Vec<u8>) -> tl::deserialize::Result<UpdatesLike> {
-    match tl::enums::Updates::from_bytes(&update) {
+fn deserialize_updates_like(update: &[u8]) -> tl::deserialize::Result<UpdatesLike> {
+    match tl::enums::Updates::from_bytes(update) {
         Ok(u) => Ok(UpdatesLike::Updates(u)),
         Err(e) => {
             if let Ok(tl::enums::messages::AffectedMessages::Messages(u)) =
-                tl::enums::messages::AffectedMessages::from_bytes(&update)
+                tl::enums::messages::AffectedMessages::from_bytes(update)
             {
                 Ok(UpdatesLike::AffectedMessages(u))
             } else if let Ok(tl::enums::messages::InvitedUsers::Users(u)) =
-                tl::enums::messages::InvitedUsers::from_bytes(&update)
+                tl::enums::messages::InvitedUsers::from_bytes(update)
             {
                 Ok(UpdatesLike::InvitedUsers(u))
             } else if let Ok(tl::enums::messages::ChatInviteJoinResult::Ok(u)) =
-                tl::enums::messages::ChatInviteJoinResult::from_bytes(&update)
+                tl::enums::messages::ChatInviteJoinResult::from_bytes(update)
             {
                 Ok(UpdatesLike::ChatInviteJoinResult(u))
             } else {
@@ -151,7 +151,7 @@ where
 }
 
 fn deserialize_own_update<'a>(
-    update: Vec<u8>,
+    update: &[u8],
     request: impl FnOnce() -> Option<&'a [u8]>,
 ) -> tl::deserialize::Result<UpdatesLike> {
     Ok(match deserialize_updates_like(update)? {
@@ -992,13 +992,25 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         mut results: Vec<Deserialization>,
         updates: &mut Vec<UpdatesLike>,
     ) -> Result<(), ReadError> {
+        // The protocol was asked not to copy a reply that holds updates: it reports one
+        // empty, and the update is the body of the result that follows.
+        let mut own_result = None;
         for result in results.drain(..) {
             match result {
+                Deserialization::OwnUpdate { msg_id, update } if update.is_empty() => {
+                    own_result = Some(msg_id);
+                }
                 Deserialization::OwnUpdate { msg_id, update } => {
-                    self.process_own_update(updates, msg_id, update)
+                    self.process_own_update(updates, msg_id, &update)
                 }
                 Deserialization::Update(update) => self.process_update(updates, update),
-                Deserialization::RpcResult(result) => self.process_result(result)?,
+                Deserialization::RpcResult(result) => {
+                    // Before the request is retired: a short reply is completed from it.
+                    if own_result.take() == Some(result.msg_id) {
+                        self.process_own_update(updates, result.msg_id, &result.body);
+                    }
+                    self.process_result(result)?
+                }
                 Deserialization::RpcError(error) => self.process_error(error)?,
                 Deserialization::BadMessage(bad_msg) => self.process_bad_message(bad_msg)?,
                 Deserialization::Failure(failure) => self.process_deserialize_error(failure)?,
@@ -1008,12 +1020,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
         Ok(())
     }
 
-    fn process_own_update(
-        &mut self,
-        updates: &mut Vec<UpdatesLike>,
-        msg_id: MsgId,
-        update: Vec<u8>,
-    ) {
+    fn process_own_update(&mut self, updates: &mut Vec<UpdatesLike>, msg_id: MsgId, update: &[u8]) {
         match deserialize_own_update(update, || {
             self.peek_request(msg_id)
                 .map(|request| request.body.as_ref())
@@ -1032,7 +1039,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
     }
 
     fn process_update(&mut self, updates: &mut Vec<UpdatesLike>, update: Vec<u8>) {
-        match deserialize_updates_like(update) {
+        match deserialize_updates_like(&update) {
             Ok(u) => updates.push(u),
             Err(e) => {
                 // These are to be treated as a gap.
@@ -1281,6 +1288,7 @@ pub async fn generate_auth_key<T: Transport>(
         mtp: mtp::Encrypted::build()
             .time_offset(time_offset)
             .first_salt(first_salt)
+            .own_updates_in_results(true)
             .try_finish(auth_key)
             .map_err(|_| authentication::Error::RandomnessUnavailable)?,
         requests: sender.requests,
@@ -1308,6 +1316,7 @@ pub async fn connect_with_auth<T: Transport>(
     auth_key: [u8; 256],
 ) -> Result<Sender<T, mtp::Encrypted>, io::Error> {
     let mtp = mtp::Encrypted::build()
+        .own_updates_in_results(true)
         .try_finish(auth_key)
         .map_err(|_| io::Error::other("secure session randomness is unavailable"))?;
     Sender::connect(transport, mtp, addr).await
@@ -1441,7 +1450,7 @@ pub(crate) mod optimization_tests {
         mut request: impl FnMut() -> Option<&'a [u8]>,
     ) -> tl::deserialize::Result<UpdatesLike> {
         match (
-            deserialize_updates_like(update),
+            deserialize_updates_like(&update),
             request().and_then(deserialize_request::<tl::functions::messages::SendMessage>),
         ) {
             (
@@ -1474,7 +1483,7 @@ pub(crate) mod optimization_tests {
     #[test]
     fn own_full_updates_do_not_consult_the_original_request() {
         let bytes = full_updates_fixture();
-        let update = deserialize_own_update(bytes.clone(), || {
+        let update = deserialize_own_update(&bytes, || {
             panic!("full updates must not look up or decode request bodies")
         })
         .unwrap();
@@ -1484,7 +1493,7 @@ pub(crate) mod optimization_tests {
     #[test]
     fn malformed_own_updates_do_not_consult_the_original_request() {
         assert!(
-            deserialize_own_update(vec![1; 4], || {
+            deserialize_own_update(&[1; 4], || {
                 panic!("invalid updates must not decode request bodies")
             })
             .is_err()
@@ -1523,7 +1532,7 @@ pub(crate) mod optimization_tests {
                 // Sanity-check the retained baseline before timing either branch.
                 for optimized in [false, true] {
                     let result = if optimized {
-                        deserialize_own_update(update.clone(), || lookup(&requests, msg_id))
+                        deserialize_own_update(&update, || lookup(&requests, msg_id))
                     } else {
                         deserialize_own_update_eager(update.clone(), || lookup(&requests, msg_id))
                     }
@@ -1539,7 +1548,7 @@ pub(crate) mod optimization_tests {
                         for _ in 0..ITERATIONS {
                             let request = || lookup(black_box(&requests), msg_id);
                             let result = if optimized {
-                                deserialize_own_update(black_box(update.clone()), request)
+                                deserialize_own_update(black_box(&update), request)
                             } else {
                                 deserialize_own_update_eager(black_box(update.clone()), request)
                             };
@@ -2214,7 +2223,7 @@ pub(crate) mod optimization_tests {
         }
         body.extend(tl::types::MessageMediaEmpty::CONSTRUCTOR_ID.to_bytes());
         assert_eq!(
-            deserialize_updates_like(body.clone()).err(),
+            deserialize_updates_like(&body).err(),
             Some(tl::deserialize::Error::DepthLimitExceeded)
         );
         let mut updates = Vec::new();
@@ -2459,7 +2468,7 @@ pub(crate) mod optimization_tests {
                 .map(|body| saved_request(body, msg_id))
                 .collect();
             let mut updates = Vec::new();
-            sender.process_own_update(&mut updates, msg_id, bytes.clone());
+            sender.process_own_update(&mut updates, msg_id, &bytes);
             assert!(
                 matches!(updates.as_slice(), [UpdatesLike::Updates(update)] if update.to_bytes() == bytes)
             );
@@ -2473,7 +2482,7 @@ pub(crate) mod optimization_tests {
         let body = send_message_fixture("hello from a short update");
         sender.requests.push(saved_request(body.clone(), msg_id));
         let mut updates = Vec::new();
-        sender.process_own_update(&mut updates, msg_id, short_sent_fixture());
+        sender.process_own_update(&mut updates, msg_id, &short_sent_fixture());
         let [UpdatesLike::ShortSentMessage { request, update }] = updates.as_slice() else {
             panic!("expected an expanded short-sent message: {updates:?}");
         };
@@ -2510,7 +2519,7 @@ pub(crate) mod optimization_tests {
                 .map(|body| saved_request(body, msg_id))
                 .collect();
             let mut updates = Vec::new();
-            sender.process_own_update(&mut updates, msg_id, bytes.clone());
+            sender.process_own_update(&mut updates, msg_id, &bytes);
             assert!(
                 matches!(updates.as_slice(), [UpdatesLike::Updates(update)] if update.to_bytes() == bytes)
             );
@@ -2564,7 +2573,7 @@ pub(crate) mod optimization_tests {
                 .map(|body| saved_request(body, msg_id))
                 .collect();
             let mut updates = Vec::new();
-            sender.process_own_update(&mut updates, msg_id, affected.clone());
+            sender.process_own_update(&mut updates, msg_id, &affected);
             if is_channel {
                 assert!(
                     matches!(updates.as_slice(), [UpdatesLike::AffectedChannelMessages { affected, channel_id: 456, message_ids }]
@@ -2598,7 +2607,7 @@ pub(crate) mod optimization_tests {
         drop(rx);
         let bytes = short_sent_fixture();
         let mut updates = Vec::new();
-        sender.process_own_update(&mut updates, msg_id, bytes.clone());
+        sender.process_own_update(&mut updates, msg_id, &bytes);
         assert_eq!(tracker.stage(), crate::InvocationStage::Sent);
         assert_eq!(sender.requests.len(), 1);
         updates.clear();
@@ -2622,6 +2631,143 @@ pub(crate) mod optimization_tests {
             if request.message == "retained request")
         );
         assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+        assert!(sender.requests.is_empty());
+    }
+
+    /// Queue `body`, write it and return the identifier it was sent with.
+    fn sent<M: Mtp>(
+        sender: &mut Sender<transport::Full, M>,
+        body: Vec<u8>,
+        tx: oneshot::Sender<Result<Vec<u8>, InvocationError>>,
+    ) -> MsgId {
+        sender.enqueue_tracked_body(body.into(), tx, None);
+        sender.try_fill_write();
+        sender.on_net_write(sender.write_buffer.len()).unwrap();
+        match &sender.requests.last().unwrap().state {
+            RequestState::Sent(pair) => pair.msg_id,
+            _ => panic!("unsent"),
+        }
+    }
+
+    /// A reply holding updates as the protocol reports it, with a copy for the stream
+    /// or with the empty marker a driver asks for.
+    fn own_reply(msg_id: MsgId, reply: &[u8], copied: bool) -> Vec<Deserialization> {
+        vec![
+            Deserialization::OwnUpdate {
+                msg_id,
+                update: if copied { reply.to_vec() } else { Vec::new() },
+            },
+            Deserialization::RpcResult(RpcResult {
+                msg_id,
+                body: reply.to_vec(),
+            }),
+        ]
+    }
+
+    #[tokio::test]
+    async fn an_own_update_is_read_from_its_result_or_from_its_copy_alike() {
+        for reply in [short_sent_fixture(), full_updates_fixture()] {
+            let mut seen = Vec::new();
+            for copied in [true, false] {
+                let (mut sender, _peer) = pair().await;
+                let (tx, mut rx) = oneshot::channel();
+                let msg_id = sent(&mut sender, send_message_fixture("once"), tx);
+                let mut updates = Vec::new();
+                sender
+                    .process_mtp_buffer(own_reply(msg_id, &reply, copied), &mut updates)
+                    .unwrap();
+
+                // The caller has its reply, and the request is retired.
+                assert_eq!(rx.try_recv().unwrap().unwrap(), reply);
+                assert!(sender.requests.is_empty());
+                // The stream has the update, completed from the request while it was
+                // still held when the reply is a short one.
+                seen.push(match updates.as_slice() {
+                    [UpdatesLike::Updates(update)] => update.to_bytes(),
+                    [UpdatesLike::ShortSentMessage { request, update }] => {
+                        assert_eq!(request.message, "once");
+                        tl::enums::Updates::UpdateShortSentMessage(update.clone()).to_bytes()
+                    }
+                    _ => panic!("the stream was not given the update"),
+                });
+            }
+            assert_eq!(seen, [reply.clone(), reply]);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_empty_own_update_names_only_the_result_that_follows_it() {
+        let (mut sender, _peer) = encrypted_pair().await;
+        let (first_tx, mut first_rx) = oneshot::channel();
+        let (second_tx, mut second_rx) = oneshot::channel();
+        let first = sent(&mut sender, send_message_fixture("first"), first_tx);
+        let second = sent(&mut sender, send_message_fixture("second"), second_tx);
+        assert_ne!(first, second);
+        let short = short_sent_fixture();
+        let full = full_updates_fixture();
+
+        // The marker for the first request, then the second request's result: that
+        // result is not an update, and the marker does not outlive it.
+        let mut results = own_reply(first, &short, false);
+        let first_result = results.pop().unwrap();
+        results.push(Deserialization::RpcResult(RpcResult {
+            msg_id: second,
+            body: full.clone(),
+        }));
+        results.push(first_result);
+        let mut updates = Vec::new();
+        sender.process_mtp_buffer(results, &mut updates).unwrap();
+
+        assert!(updates.is_empty());
+        assert_eq!(second_rx.try_recv().unwrap().unwrap(), full);
+        assert_eq!(first_rx.try_recv().unwrap().unwrap(), short);
+        assert!(sender.requests.is_empty());
+    }
+
+    /// The connections this crate makes ask for the empty marker. One packet off the wire
+    /// then gives the stream its update and the caller its bytes.
+    #[tokio::test]
+    async fn a_connection_reads_an_own_update_from_its_result() {
+        use tokio::io::AsyncWriteExt as _;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = ServerAddr::Tcp {
+            address: listener.local_addr().unwrap(),
+        };
+        let (sender, peer) = tokio::join!(
+            connect_with_auth(transport::Full::new(), addr, [0; 256]),
+            listener.accept()
+        );
+        let (mut sender, (mut peer, _)) = (sender.unwrap(), peer.unwrap());
+        let (tx, mut rx) = oneshot::channel();
+        sender.enqueue_tracked_body(send_message_fixture("over the wire").into(), tx, None);
+        sender.try_fill_write();
+        let plain = client_frame_plaintext(&sender.write_buffer[..]);
+        let session = i64::from_le_bytes(plain[8..16].try_into().unwrap());
+        sender.on_net_write(sender.write_buffer.len()).unwrap();
+        let RequestState::Sent(pair) = &sender.requests[0].state else {
+            panic!("unsent");
+        };
+
+        let reply = short_sent_fixture();
+        let body = fixture_rpc_body(pair.msg_id.into_inner(), &reply);
+        let frame = server_frame(&mut transport::Full::new(), session, 5, 1, &body);
+        peer.write_all(&frame).await.unwrap();
+        let updates = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let updates = sender.step().await.unwrap();
+                if !updates.is_empty() {
+                    break updates;
+                }
+            }
+        })
+        .await
+        .expect("the reply gave the stream no update");
+
+        assert!(matches!(
+            updates.as_slice(),
+            [UpdatesLike::ShortSentMessage { request, .. }] if request.message == "over the wire"
+        ));
+        assert_eq!(rx.try_recv().unwrap().unwrap(), reply);
         assert!(sender.requests.is_empty());
     }
 
