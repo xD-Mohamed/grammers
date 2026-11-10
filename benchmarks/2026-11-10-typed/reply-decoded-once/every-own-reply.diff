@@ -1,0 +1,1123 @@
+diff --git a/grammers-mtsender/src/sender.rs b/grammers-mtsender/src/sender.rs
+index 0f91d88..8946bb2 100644
+--- a/grammers-mtsender/src/sender.rs
++++ b/grammers-mtsender/src/sender.rs
+@@ -309,6 +309,74 @@ pub struct Sender<T: Transport, M: Mtp> {
+     read_pooled: bool,
+ }
+ 
++/// What the caller of a request is sent when it succeeds.
++pub(crate) enum Reply {
++    /// The reply's bytes, for the caller to decode.
++    Bytes(Vec<u8>),
++    /// The reply itself, a copy of what its connection decoded for the stream of updates.
++    Updates(Box<tl::enums::Updates>),
++}
++
++/// Where the outcome of a request goes.
++///
++/// A caller that will decode its reply as a known type asks for [`Reply`]: when the
++/// connection decodes that reply for the stream of updates anyway, the caller is sent a
++/// copy of the value and the reply is decoded once, not twice. Every other caller is
++/// sent the bytes, as before.
++pub(crate) enum ReplySender {
++    Bytes(oneshot::Sender<Result<Vec<u8>, InvocationError>>),
++    Decoded(oneshot::Sender<Result<Reply, InvocationError>>),
++}
++
++impl ReplySender {
++    /// Send the outcome of a request whose reply is given as bytes. `Err` means the
++    /// caller is gone.
++    pub(crate) fn send(self, outcome: Result<Vec<u8>, InvocationError>) -> Result<(), ()> {
++        match self {
++            Self::Bytes(tx) => tx.send(outcome).map_err(drop),
++            Self::Decoded(tx) => tx.send(outcome.map(Reply::Bytes)).map_err(drop),
++        }
++    }
++
++    /// Send a reply that was already decoded. Only a caller that asked for one is ever
++    /// given one, so the other arm puts the bytes back together and is not expected.
++    pub(crate) fn send_updates(self, updates: Box<tl::enums::Updates>) {
++        match self {
++            Self::Decoded(tx) => drop(tx.send(Ok(Reply::Updates(updates)))),
++            Self::Bytes(tx) => drop(tx.send(Ok(updates.to_bytes()))),
++        }
++    }
++
++    /// Whether the caller takes a decoded reply.
++    fn takes_decoded(&self) -> bool {
++        matches!(self, Self::Decoded(_))
++    }
++
++    pub(crate) fn is_closed(&self) -> bool {
++        match self {
++            Self::Bytes(tx) => tx.is_closed(),
++            Self::Decoded(tx) => tx.is_closed(),
++        }
++    }
++
++    pub(crate) fn poll_closed(&mut self, cx: &mut std::task::Context<'_>) -> Poll<()> {
++        match self {
++            Self::Bytes(tx) => tx.poll_closed(cx),
++            Self::Decoded(tx) => tx.poll_closed(cx),
++        }
++    }
++}
++
++impl std::fmt::Debug for ReplySender {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        let (name, closed) = match self {
++            Self::Bytes(tx) => ("Bytes", tx.is_closed()),
++            Self::Decoded(tx) => ("Decoded", tx.is_closed()),
++        };
++        f.debug_struct(name).field("closed", &closed).finish()
++    }
++}
++
+ struct Request {
+     protocol_retries: u8,
+     body: Bytes,
+@@ -317,7 +385,7 @@ struct Request {
+     // Release admission before dropping the response sender wakes its receiver.
+     permit: Option<crate::InvocationPermit>,
+     // None is a protocol-owned keepalive, which must survive caller cancellation.
+-    result: Option<oneshot::Sender<Result<Vec<u8>, InvocationError>>>,
++    result: Option<ReplySender>,
+ }
+ 
+ impl Request {
+@@ -330,6 +398,40 @@ impl Request {
+             let _ = tx.send(outcome);
+         }
+     }
++
++    /// As [`Self::complete`], for a reply this connection already decoded.
++    fn complete_decoded(self, updates: Box<tl::enums::Updates>) {
++        let Self { result, permit, .. } = self;
++        drop(permit);
++        if let Some(tx) = result {
++            tx.send_updates(updates);
++        }
++    }
++
++    /// Whether a caller is still waiting that takes its reply decoded.
++    fn takes_decoded(&self) -> bool {
++        self.result
++            .as_ref()
++            .is_some_and(|tx| tx.takes_decoded() && !tx.is_closed())
++    }
++}
++
++/// A copy of an own update for the caller of the request it answers, when that caller
++/// takes its reply decoded and the update is the reply as a whole.
++fn decoded_reply(update: &UpdatesLike) -> Option<Box<tl::enums::Updates>> {
++    match update {
++        UpdatesLike::Updates(updates) => Some(Box::new(updates.clone())),
++        UpdatesLike::ShortSentMessage { update, .. } => Some(Box::new(
++            tl::enums::Updates::UpdateShortSentMessage(update.clone()),
++        )),
++        // These replies are other types, which hold `Updates` or stand for one.
++        UpdatesLike::AffectedMessages(_)
++        | UpdatesLike::AffectedChannelMessages { .. }
++        | UpdatesLike::InvitedUsers(_)
++        | UpdatesLike::ChatInviteJoinResult(_)
++        | UpdatesLike::ConnectionClosed
++        | UpdatesLike::MalformedUpdates => None,
++    }
+ }
+ 
+ #[derive(Clone, Debug)]
+@@ -448,6 +550,16 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         body: Bytes,
+         tx: oneshot::Sender<Result<Vec<u8>, InvocationError>>,
+         permit: Option<crate::InvocationPermit>,
++    ) {
++        self.enqueue_tracked_reply(body, ReplySender::Bytes(tx), permit);
++    }
++
++    /// As [`Self::enqueue_tracked_body`], for either kind of caller.
++    pub(crate) fn enqueue_tracked_reply(
++        &mut self,
++        body: Bytes,
++        tx: ReplySender,
++        permit: Option<crate::InvocationPermit>,
+     ) {
+         if tx.is_closed() {
+             return;
+@@ -458,7 +570,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+     fn enqueue_request(
+         &mut self,
+         body: Bytes,
+-        result: Option<oneshot::Sender<Result<Vec<u8>, InvocationError>>>,
++        result: Option<ReplySender>,
+         permit: Option<crate::InvocationPermit>,
+     ) {
+         if !self.mtp.request_is_valid(&body) {
+@@ -992,13 +1104,23 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         mut results: Vec<Deserialization>,
+         updates: &mut Vec<UpdatesLike>,
+     ) -> Result<(), ReadError> {
++        // An own update comes just before the result it was copied from. Decoded for the
++        // stream, it also serves a caller that takes its reply decoded.
++        let mut decoded = None;
+         for result in results.drain(..) {
+             match result {
+                 Deserialization::OwnUpdate { msg_id, update } => {
+-                    self.process_own_update(updates, msg_id, update)
++                    decoded = self
++                        .process_own_update(updates, msg_id, update)
++                        .map(|updates| (msg_id, updates));
+                 }
+                 Deserialization::Update(update) => self.process_update(updates, update),
+-                Deserialization::RpcResult(result) => self.process_result(result)?,
++                Deserialization::RpcResult(result) => {
++                    let reply = decoded
++                        .take_if(|(msg_id, _)| *msg_id == result.msg_id)
++                        .map(|(_, updates)| updates);
++                    self.process_result(result, reply)?
++                }
+                 Deserialization::RpcError(error) => self.process_error(error)?,
+                 Deserialization::BadMessage(bad_msg) => self.process_bad_message(bad_msg)?,
+                 Deserialization::Failure(failure) => self.process_deserialize_error(failure)?,
+@@ -1008,25 +1130,36 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         Ok(())
+     }
+ 
++    /// Decode the copy of a reply that holds updates and give it to the stream.
++    ///
++    /// Returns a copy of the decoded reply for its caller, when that caller is waiting
++    /// for a decoded reply and this is one: the caller then has no bytes to decode.
+     fn process_own_update(
+         &mut self,
+         updates: &mut Vec<UpdatesLike>,
+         msg_id: MsgId,
+         update: Vec<u8>,
+-    ) {
++    ) -> Option<Box<tl::enums::Updates>> {
+         match deserialize_own_update(update, || {
+             self.peek_request(msg_id)
+                 .map(|request| request.body.as_ref())
+         }) {
+             Ok(u) => {
++                let decoded = self
++                    .peek_request(msg_id)
++                    .is_some_and(Request::takes_decoded)
++                    .then(|| decoded_reply(&u))
++                    .flatten();
+                 // In the future, we might want to flag "updates produced by the client" somehow.
+                 // This would be the starting place to do it.
+                 updates.push(u);
++                decoded
+             }
+             Err(e) => {
+                 // This shouldn't happen. We just made the request, so they shouldn't be stale.
+                 // If the request failed with a failed-to-deserialize error, callers will handle it.
+-                warn!("telegram responded with updates that failed to be deserialized: {e}")
++                warn!("telegram responded with updates that failed to be deserialized: {e}");
++                None
+             }
+         }
+     }
+@@ -1044,7 +1177,13 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         }
+     }
+ 
+-    fn process_result(&mut self, result: RpcResult) -> Result<(), ReadError> {
++    /// Complete the request `result` answers. `decoded` is that reply as this connection
++    /// decoded it for the stream of updates, for a caller that takes it in that form.
++    fn process_result(
++        &mut self,
++        result: RpcResult,
++        decoded: Option<Box<tl::enums::Updates>>,
++    ) -> Result<(), ReadError> {
+         if let Some(request) = self.pop_request(result.msg_id)? {
+             let x = result.body;
+             if x.len() < 4 {
+@@ -1058,7 +1197,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+                 request = ?result.msg_id,
+                 "got result",
+             );
+-            request.complete(Ok(x));
++            match decoded {
++                Some(updates) => request.complete_decoded(updates),
++                None => request.complete(Ok(x)),
++            }
+         } else {
+             info!(
+                 result = ?result.msg_id,
+@@ -2625,6 +2767,188 @@ pub(crate) mod optimization_tests {
+         assert!(sender.requests.is_empty());
+     }
+ 
++    /// Queue `body` for `tx`, write it and return the identifier it was sent with.
++    fn sent<M: Mtp>(
++        sender: &mut Sender<transport::Full, M>,
++        body: Vec<u8>,
++        tx: ReplySender,
++    ) -> MsgId {
++        sender.enqueue_tracked_reply(body.into(), tx, None);
++        sender.try_fill_write();
++        sender.on_net_write(sender.write_buffer.len()).unwrap();
++        match &sender.requests.last().unwrap().state {
++            RequestState::Sent(pair) => pair.msg_id,
++            _ => panic!("unsent"),
++        }
++    }
++
++    /// A reply holding updates as the protocol layer reports it: the copy for the
++    /// stream, then the result.
++    fn own_reply(msg_id: MsgId, reply: &[u8]) -> Vec<Deserialization> {
++        vec![
++            Deserialization::OwnUpdate {
++                msg_id,
++                update: reply.to_vec(),
++            },
++            Deserialization::RpcResult(RpcResult {
++                msg_id,
++                body: reply.to_vec(),
++            }),
++        ]
++    }
++
++    #[tokio::test]
++    async fn a_caller_taking_decoded_replies_is_sent_what_the_stream_decoded() {
++        for reply in [short_sent_fixture(), full_updates_fixture()] {
++            let (mut sender, _peer) = pair().await;
++            let (tx, mut rx) = oneshot::channel();
++            let request = send_message_fixture("decoded once");
++            let msg_id = sent(&mut sender, request, ReplySender::Decoded(tx));
++            assert!(sender.requests[0].takes_decoded());
++
++            let mut updates = Vec::new();
++            sender
++                .process_mtp_buffer(own_reply(msg_id, &reply), &mut updates)
++                .unwrap();
++
++            // The stream is given the update it always was.
++            assert_eq!(updates.len(), 1);
++            assert!(matches!(
++                &updates[0],
++                UpdatesLike::Updates(_) | UpdatesLike::ShortSentMessage { .. }
++            ));
++            // The caller is given the value its bytes decode to, and no bytes.
++            let Ok(Ok(Reply::Updates(decoded))) = rx.try_recv() else {
++                panic!("the caller was not sent a decoded reply");
++            };
++            assert_eq!(*decoded, tl::enums::Updates::from_bytes(&reply).unwrap());
++            assert_eq!(decoded.to_bytes(), reply);
++            assert!(sender.requests.is_empty());
++        }
++    }
++
++    #[tokio::test]
++    async fn a_caller_of_bytes_is_sent_the_bytes_whatever_the_stream_decoded() {
++        for reply in [short_sent_fixture(), full_updates_fixture()] {
++            let (mut sender, _peer) = pair().await;
++            let (tx, mut rx) = oneshot::channel();
++            let request = send_message_fixture("bytes");
++            let msg_id = sent(&mut sender, request, ReplySender::Bytes(tx));
++            assert!(!sender.requests[0].takes_decoded());
++
++            let mut updates = Vec::new();
++            sender
++                .process_mtp_buffer(own_reply(msg_id, &reply), &mut updates)
++                .unwrap();
++            assert_eq!(updates.len(), 1);
++            assert_eq!(rx.try_recv().unwrap().unwrap(), reply);
++        }
++    }
++
++    #[tokio::test]
++    async fn a_caller_taking_decoded_replies_is_sent_bytes_when_none_was_decoded() {
++        let affected = tl::enums::messages::AffectedMessages::Messages(
++            tl::types::messages::AffectedMessages {
++                pts: 93,
++                pts_count: 2,
++            },
++        )
++        .to_bytes();
++        // An `Updates` constructor with nothing after it: the stream cannot decode it.
++        let unreadable = tl::types::Updates::CONSTRUCTOR_ID.to_le_bytes().to_vec();
++        let pong = tl::enums::Pong::Pong(tl::types::Pong {
++            msg_id: 1,
++            ping_id: 2,
++        })
++        .to_bytes();
++
++        // (the reply, whether the protocol layer copies it for the stream, updates given)
++        for (reply, own, given) in [(affected, true, 1), (unreadable, true, 0), (pong, false, 0)] {
++            let (mut sender, _peer) = pair().await;
++            let (tx, mut rx) = oneshot::channel();
++            let request = send_message_fixture("bytes after all");
++            let msg_id = sent(&mut sender, request, ReplySender::Decoded(tx));
++            let results = if own {
++                own_reply(msg_id, &reply)
++            } else {
++                vec![Deserialization::RpcResult(RpcResult {
++                    msg_id,
++                    body: reply.clone(),
++                })]
++            };
++            let mut updates = Vec::new();
++            sender.process_mtp_buffer(results, &mut updates).unwrap();
++            assert_eq!(updates.len(), given);
++            let Ok(Ok(Reply::Bytes(bytes))) = rx.try_recv() else {
++                panic!("the caller was not sent the reply's bytes");
++            };
++            assert_eq!(bytes, reply);
++        }
++    }
++
++    #[tokio::test]
++    async fn a_decoded_reply_goes_only_to_the_request_it_answers() {
++        // Encrypted, so that the two requests have identifiers of their own.
++        let (mut sender, _peer) = encrypted_pair().await;
++        let (first_tx, mut first_rx) = oneshot::channel();
++        let (second_tx, mut second_rx) = oneshot::channel();
++        let first = sent(
++            &mut sender,
++            send_message_fixture("first"),
++            ReplySender::Decoded(first_tx),
++        );
++        let second = sent(
++            &mut sender,
++            send_message_fixture("second"),
++            ReplySender::Decoded(second_tx),
++        );
++        assert_ne!(first, second);
++        let short = short_sent_fixture();
++        let full = full_updates_fixture();
++
++        // The first request's copy for the stream, then the second request's result,
++        // which is not what that copy was made from, then the first's result.
++        let mut results = own_reply(first, &short);
++        let first_result = results.pop().unwrap();
++        results.push(Deserialization::RpcResult(RpcResult {
++            msg_id: second,
++            body: full.clone(),
++        }));
++        results.push(first_result);
++        let mut updates = Vec::new();
++        sender.process_mtp_buffer(results, &mut updates).unwrap();
++
++        assert_eq!(updates.len(), 1);
++        let Ok(Ok(Reply::Bytes(bytes))) = second_rx.try_recv() else {
++            panic!("the second caller was sent another request's reply");
++        };
++        assert_eq!(bytes, full);
++        let Ok(Ok(Reply::Updates(decoded))) = first_rx.try_recv() else {
++            panic!("the first caller was not sent its decoded reply");
++        };
++        assert_eq!(decoded.to_bytes(), short);
++        assert!(sender.requests.is_empty());
++    }
++
++    #[tokio::test]
++    async fn a_caller_that_left_is_not_copied_a_reply() {
++        let (mut sender, _peer) = pair().await;
++        let (tx, rx) = oneshot::channel();
++        let request = send_message_fixture("nobody waits");
++        let msg_id = sent(&mut sender, request, ReplySender::Decoded(tx));
++        drop(rx);
++        assert!(!sender.requests[0].takes_decoded());
++
++        let mut updates = Vec::new();
++        let decoded = sender.process_own_update(&mut updates, msg_id, short_sent_fixture());
++        assert!(decoded.is_none());
++        // The stream still has its update, built from the request that is still held.
++        assert!(matches!(
++            updates.as_slice(),
++            [UpdatesLike::ShortSentMessage { request, .. }] if request.message == "nobody waits"
++        ));
++    }
++
+     /// The write time is recorded once, survives the reply and is cleared by
+     /// the next reservation.
+     #[tokio::test]
+@@ -2645,10 +2969,13 @@ pub(crate) mod optimization_tests {
+         };
+         let msg_id = pair.msg_id;
+         sender
+-            .process_result(RpcResult {
+-                msg_id,
+-                body: vec![1; 4],
+-            })
++            .process_result(
++                RpcResult {
++                    msg_id,
++                    body: vec![1; 4],
++                },
++                None,
++            )
+             .unwrap();
+         assert_eq!(tracker.sent_at(), Some(sent));
+         let _next = tracker.try_acquire().expect("released");
+@@ -2684,10 +3011,13 @@ pub(crate) mod optimization_tests {
+                 drop(sender);
+             } else {
+                 sender
+-                    .process_result(RpcResult {
+-                        msg_id,
+-                        body: vec![1; 4],
+-                    })
++                    .process_result(
++                        RpcResult {
++                            msg_id,
++                            body: vec![1; 4],
++                        },
++                        None,
++                    )
+                     .unwrap();
+             }
+             assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+@@ -2716,10 +3046,13 @@ pub(crate) mod optimization_tests {
+             (reply.is_ok(), observer.stage())
+         });
+         sender
+-            .process_result(RpcResult {
+-                msg_id,
+-                body: vec![1; 4],
+-            })
++            .process_result(
++                RpcResult {
++                    msg_id,
++                    body: vec![1; 4],
++                },
++                None,
++            )
+             .unwrap();
+         let (replied, stage) = waiter.join().unwrap();
+         assert!(replied);
+@@ -2999,10 +3332,13 @@ pub(crate) mod optimization_tests {
+             panic!("unsent ping");
+         };
+         sender
+-            .process_result(RpcResult {
+-                msg_id: pair.msg_id,
+-                body: true.to_bytes(),
+-            })
++            .process_result(
++                RpcResult {
++                    msg_id: pair.msg_id,
++                    body: true.to_bytes(),
++                },
++                None,
++            )
+             .unwrap();
+         assert!(sender.requests.is_empty());
+         sender.on_ping_timeout();
+diff --git a/grammers-mtsender/src/sender_pool.rs b/grammers-mtsender/src/sender_pool.rs
+index 135e163..e7c48c2 100644
+--- a/grammers-mtsender/src/sender_pool.rs
++++ b/grammers-mtsender/src/sender_pool.rs
+@@ -35,6 +35,7 @@ use tracing::{debug, info, warn};
+ use crate::configuration::{ConnectionParams, RetryContext};
+ use crate::errors::{InvocationError, InvocationErrorCategory, ReadError};
+ use crate::queue;
++use crate::sender::{Reply, ReplySender};
+ use crate::{Sender, ServerAddr, connect, connect_with_auth};
+ 
+ /// Serialized size reserved for a typed request before it is known.
+@@ -84,7 +85,7 @@ enum Request {
+         body: Bytes,
+         // Retire before a queued request's dropped response sender can wake it.
+         permit: Option<crate::InvocationPermit>,
+-        tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
++        tx: ReplySender,
+     },
+     CheckRetry {
+         // Boxed so this rare variant does not widen every queue slot; each
+@@ -104,7 +105,13 @@ struct Rpc {
+     body: Bytes,
+     // Preserve this field order for requests discarded with a closed queue.
+     permit: Option<crate::InvocationPermit>,
+-    tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
++    tx: ReplySender,
++}
++
++/// The waiting end of a request that was just queued.
++enum QueuedReply {
++    Bytes(oneshot::Receiver<Result<InvokeResponse, InvocationError>>),
++    Decoded(oneshot::Receiver<Result<Reply, InvocationError>>),
+ }
+ 
+ struct ConnectionInfo {
+@@ -466,9 +473,22 @@ impl SenderPoolHandle {
+         // Most requests fit, which avoids several reallocations per call.
+         let mut body = Vec::with_capacity(INITIAL_REQUEST_CAPACITY);
+         tl::Serializable::serialize(request, &mut body);
+-        self.do_invoke_in_dc(dc_id, body)
+-            .await
+-            .and_then(|body| R::Return::from_bytes(&body).map_err(|e| e.into()))
++        if !self.2 {
++            // Without updates no connection decodes a reply: there is none to be handed.
++            return self
++                .do_invoke_in_dc(dc_id, body)
++                .await
++                .and_then(|body| R::Return::from_bytes(&body).map_err(|e| e.into()));
++        }
++        match self.do_invoke_decoded_in_dc(dc_id, body).await? {
++            Reply::Bytes(body) => R::Return::from_bytes(&body).map_err(|e| e.into()),
++            // The connection decoded this reply for the stream of updates, from the same
++            // bytes and with the same decoder. A call of another return type is not
++            // answered with updates: should it be, it fails as its bytes would have.
++            Reply::Updates(updates) => R::return_from_updates(updates)
++                .or_else(|updates| R::Return::from_bytes(&tl::Serializable::to_bytes(&*updates)))
++                .map_err(|e| e.into()),
++        }
+     }
+ 
+     /// Communicate with the running [`SenderPoolRunner`] instance
+@@ -520,6 +540,21 @@ impl SenderPoolHandle {
+         self.start_invoke_shared(dc_id, body, permit)?.await
+     }
+ 
++    /// As [`Self::invoke_shared`] without a permit, for a caller that takes a reply its
++    /// connection already decoded.
++    async fn invoke_shared_decoded(
++        &self,
++        dc_id: i32,
++        body: Bytes,
++    ) -> Result<Reply, InvocationError> {
++        match self.queue_invoke(dc_id, body, None, true)? {
++            QueuedReply::Decoded(receiver) => receiver.await.unwrap_or(Err(
++                InvocationError::Dropped("request response channel was closed"),
++            )),
++            QueuedReply::Bytes(_) => unreachable!("a decoded reply was asked for"),
++        }
++    }
++
+     /// Enqueue a tracked request immediately, returning a movable response waiter.
+     /// The caller supplies its own deadline; no task or timer is spawned here.
+     pub fn start_raw_invoke_shared_in_dc_tracked(
+@@ -537,6 +572,20 @@ impl SenderPoolHandle {
+         body: Bytes,
+         permit: Option<crate::InvocationPermit>,
+     ) -> Result<crate::PendingInvocation, InvocationError> {
++        match self.queue_invoke(dc_id, body, permit, false)? {
++            QueuedReply::Bytes(receiver) => Ok(crate::PendingInvocation { receiver }),
++            QueuedReply::Decoded(_) => unreachable!("bytes were asked for"),
++        }
++    }
++
++    /// Validate, admit and queue one request. `decoded` chooses what its caller is sent.
++    fn queue_invoke(
++        &self,
++        dc_id: i32,
++        body: Bytes,
++        permit: Option<crate::InvocationPermit>,
++        decoded: bool,
++    ) -> Result<QueuedReply, InvocationError> {
+         if body.len() < 4 {
+             return Err(tl::deserialize::Error::UnexpectedEof.into());
+         }
+@@ -582,10 +631,16 @@ impl SenderPoolHandle {
+         } else {
+             permit
+         };
+-        let (tx, rx) = oneshot::channel();
++        let (tx, queued) = if decoded {
++            let (tx, rx) = oneshot::channel();
++            (ReplySender::Decoded(tx), QueuedReply::Decoded(rx))
++        } else {
++            let (tx, rx) = oneshot::channel();
++            (ReplySender::Bytes(tx), QueuedReply::Bytes(rx))
++        };
+         let rpc = Rpc { body, tx, permit };
+         let rpc = match self.try_route(dc_id, rpc)? {
+-            None => return Ok(crate::PendingInvocation { receiver: rx }),
++            None => return Ok(queued),
+             Some(rpc) => rpc,
+         };
+         self.0
+@@ -596,7 +651,7 @@ impl SenderPoolHandle {
+                 permit: rpc.permit,
+             })
+             .map_err(|_| InvocationError::Dropped("SenderPoolRunner was dropped at send"))?;
+-        Ok(crate::PendingInvocation { receiver: rx })
++        Ok(queued)
+     }
+ 
+     fn try_route(&self, dc_id: i32, rpc: Rpc) -> Result<Option<Rpc>, InvocationError> {
+@@ -687,6 +742,36 @@ impl SenderPoolHandle {
+         }
+     }
+ 
++    /// As [`Self::do_invoke_in_dc`], for a caller that takes a reply its connection
++    /// already decoded. The retry policy is the same.
++    async fn do_invoke_decoded_in_dc(
++        &self,
++        dc_id: i32,
++        request_body: Vec<u8>,
++    ) -> Result<Reply, InvocationError> {
++        let request_body = Bytes::from(request_body);
++        let mut fail_count = NonZeroU32::new(1).unwrap();
++        let mut slept_so_far = Duration::default();
++
++        loop {
++            match self
++                .invoke_shared_decoded(dc_id, request_body.clone())
++                .await
++            {
++                Ok(response) => break Ok(response),
++                Err(e) => match self.check_retry(e, fail_count, slept_so_far).await {
++                    ControlFlow::Continue(delay) => {
++                        sleep(delay).await;
++                        fail_count = fail_count.saturating_add(1);
++                        slept_so_far += delay;
++                        continue;
++                    }
++                    ControlFlow::Break(final_error) => break Err(final_error),
++                },
++            }
++        }
++    }
++
+     /// Communicate with the running [`SenderPoolRunner`] instance
+     /// to check whether the request needs to retry.
+     async fn check_retry(
+@@ -1642,7 +1727,7 @@ fn run_sender(
+                 },
+                 rpc = rpc_rx.recv() => match rpc {
+                     Some(rpc) => {
+-                        sender.enqueue_tracked_body(rpc.body, rpc.tx, rpc.permit);
++                        sender.enqueue_tracked_reply(rpc.body, rpc.tx, rpc.permit);
+                         // Pack what is already queued into the next write instead of
+                         // one write per request. Each request is still charged, so a
+                         // ready queue yields as often as it would one at a time.
+@@ -1650,7 +1735,7 @@ fn run_sender(
+                             let Ok(rpc) = rpc_rx.try_recv() else {
+                                 break;
+                             };
+-                            sender.enqueue_tracked_body(rpc.body, rpc.tx, rpc.permit);
++                            sender.enqueue_tracked_reply(rpc.body, rpc.tx, rpc.permit);
+                             tokio::task::consume_budget().await;
+                         }
+                     }
+@@ -1730,7 +1815,7 @@ mod optimization_tests {
+             tx.send(Rpc {
+                 body: Bytes::from_static(&[0; 3]),
+                 permit: None,
+-                tx: tx_result,
++                tx: ReplySender::Bytes(tx_result),
+             })
+             .unwrap();
+             responses.push(rx_result);
+@@ -1788,7 +1873,7 @@ mod optimization_tests {
+             tx.send(Rpc {
+                 body: tl::functions::Ping { ping_id }.to_bytes().into(),
+                 permit: (ping_id == 0).then(|| tracker.try_acquire().unwrap()),
+-                tx: tx_result,
++                tx: ReplySender::Bytes(tx_result),
+             })
+             .unwrap();
+             responses.push(rx_result);
+@@ -2084,7 +2169,7 @@ mod optimization_tests {
+         tx.send(Rpc {
+             body: tl::functions::Ping { ping_id: 1 }.to_bytes().into(),
+             permit: None,
+-            tx: tx_result,
++            tx: ReplySender::Bytes(tx_result),
+         })
+         .unwrap();
+         let session = erase(Arc::new(
+@@ -2161,7 +2246,7 @@ mod optimization_tests {
+         tx.send(Rpc {
+             body: tl::functions::Ping { ping_id: 1 }.to_bytes().into(),
+             permit: None,
+-            tx: tx_result,
++            tx: ReplySender::Bytes(tx_result),
+         })
+         .unwrap();
+         let session = erase(Arc::new(
+@@ -2314,7 +2399,7 @@ mod optimization_tests {
+             tx.send(Rpc {
+                 body: tl::functions::Ping { ping_id }.to_bytes().into(),
+                 permit: None,
+-                tx: tx_result,
++                tx: ReplySender::Bytes(tx_result),
+             })
+             .unwrap();
+             responses.push(rx_result);
+@@ -2379,7 +2464,7 @@ mod optimization_tests {
+             tx.send(Rpc {
+                 body: Bytes::from(tl::functions::Ping { ping_id: 1 }.to_bytes()),
+                 permit: Some(permit),
+-                tx: response,
++                tx: ReplySender::Bytes(response),
+             })
+             .unwrap();
+             receivers.push(result);
+@@ -2434,7 +2519,7 @@ mod optimization_tests {
+             .send(Rpc {
+                 body: body.clone(),
+                 permit: None,
+-                tx: response,
++                tx: ReplySender::Bytes(response),
+             })
+             .err()
+             .unwrap()
+@@ -2472,7 +2557,7 @@ mod optimization_tests {
+                 999,
+                 Rpc {
+                     body: Bytes::from_static(&[1; 4]),
+-                    tx,
++                    tx: ReplySender::Bytes(tx),
+                     permit: None,
+                 },
+             );
+@@ -2505,7 +2590,7 @@ mod optimization_tests {
+                         for _ in 0..count {
+                             let (tx, rx) = oneshot::channel();
+                             receivers.push(rx);
+-                            pool.runner.start_setup(999, Rpc { body: Bytes::from_static(&[1; 4]), tx, permit: None });
++                            pool.runner.start_setup(999, Rpc { body: Bytes::from_static(&[1; 4]), tx: ReplySender::Bytes(tx), permit: None });
+                             let pending = &mut pool.runner.pending[0];
+                             if incremental {
+                                 assert!(!pending.poll_closed(&mut cx));
+@@ -2895,9 +2980,7 @@ mod optimization_tests {
+         }
+     }
+ 
+-    async fn expect_get_state(
+-        runner: &mut SenderPoolRunner,
+-    ) -> oneshot::Sender<Result<Vec<u8>, InvocationError>> {
++    async fn expect_get_state(runner: &mut SenderPoolRunner) -> ReplySender {
+         use tl::Identifiable;
+         let Request::Invoke { body, tx, .. } = runner.request_rx.recv().await.unwrap() else {
+             panic!("expected GetState")
+@@ -4839,6 +4922,111 @@ mod optimization_tests {
+         );
+     }
+ 
++    /// A typed call asks its connection for a decoded reply, takes one when it is
++    /// given one, and decodes the bytes itself otherwise.
++    #[tokio::test]
++    async fn a_typed_call_takes_the_reply_its_connection_decoded() {
++        use tl::Serializable;
++        let pool = SenderPool::new(
++            Arc::new(grammers_session::storages::MemorySession::default()),
++            1,
++        );
++        assert!(pool.handle.updates_enabled());
++        let (tx, mut rx) = queue::unbounded_channel();
++        pool.handle.1.write().unwrap().publish(4, &tx);
++        let updates = tl::enums::Updates::Updates(tl::types::Updates {
++            updates: vec![
++                tl::types::UpdateMessageId {
++                    id: 73,
++                    random_id: 9,
++                }
++                .into(),
++            ],
++            users: Vec::new(),
++            chats: Vec::new(),
++            date: 1234,
++            seq: 0,
++        });
++        let request = tl::functions::messages::EditChatTitle {
++            chat_id: 5,
++            title: "title".into(),
++        };
++        let wrapped = tl::functions::InvokeWithoutUpdates {
++            query: request.clone(),
++        };
++
++        // Decoded by the connection: taken as it is, also through a wrapping call.
++        let (reply, ()) = tokio::join!(pool.handle.invoke_in_dc(4, &request), async {
++            let rpc = rx.recv().await.unwrap();
++            assert!(matches!(rpc.tx, ReplySender::Decoded(_)));
++            rpc.tx.send_updates(Box::new(updates.clone()));
++        });
++        assert_eq!(reply.unwrap(), updates);
++        let (reply, ()) = tokio::join!(pool.handle.invoke_in_dc(4, &wrapped), async {
++            rx.recv()
++                .await
++                .unwrap()
++                .tx
++                .send_updates(Box::new(updates.clone()));
++        });
++        assert_eq!(reply.unwrap(), updates);
++
++        // Not decoded by the connection: the caller decodes the bytes, as before.
++        let (reply, ()) = tokio::join!(pool.handle.invoke_in_dc(4, &request), async {
++            let rpc = rx.recv().await.unwrap();
++            rpc.tx.send(Ok(updates.to_bytes())).unwrap();
++        });
++        assert_eq!(reply.unwrap(), updates);
++
++        // A call of another return type that is answered with updates fails as the
++        // bytes of that answer would have.
++        let ping = tl::functions::Ping { ping_id: 1 };
++        let expected = <tl::enums::Pong as Deserializable>::from_bytes(&updates.to_bytes())
++            .map_err(InvocationError::from)
++            .unwrap_err();
++        let (reply, ()) = tokio::join!(pool.handle.invoke_in_dc(4, &ping), async {
++            let rpc = rx.recv().await.unwrap();
++            rpc.tx.send_updates(Box::new(updates.clone()));
++        });
++        assert_eq!(reply.unwrap_err().to_string(), expected.to_string());
++
++        // The untyped entry points are sent bytes.
++        let (reply, ()) = tokio::join!(pool.handle.raw_invoke_in_dc(4, vec![1; 4]), async {
++            let rpc = rx.recv().await.unwrap();
++            assert!(matches!(rpc.tx, ReplySender::Bytes(_)));
++            rpc.tx.send(Ok(vec![2; 4])).unwrap();
++        });
++        assert_eq!(reply.unwrap(), vec![2; 4]);
++    }
++
++    /// Without updates no connection decodes a reply, and no caller asks for one.
++    #[tokio::test]
++    async fn a_typed_call_asks_for_bytes_when_updates_are_off() {
++        use tl::Serializable;
++        let pool = SenderPool::with_configuration(
++            Arc::new(grammers_session::storages::MemorySession::default()),
++            1,
++            ConnectionParams {
++                receive_updates: false,
++                ..Default::default()
++            },
++        );
++        assert!(!pool.handle.updates_enabled());
++        let (tx, mut rx) = queue::unbounded_channel();
++        pool.handle.1.write().unwrap().publish(4, &tx);
++        let updates = tl::enums::Updates::TooLong;
++        let request = tl::functions::messages::EditChatTitle {
++            chat_id: 5,
++            title: "title".into(),
++        };
++        let (reply, ()) = tokio::join!(pool.handle.invoke_in_dc(4, &request), async {
++            let rpc = rx.recv().await.unwrap();
++            assert!(matches!(rpc.tx, ReplySender::Bytes(_)));
++            rpc.tx.send(Ok(updates.to_bytes())).unwrap();
++        });
++        assert_eq!(reply.unwrap(), updates);
++    }
++
+     #[tokio::test]
+     async fn admission_covers_warm_raw_and_tracked_entry_points() {
+         let pool = SenderPool::with_configuration(
+@@ -6580,13 +6768,13 @@ mod optimization_tests {
+                 drop(Request::Invoke {
+                     dc_id: 4,
+                     body: Bytes::from_static(&[1; 4]),
+-                    tx,
++                    tx: ReplySender::Bytes(tx),
+                     permit,
+                 });
+             } else {
+                 drop(Rpc {
+                     body: Bytes::from_static(&[1; 4]),
+-                    tx,
++                    tx: ReplySender::Bytes(tx),
+                     permit,
+                 });
+             }
+diff --git a/grammers-tl-gen/src/metadata.rs b/grammers-tl-gen/src/metadata.rs
+index c1f9dc5..fdd6638 100644
+--- a/grammers-tl-gen/src/metadata.rs
++++ b/grammers-tl-gen/src/metadata.rs
+@@ -37,6 +37,7 @@ pub(crate) struct Metadata<'a> {
+     boxed_fields: HashSet<(u32, &'a str)>,
+     defs_with_type: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Definition>>,
+     unused_flags: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Parameter>>,
++    updates_type: bool,
+ }
+ 
+ impl<'a> Metadata<'a> {
+@@ -46,6 +47,7 @@ impl<'a> Metadata<'a> {
+             boxed_fields: HashSet::new(),
+             defs_with_type: HashMap::new(),
+             unused_flags: HashMap::new(),
++            updates_type: false,
+         };
+ 
+         definitions.iter().for_each(|d| {
+@@ -81,6 +83,10 @@ impl<'a> Metadata<'a> {
+                 .push(d);
+         });
+ 
++        metadata.updates_type = type_definitions
++            .iter()
++            .any(|d| d.ty.namespace.is_empty() && d.ty.name == "Updates");
++
+         type_definitions.iter().for_each(|d| {
+             if def_self_references(d, d, &metadata.defs_with_type, &mut HashSet::new()) {
+                 metadata.boxed_defs.insert(d.id);
+@@ -133,6 +139,12 @@ impl<'a> Metadata<'a> {
+         self.boxed_fields.contains(&(def.id, param.name.as_str()))
+     }
+ 
++    /// Returns `true` if the schema defines the boxed type `Updates`, which
++    /// `RemoteCall::return_from_updates` names.
++    pub fn has_updates_type(&self) -> bool {
++        self.updates_type
++    }
++
+     pub fn defs_with_type(&self, ty: &'a Type) -> &Vec<&Definition> {
+         &self.defs_with_type[&(&ty.namespace, &ty.name)]
+     }
+diff --git a/grammers-tl-gen/src/structs.rs b/grammers-tl-gen/src/structs.rs
+index e41a55f..0f97ad7 100644
+--- a/grammers-tl-gen/src/structs.rs
++++ b/grammers-tl-gen/src/structs.rs
+@@ -389,11 +389,23 @@ fn write_deserializable<W: Write>(
+ ///     type Return = Name;
+ /// }
+ /// ```
++///
++/// When the schema has an `Updates` type, a call returning it also takes a reply that
++/// was already decoded as one, and a call wrapping another passes it on:
++///
++/// ```ignore
++/// impl crate::RemoteCall for Name {
++///     type Return = crate::enums::Updates;
++///     fn return_from_updates(updates: Box<crate::enums::Updates>) -> ... {
++///         Ok(*updates)
++///     }
++/// }
++/// ```
+ fn write_rpc<W: Write>(
+     file: &mut W,
+     indent: &str,
+     def: &Definition,
+-    _metadata: &Metadata,
++    metadata: &Metadata,
+ ) -> io::Result<()> {
+     writeln!(
+         file,
+@@ -410,6 +422,31 @@ fn write_rpc<W: Write>(
+         rustifier::types::qual_name(&def.ty),
+         if def.ty.generic_ref { "::Return" } else { "" },
+     )?;
++    if metadata.has_updates_type() {
++        let returns_updates = !def.ty.generic_ref
++            && def.ty.generic_arg.is_none()
++            && def.ty.namespace.is_empty()
++            && def.ty.name == "Updates";
++        let body = if def.ty.generic_ref {
++            Some(format!(
++                "{}::return_from_updates(updates)",
++                rustifier::types::qual_name(&def.ty)
++            ))
++        } else if returns_updates {
++            Some("Ok(*updates)".to_owned())
++        } else {
++            None
++        };
++        if let Some(body) = body {
++            writeln!(
++                file,
++                "{indent}    fn return_from_updates(updates: Box<crate::enums::Updates>) \
++                 -> ::core::result::Result<Self::Return, Box<crate::enums::Updates>> {{"
++            )?;
++            writeln!(file, "{indent}        {body}")?;
++            writeln!(file, "{indent}    }}")?;
++        }
++    }
+     writeln!(file, "{indent}}}")?;
+     Ok(())
+ }
+diff --git a/grammers-tl-gen/tests/lib.rs b/grammers-tl-gen/tests/lib.rs
+index 37f3bb5..7b0635e 100644
+--- a/grammers-tl-gen/tests/lib.rs
++++ b/grammers-tl-gen/tests/lib.rs
+@@ -78,6 +78,74 @@ fn generic_functions_use_generic_parameters() -> io::Result<()> {
+     Ok(())
+ }
+ 
++#[test]
++fn calls_returning_updates_take_a_reply_that_is_already_decoded() -> io::Result<()> {
++    let definitions = get_definitions(
++        "
++        updatesTooLong#e317af7e = Updates;
++        boolTrue#997275b5 = Bool;
++        account.updatesTooLong#11111111 = account.Updates;
++        ---functions---
++        invokeWithLayer#da9b0d0d {X:Type} layer:int query:!X = X;
++        messages.sendMessage#22222222 message:string = Updates;
++        messages.setTyping#33333333 = Bool;
++        account.getUpdates#44444444 = account.Updates;
++    ",
++    );
++    let (_, _, functions, _) = gen_rust_code(&definitions)?;
++    eprintln!("{functions}");
++
++    let method = "fn return_from_updates(updates: Box<crate::enums::Updates>) \
++        -> ::core::result::Result<Self::Return, Box<crate::enums::Updates>> {";
++    // From the implementation for `name` to the next one of anything.
++    let implementation = |name: &str| {
++        let start = functions
++            .find(&format!("crate::RemoteCall for {name}"))
++            .unwrap_or_else(|| panic!("no RemoteCall for {name}"));
++        let rest = &functions[start..];
++        &rest[..rest[1..].find("impl").map_or(rest.len(), |end| end + 1)]
++    };
++
++    // The call returning `Updates` takes the value, and the wrapper passes it on.
++    let send = implementation("SendMessage {");
++    assert!(
++        send.contains("type Return = crate::enums::Updates;"),
++        "{send}"
++    );
++    assert!(
++        send.contains(method) && send.contains("Ok(*updates)"),
++        "{send}"
++    );
++    let wrapper = implementation("InvokeWithLayer<X> {");
++    assert!(wrapper.contains(method), "{wrapper}");
++    assert!(
++        wrapper.contains("X::return_from_updates(updates)"),
++        "{wrapper}"
++    );
++
++    // Another type keeps the default, and so does a namespaced type of the same name.
++    assert_eq!(functions.matches(method).count(), 2);
++    assert_eq!(functions.matches("Ok(*updates)").count(), 1);
++    Ok(())
++}
++
++#[test]
++fn a_schema_without_updates_names_no_such_type() -> io::Result<()> {
++    let definitions = get_definitions(
++        "
++        boolTrue#997275b5 = Bool;
++        ---functions---
++        invokeWithLayer#da9b0d0d {X:Type} layer:int query:!X = X;
++        ping#7abe77ec ping_id:long = Bool;
++    ",
++    );
++    let (_, _, functions, _) = gen_rust_code(&definitions)?;
++    assert!(functions.contains("type Return = X::Return;"));
++    assert!(!functions.contains("return_from_updates"));
++    assert!(!functions.contains("enums::Updates"));
++    Ok(())
++}
++
+ #[test]
+ fn recursive_types_direct_boxed() -> io::Result<()> {
+     let definitions = get_definitions(
+diff --git a/grammers-tl-types/src/lib.rs b/grammers-tl-types/src/lib.rs
+index 3fc868d..8e3b56c 100644
+--- a/grammers-tl-types/src/lib.rs
++++ b/grammers-tl-types/src/lib.rs
+@@ -118,4 +118,18 @@ pub trait RemoteCall: Serializable {
+     /// The type of the "return" value coming from the other end of the
+     /// connection.
+     type Return: Deserializable;
++
++    /// Take a reply that was already decoded as [`enums::Updates`] as this call's
++    /// return value, when that is its type.
++    ///
++    /// A connection that decodes such a reply for the stream of updates can hand its
++    /// caller a copy of the value, in place of the bytes to decode a second time. The
++    /// default gives the value back: only a call whose [`RemoteCall::Return`] is
++    /// [`enums::Updates`], or one wrapping such a call, takes it.
++    #[cfg(feature = "tl-api")]
++    fn return_from_updates(
++        updates: Box<enums::Updates>,
++    ) -> core::result::Result<Self::Return, Box<enums::Updates>> {
++        Err(updates)
++    }
+ }

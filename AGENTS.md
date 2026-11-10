@@ -1,8 +1,8 @@
 # grammers fork
 
-## Typed client path (2026-11-10)
+## Typed client path and the coarse clock (2026-11-10)
 
-[Measurements, the profile and what was verified](benchmarks/2026-11-10-typed/README.md).
+[Measurements, the profile, what was rejected and what was verified](benchmarks/2026-11-10-typed/README.md).
 
 - `update::Message` holds its message once. `Update::from_raw` moves it out of the raw
   update: do not add a field that keeps that update, and do not clone the message there.
@@ -16,6 +16,27 @@
   passed 2.8 GB with the API schema alone. Check it in parts with
   `benchmarks/2026-11-10-typed/tools/serde_parts.py`. Do not raise the memory limit.
 - A closed-loop change of 5% needed 30 rounds to resolve on a noisy day; 10 did not.
+- `grammers_mtproto::coarse_clock` is the kernel's last tick, read without a system call:
+  never later than the precise clock, up to a tick (1 to 10 ms) earlier. Message
+  identifiers, `UpdatesReceiver::turn_now` and `StoredPeers::forget_if_old` read it. Use
+  it only for what is compared with deadlines far coarser than a tick, and never to
+  stamp something a caller reads as a time (`InvocationTracker::sent_at` stays precise).
+- **After a timer fires, read the precise clock.** A coarse reading can be a tick short
+  of the deadline that woke the task: checking it again would find nothing due and spin
+  until the tick. The receiver sets `deadline_fired` when its wait times out, and
+  `a_deadline_that_fired_is_found_due_without_waiting_for_the_tick` fails without it.
+- The offset correction and the identifiers read the same clock. A precise reading taken
+  first can be later than a coarse one taken after it: do not subtract one from the other.
+- That module has the workspace's second `unsafe` block, the call to `clock_gettime`,
+  which replaces "the only `unsafe`" in the 2026-11-09 section below. Keep it at that
+  one function. Its conversion to `Instant` and its check against the precise clock are
+  plain functions with their own tests.
+- Its gain exists where the clock is a system call, as here. Say so beside every number
+  that includes it, and count reads per request with `sysc.c` before adding one.
+- A request's reply is decoded by its connection and again by its caller. Handing the
+  caller a copy was built two ways and measured at -3.8% and 0%: a copy of a decoded
+  reply costs what decoding it costs. Do not build it a third time without shared
+  ownership of the decoded message, which is a break of `message::Message::raw`.
 
 ## Update path clock, and `io_uring` assessed (2026-11-10)
 

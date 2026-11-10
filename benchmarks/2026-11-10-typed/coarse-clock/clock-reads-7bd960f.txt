@@ -1,0 +1,1 @@
+SYSC tid=11 comm=? clock_mono=2850346 clock_real=64113 send=64112 recv=25736 epoll_wait=25741 getrandom=4010 read=28 write=7

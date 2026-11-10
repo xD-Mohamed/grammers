@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased: the typed client path
+## Unreleased: the typed client path, and the kernel's coarse clock
 
 [Measurements](benchmarks/2026-11-10-typed/README.md). Public types change in this section,
 with the owner's approval; each break is listed with what to write instead.
@@ -9,6 +9,20 @@ with the owner's approval; each break is listed with what to write instead.
   connection with updates handles 6% more requests per second at saturation with 5.7% less
   CPU per request, and every request costs two allocations and 2.7 kB less. At fixed
   rates the allocations are saved and the CPU does not measurably change.
+- On Linux and Android, message identifiers, the update receiver's deadlines and the
+  ageing of written peers read the kernel's coarse clock, the time of its last tick,
+  where they read the precise clock before. **Where the precise clock is a system call**,
+  as on a KVM guest without a vDSO clock source, one busy bot connection with updates
+  handles 10% more requests per second at saturation with 8.9% less CPU per request, and
+  the raw path spends 3% less CPU per request. Where the kernel serves the precise clock
+  from the vDSO nothing measurable changes. Those readings can be one tick old, 1 to
+  10 ms: `UpdatesReceiver::last_clock_read` returns one of them.
+- `grammers_mtproto::coarse_clock::instant` and `unix_time` are new, and
+  `grammers_mtsender::coarse_clock` re-exports them. `grammers-mtproto` depends on `libc`
+  on Linux and Android, which every build already contained, and calls `clock_gettime`
+  through it in one `unsafe` block.
+- Decoding a request's reply once for its caller and for the stream of updates was built
+  two ways and gained nothing: see the measurements. Nothing in the library changed for it.
 
 ### Breaking
 
