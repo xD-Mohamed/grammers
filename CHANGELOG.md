@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased: the typed client path
+
+[Measurements](benchmarks/2026-11-10-typed/README.md). Public types change in this section,
+with the owner's approval; each break is listed with what to write instead.
+
+- An update carrying a new or edited message no longer clones that message. One busy bot
+  connection with updates handles 6% more requests per second at saturation with 5.7% less
+  CPU per request, and every request costs two allocations and 2.7 kB less. At fixed
+  rates the allocations are saved and the CPU does not measurably change.
+
+### Breaking
+
+- `update::Message` has no `raw` field. That field held the raw update, and so a second
+  copy of the message. `Message::raw()` returns a `&tl::enums::Update` built by cloning
+  the message the first time it is called, and `Message::into_raw()` returns it owned
+  without cloning. `Update::raw()` still compiles and still returns a reference.
+
+  ```rust
+  // before
+  let update: &tl::enums::Update = &message.raw;
+  // after
+  let update: &tl::enums::Update = message.raw();      // built on the first call
+  let update: tl::enums::Update = message.into_raw();  // owned, no clone
+  ```
+
+  `update::Message` dereferences to `message::Message`, whose own `raw` field is the
+  `tl::enums::Message`. Code that still writes `.raw` on an `update::Message` now names
+  that field: it stops compiling where a `tl::enums::Update` was expected, and it changes
+  meaning silently where the type is not checked, such as `{:?}` formatting.
+
+  The old field was a copy taken on arrival. The rebuilt update is the message as it is
+  when first asked for: a change made through `DerefMut` before that shows in it, one
+  made after does not. The `Debug` output of `update::Message` no longer prints the raw
+  update: it prints the message, the update's kind and its `pts`.
+
 ## Unreleased: the update path's clock
 
 [Measurements](benchmarks/2026-11-10/README.md). Nothing that compiled before stops compiling.

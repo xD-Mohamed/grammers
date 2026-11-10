@@ -10,6 +10,10 @@
 //!
 //! Properties containing raw types are public and will either be called "raw" or prefixed with "raw_".\
 //! Keep in mind that **these fields are not part of the semantic versioning guarantees**.
+//!
+//! [`Message`] holds its message once, so its raw update is not a field: [`Message::raw`]
+//! and [`Message::into_raw`] put it back together on request. Written on a [`Message`],
+//! `.raw` is the field of the message it wraps, a raw message and not a raw update.
 
 mod callback_query;
 mod guestchat_query;

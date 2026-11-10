@@ -236,16 +236,27 @@ mod tests {
                 .unwrap()
                 .to_ambient_ref(),
         );
-        let wrapped = crate::update::Message {
-            msg: message,
-            raw: tl::enums::Update::LoginToken,
-            state: update().state().clone(),
-        };
-        if edited {
-            Update::MessageEdited(wrapped)
+        // A message update is only made from the raw update that carries its message.
+        let message = message.raw;
+        let raw = if edited {
+            tl::enums::Update::EditMessage(tl::types::UpdateEditMessage {
+                message,
+                pts: 1,
+                pts_count: 1,
+            })
         } else {
-            Update::NewMessage(wrapped)
-        }
+            tl::enums::Update::NewMessage(tl::types::UpdateNewMessage {
+                message,
+                pts: 1,
+                pts_count: 1,
+            })
+        };
+        let state = update().state().clone();
+        let wrapped = Update::from_raw(&client, raw, state, client.empty_peer_map());
+        // Not `Update::Raw`, which would let the negative assertions pass for nothing.
+        assert_eq!(matches!(&wrapped, Update::MessageEdited(_)), edited);
+        assert_eq!(matches!(&wrapped, Update::NewMessage(_)), !edited);
+        wrapped
     }
 
     #[tokio::test]
