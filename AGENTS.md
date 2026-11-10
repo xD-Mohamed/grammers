@@ -14,9 +14,12 @@
 - `updateMessageWidgetData` is on the common `pts` sequence and rejected for a channel
   `peer`, like `updatePinnedMessages`. TDLib, Telegram Desktop and Telegram for Android
   agree; Telegram's page for it was not written when this was decided.
-- A new update needs an arm in `PtsInfo::raw_from_update` (and in `valid_update` if it
-  names a peer): one with `pts` or `qts` that falls through as `None` is delivered, and
-  the update after it then looks like a gap and costs a difference request.
+- `PtsInfo::raw_from_update` has no wildcard: a new update must be given its sequence to
+  compile (and an arm in `valid_update` if it names a peer). One with `pts` or `qts`
+  treated as having none is delivered, and the next update of that sequence then looks
+  like a gap, costs a difference request and is delivered a second time.
+- Every update carrying `qts` advances the secondary sequence by one, however many items
+  it names: `qts` events are never grouped. Do not derive a count from a vector's length.
 
 ## Request path, crypto and socket buffers (2026-11-09)
 

@@ -15,6 +15,15 @@
 - `Media::from_raw` returns `None` for `messageMediaWidget`; the raw value stays on the message.
 - Replies rebuilt for `updateShortSentMessage` carry the request's `quote_rich`.
 
+### Fixed
+
+- Bot updates carrying `qts` advance it: `updateMessagePollVote`,
+  `updateBotBusinessConnect`, `updateManagedBot`, `updateBotGuestChatQuery` and
+  `updateBotStarsSubscription` were delivered without doing so, and each was followed by
+  a difference request that delivered it a second time. `updateBotDeleteBusinessMessage`
+  is one event however many messages it names: one naming several was dropped until a
+  difference returned it.
+
 ### Compatibility
 
 - Generated types follow Telegram's schema. Code building `tl::types::{User, Channel,

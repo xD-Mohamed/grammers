@@ -76,6 +76,24 @@ each at once: `updateEditForumTopic`, `updateBotWidgetQuery`,
 `updateInlineBotWidgetQuery`, `updateBotWidgetCopyQuery`, `updateTranscribedAudioFile`.
 Each has an explicit arm in `PtsInfo`.
 
+### Updates carrying `qts` that were not applied to it
+
+Classifying the new updates showed five older ones delivered with no sequence although
+they carry `qts`: `updateMessagePollVote` and `updateBotBusinessConnect` (explicitly, as in
+upstream), and `updateManagedBot`, `updateBotGuestChatQuery` and
+`updateBotStarsSubscription` (through the wildcard). The secondary position stayed behind,
+so the next `qts` update looked like a gap: half a second's wait, a difference request,
+and the first update delivered again by that difference. `updateBotDeleteBusinessMessage`
+counted one event per deleted message, so a deletion of several was taken for one already
+applied and dropped until a difference returned it.
+
+Telegram's pages give "New qts value" for each of them (the one for
+`updateBotStarsSubscription` is not written), and its updates guide says that `qts` events
+"are never grouped, so qts_count is always equal to 1". TDLib applies all of them through
+`add_pending_qts_update`, one step each. They are now `Key::Secondary` with a count of one,
+and the match has no wildcard, so an update a later layer adds has to be classified to
+compile. This is a fix of its own, in its own commit, not part of the schema.
+
 ### Handwritten sites
 
 | Schema change | Where | What |

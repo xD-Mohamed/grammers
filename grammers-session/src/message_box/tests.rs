@@ -1741,6 +1741,123 @@ fn widget_data_for_a_channel_is_rejected_without_advancing() {
     assert_eq!(boxes.get_difference(), Some(get_difference(12, 56, 78)));
 }
 
+// One of each bot update that carries `qts` and used to be delivered without advancing
+// it. Telegram documents "New qts value" on each, and TDLib applies each in sequence.
+fn qts_updates(first_qts: i32) -> Vec<tl::enums::Update> {
+    let peer = tl::enums::Peer::User(tl::types::PeerUser { user_id: 1 });
+    vec![
+        tl::types::UpdateMessagePollVote {
+            poll_id: 1,
+            peer: peer.clone(),
+            options: Vec::new(),
+            positions: Vec::new(),
+            qts: first_qts,
+        }
+        .into(),
+        tl::types::UpdateBotBusinessConnect {
+            connection: tl::types::BotBusinessConnection {
+                disabled: false,
+                connection_id: "connection".into(),
+                user_id: 1,
+                dc_id: 2,
+                date: 3,
+                rights: None,
+            }
+            .into(),
+            qts: first_qts + 1,
+        }
+        .into(),
+        tl::types::UpdateManagedBot {
+            user_id: 1,
+            bot_id: 2,
+            qts: first_qts + 2,
+        }
+        .into(),
+        tl::types::UpdateBotGuestChatQuery {
+            query_id: 1,
+            message: tl::types::MessageEmpty {
+                id: 1,
+                peer_id: None,
+            }
+            .into(),
+            reference_messages: None,
+            qts: first_qts + 3,
+        }
+        .into(),
+        tl::types::UpdateBotStarsSubscription {
+            canceled: false,
+            payment_failed: false,
+            restored: false,
+            user_id: 1,
+            payload: Vec::new(),
+            qts: first_qts + 4,
+        }
+        .into(),
+        // Three messages deleted at once are one event.
+        tl::types::UpdateBotDeleteBusinessMessage {
+            connection_id: "connection".into(),
+            peer,
+            messages: vec![1, 2, 3],
+            qts: first_qts + 5,
+        }
+        .into(),
+    ]
+}
+
+#[test]
+fn bot_updates_with_qts_advance_the_secondary_sequence() {
+    reset_time();
+    let mut boxes = MessageBoxes::new();
+    boxes.set_state(state(12, 34, 56, 78));
+
+    for (index, update) in qts_updates(79).into_iter().enumerate() {
+        let qts = 79 + index as i32;
+        let (delivered, _, _) = boxes.process_updates(one_update(update)).unwrap();
+        assert_eq!(delivered.len(), 1, "update {index}");
+        assert_eq!(
+            delivered[0].1.message_box,
+            Some(MessageBox::Secondary { qts }),
+            "update {index}"
+        );
+        assert_eq!(boxes.session_state().qts, qts);
+    }
+
+    // None of them left a gap behind: the next event applies and nothing is requested.
+    let stopped = tl::types::UpdateBotStopped {
+        user_id: 1,
+        date: 2,
+        stopped: true,
+        qts: 85,
+    };
+    let (delivered, _, _) = boxes.process_updates(one_update(stopped.into())).unwrap();
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(boxes.session_state().qts, 85);
+    advance_time_by(POSSIBLE_GAP_TIMEOUT);
+    boxes.check_deadlines();
+    assert_eq!(boxes.get_difference(), None);
+
+    // Delivered once: the same events arriving again are recognised as applied.
+    for update in qts_updates(79) {
+        let (delivered, _, _) = boxes.process_updates(one_update(update)).unwrap();
+        assert!(delivered.is_empty());
+    }
+    assert_eq!(boxes.session_state().qts, 85);
+}
+
+// Before login there is no account position to hold a `qts`: these are delivered as they
+// come, as the other bot updates are.
+#[test]
+fn bot_updates_with_qts_are_delivered_before_login() {
+    reset_time();
+    let mut boxes = MessageBoxes::new();
+    for update in qts_updates(79) {
+        let (delivered, _, _) = boxes.process_updates(one_update(update)).unwrap();
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0].1.message_box, None);
+    }
+    assert_eq!(boxes.session_state().qts, NO_PTS);
+}
+
 #[test]
 fn test_process_socket_updates_flow_common_seq_gap() {
     reset_time();

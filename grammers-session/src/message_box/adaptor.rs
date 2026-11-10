@@ -650,7 +650,11 @@ impl PtsInfo {
             Theme(_) => None,
             GeoLiveViewed(_) => None,
             LoginToken => None,
-            MessagePollVote(_) => None,
+            MessagePollVote(u) => Some(Self {
+                key: Key::Secondary,
+                pts: u.qts,
+                count: 1,
+            }),
             DialogFilter(_) => None,
             DialogFilterOrder(_) => None,
             DialogFilters => None,
@@ -743,7 +747,11 @@ impl PtsInfo {
             DeleteQuickReply(_) => None,
             QuickReplyMessage(_) => None,
             DeleteQuickReplyMessages(_) => None,
-            BotBusinessConnect(_) => None,
+            BotBusinessConnect(u) => Some(Self {
+                key: Key::Secondary,
+                pts: u.qts,
+                count: 1,
+            }),
             BotNewBusinessMessage(u) => Some(Self {
                 key: Key::Secondary,
                 pts: u.qts,
@@ -754,10 +762,11 @@ impl PtsInfo {
                 pts: u.qts,
                 count: 1,
             }),
+            // One event however many messages it names: `qts` events are never grouped.
             BotDeleteBusinessMessage(u) => Some(Self {
                 key: Key::Secondary,
                 pts: u.qts,
-                count: u.messages.len() as i32,
+                count: 1,
             }),
             StarsBalance(_) => None,
             BusinessBotCallbackQuery(_) => None,
@@ -765,9 +774,53 @@ impl PtsInfo {
             BotPurchasedPaidMedia(u) => Some(Self {
                 key: Key::Secondary,
                 pts: u.qts,
-                count: 1, // TODO unsure if 1
+                count: 1,
             }),
             PaidReactionPrivacy(_) => None,
+            SentPhoneCode(_) => None,
+            GroupCallChainBlocks(_) => None,
+            ReadMonoForumInbox(_) => None,
+            ReadMonoForumOutbox(_) => None,
+            MonoForumNoPaidException(_) => None,
+            GroupCallMessage(_) => None,
+            GroupCallEncryptedMessage(_) => None,
+            PinnedForumTopic(_) => None,
+            PinnedForumTopics(_) => None,
+            DeleteGroupCallMessages(_) => None,
+            StarGiftAuctionState(_) => None,
+            StarGiftAuctionUserState(_) => None,
+            EmojiGameInfo(_) => None,
+            StarGiftCraftFail => None,
+            ChatParticipantRank(_) => None,
+            ManagedBot(u) => Some(Self {
+                key: Key::Secondary,
+                pts: u.qts,
+                count: 1,
+            }),
+            BotGuestChatQuery(u) => Some(Self {
+                key: Key::Secondary,
+                pts: u.qts,
+                count: 1,
+            }),
+            AiComposeTones => None,
+            JoinChatWebViewDecision(_) => None,
+            NewBotConnection(_) => None,
+            WebBrowserSettings(_) => None,
+            WebBrowserException(_) => None,
+            NewEphemeralMessage(_) => None,
+            DeleteEphemeralMessages(_) => None,
+            EditEphemeralMessage(_) => None,
+            EphemeralBotCallbackQuery(_) => None,
+            BotStarsSubscription(u) => Some(Self {
+                key: Key::Secondary,
+                pts: u.qts,
+                count: 1,
+            }),
+            WalletState(_) => None,
+            SentWalletTransaction(_) => None,
+            WalletGaslessInfo(_) => None,
+            WalletTonConnectSession(_) => None,
+            WalletTonConnectPendingDisconnect(_) => None,
             // Layer 233. These five carry neither `pts` nor `qts`.
             EditForumTopic(_) => None,
             BotWidgetQuery(_) => None,
@@ -783,7 +836,9 @@ impl PtsInfo {
                 pts: u.pts,
                 count: u.pts_count,
             }),
-            _ => None,
+            // No wildcard: an update a new layer adds must be given its sequence here to
+            // compile. One with `pts` or `qts` that falls through as `None` is delivered,
+            // and the next update of its sequence then looks like a gap.
         }
     }
 }
