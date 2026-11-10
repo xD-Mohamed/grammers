@@ -33,6 +33,7 @@ use grammers_tl_types as tl;
 pub use group::Group;
 pub use participant::{Participant, Role};
 pub use peer_map::PeerMap;
+pub(crate) use peer_map::Peers;
 pub use permissions::{Permissions, Restrictions};
 pub use user::{Platform, RestrictionReason, User};
 

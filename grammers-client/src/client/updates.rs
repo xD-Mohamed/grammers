@@ -487,6 +487,92 @@ mod tests {
         assert_eq!(session.writes.load(Ordering::Relaxed), 2);
     }
 
+    // The peers of a response are found by identifier whether there are a few, kept as
+    // they came, or many, kept in a map. Of two with one identifier the later is kept.
+    #[tokio::test]
+    async fn peers_of_a_response_are_found_few_or_many() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 1);
+        let client = Client::new(pool.handle);
+        let user = |id| PeerId::user(id).unwrap();
+        for count in [1, 3, 15, 16, 17, 40] {
+            let mut users: Vec<_> = (1..=count).map(|id| user_with_hash(id, id * 10)).collect();
+            users.push(user_with_hash(1, 999));
+            let mut peers = client.peer_map_from_raw(users, Vec::new());
+            assert_eq!(peers.map.len(), count as usize);
+            assert_eq!(peers.iter().count(), count as usize);
+            assert_eq!(peers.iter_peers().count(), count as usize);
+            for id in 1..=count {
+                let peer = peers.get(user(id)).unwrap();
+                assert_eq!(peer.id(), user(id));
+                let hash = if id == 1 { 999 } else { id * 10 };
+                assert_eq!(peer.auth().unwrap().hash(), hash);
+            }
+            assert!(peers.iter().all(|(id, peer)| peer.id() == id));
+            assert!(peers.get(user(count + 1)).is_none());
+
+            // Taking from a map someone else holds leaves it whole. From one's own it
+            // removes the peer.
+            let shared = peers.handle();
+            assert_eq!(peers.take(user(1)).unwrap().id(), user(1));
+            assert_eq!(peers.map.len(), count as usize);
+            drop(shared);
+            assert_eq!(peers.take_user(1).unwrap().id(), user(1));
+            assert_eq!(peers.map.len(), count as usize - 1);
+            assert!(peers.get(user(1)).is_none());
+            assert!(peers.take(user(1)).is_none());
+            if count > 1 {
+                assert_eq!(peers.get(user(count)).unwrap().id(), user(count));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn peers_are_kept_as_a_list_up_to_sixteen_and_by_kind() {
+        use crate::peer::{Peer, Peers};
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 1);
+        let client = Client::new(pool.handle);
+        let user = |id| PeerId::user(id).unwrap();
+        let users = |count| (1..=count).map(|id| user_with_hash(id, id * 10)).collect();
+
+        // Sixteen with nothing repeated are still a list, and seventeen are a map.
+        let sixteen = client.peer_map_from_raw(users(16), Vec::new());
+        assert!(matches!(&*sixteen.map, Peers::Few(few) if few.len() == 16));
+        assert_eq!(sixteen.get(user(16)).unwrap().id(), user(16));
+        let seventeen = client.peer_map_from_raw(users(17), Vec::new());
+        assert!(matches!(&*seventeen.map, Peers::Many(many) if many.len() == 17));
+        assert_eq!(seventeen.get(user(17)).unwrap().id(), user(17));
+
+        // A user and a chat of the same number are two peers, counted from both lists.
+        let chat: tl::enums::Chat = tl::types::ChatEmpty { id: 2 }.into();
+        let mixed = client.peer_map_from_raw(users(3), vec![chat]);
+        assert_eq!(mixed.map.len(), 4);
+        assert!(matches!(mixed.get(user(2)), Some(Peer::User(_))));
+        let group = mixed.get(PeerId::chat(2).unwrap()).unwrap();
+        assert!(!matches!(group, Peer::User(_)));
+        assert_eq!(group.id(), PeerId::chat(2).unwrap());
+
+        // The later of two is kept wherever the first one was.
+        let mut repeated: Vec<_> = users(4);
+        repeated.push(user_with_hash(3, 333));
+        let repeated = client.peer_map_from_raw(repeated, Vec::new());
+        assert_eq!(repeated.map.len(), 4);
+        assert_eq!(repeated.get(user(3)).unwrap().auth().unwrap().hash(), 333);
+        assert_eq!(repeated.get(user(4)).unwrap().auth().unwrap().hash(), 40);
+    }
+
+    #[tokio::test]
+    async fn responses_without_peers_share_one_empty_map() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 1);
+        let client = Client::new(pool.handle);
+        let mut none = client.peer_map_from_raw(Vec::new(), Vec::new());
+        assert!(Arc::ptr_eq(&none.map, &client.empty_peer_map().map));
+        assert_eq!(none.iter().count(), 0);
+        assert!(none.take(PeerId::user(1).unwrap()).is_none());
+        // One with a peer is its own.
+        let some = client.peer_map_from_raw(vec![user_with_hash(7, 100)], Vec::new());
+        assert!(!Arc::ptr_eq(&some.map, &none.map));
+    }
+
     #[tokio::test]
     async fn a_failed_peer_write_is_attempted_again() {
         let session = Arc::new(CountingWrites::default());

@@ -8,7 +8,6 @@
 
 //! Methods related to users, groups and channels.
 
-use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -29,6 +28,7 @@ use crate::peer::BannedRightsBuilder;
 use crate::peer::Participant;
 use crate::peer::Peer;
 use crate::peer::PeerMap;
+use crate::peer::Peers;
 use crate::peer::User;
 use crate::peer::chats::AdminRightsBuilderInner;
 use crate::peer::chats::BannedRightsBuilderInner;
@@ -1043,15 +1043,18 @@ impl Client {
         users: Vec<tl::enums::User>,
         chats: Vec<tl::enums::Chat>,
     ) -> PeerMap {
-        let map = users
-            .into_iter()
-            .map(|user| Peer::from_user(self, user))
-            .chain(chats.into_iter().map(|chat| Peer::from_raw(self, chat)))
-            .map(|peer| (peer.id(), peer))
-            .collect::<HashMap<_, _>>();
+        if users.is_empty() && chats.is_empty() {
+            return self.empty_peer_map();
+        }
+        let users = users.into_iter().map(|user| Peer::from_user(self, user));
+        let chats = chats.into_iter().map(|chat| Peer::from_raw(self, chat));
+        let peers = PeersIter {
+            len: users.len() + chats.len(),
+            peers: users.chain(chats),
+        };
 
         PeerMap {
-            map: Arc::new(map),
+            map: Arc::new(Peers::collect(peers)),
             session: Arc::clone(&self.0.session),
         }
     }
@@ -1072,8 +1075,7 @@ impl Client {
         let stored = &self.0.stored_peers;
         stored.forget_if_old(now);
         let changed: Vec<PeerInfo> = peers
-            .map
-            .values()
+            .iter_peers()
             .filter(|peer| peer.auth().is_some())
             .map(PeerInfo::from)
             .filter(|peer| !stored.contains(peer))
@@ -1089,11 +1091,33 @@ impl Client {
 
     pub(crate) fn empty_peer_map(&self) -> PeerMap {
         PeerMap {
-            map: Arc::new(HashMap::new()),
+            map: Peers::empty(),
             session: Arc::clone(&self.0.session),
         }
     }
 }
+
+/// Users then chats, with the length a chain of the two does not report.
+struct PeersIter<I> {
+    peers: I,
+    len: usize,
+}
+
+impl<I: Iterator<Item = Peer>> Iterator for PeersIter<I> {
+    type Item = Peer;
+
+    fn next(&mut self) -> Option<Peer> {
+        let peer = self.peers.next()?;
+        self.len -= 1;
+        Some(peer)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<I: Iterator<Item = Peer>> ExactSizeIterator for PeersIter<I> {}
 
 #[derive(Debug, Clone)]
 enum ParticipantPermissionsInner {
@@ -1214,7 +1238,7 @@ mod peer_cache_tests {
                         )
                         .await;
                     let id = PeerId::channel(73).unwrap();
-                    assert!(peers.map.contains_key(&id));
+                    assert!(peers.get(id).is_some());
                     assert_eq!(session.peer(id).await.unwrap().is_some(), cache);
                 }
             });

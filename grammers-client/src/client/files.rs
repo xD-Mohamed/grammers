@@ -709,10 +709,7 @@ mod safety_tests {
             }
             .into(),
             None,
-            crate::peer::PeerMap {
-                map: Arc::default(),
-                session: client.0.session.clone(),
-            },
+            client.empty_peer_map(),
         );
         assert!(matches!(message.reply_album(vec![]).await,
             Err(InvocationError::Io(e)) if e.kind() == io::ErrorKind::InvalidInput));
