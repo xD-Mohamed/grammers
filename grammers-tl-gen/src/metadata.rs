@@ -47,11 +47,9 @@ const BOXED_FOR_SIZE: [&str; 16] = [
 /// through `updateSentWalletTransaction`.
 /// `messageReplyHeader.reply_media` otherwise reserves the full media enum even
 /// for an ordinary text reply, including in short updates and message values.
-/// Forward metadata on a quoted message is likewise absent in ordinary replies.
-const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 3] = [
+const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 2] = [
     ("wallet.nftItem", "gift"),
     ("messageReplyHeader", "reply_media"),
-    ("messageReplyHeader", "reply_from"),
 ];
 
 /// Additional metadata required by several parts of the generation.
