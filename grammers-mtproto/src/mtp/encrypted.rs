@@ -6,7 +6,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 use std::{borrow::Cow, mem};
 
 use grammers_crypto::{AuthKey, DequeBuffer, decrypt_data_v2, encrypt_data_v2};
@@ -363,9 +363,8 @@ impl Encrypted {
 
     /// Correct our time offset based on a known valid message ID.
     fn correct_time_offset(&mut self, msg_id: i64) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time is before epoch")
+        // The clock identifiers are made from, so that the offset is one they add to.
+        let now = crate::coarse_clock::unix_time()
             .as_secs()
             .min(i64::MAX as u64) as i64;
 
@@ -391,9 +390,10 @@ impl Encrypted {
             self.last_msg_id += 4;
             return self.last_msg_id;
         }
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time is before epoch");
+        // As of the kernel's last tick where it keeps one: identifiers only have to
+        // follow the clock to within seconds, and to increase, which the floor below
+        // sees to for every packet of the same tick.
+        let now = crate::coarse_clock::unix_time();
         self.clock_secs = now.as_secs().min(i64::MAX as u64) as i64;
 
         let seconds = self.clock_secs.saturating_add(self.time_offset).max(0) as u64;
@@ -1883,6 +1883,7 @@ impl Mtp for Encrypted {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     // salt + session_id
     const MESSAGE_PREFIX_LEN: usize = 8 + 8;
@@ -2451,14 +2452,21 @@ mod tests {
         assert!((wall - (ack >> 32)).abs() <= 1, "the first is the time");
         assert_eq!(mtp.clock_secs, ack >> 32);
 
-        // The next packet reads it again instead of counting on from the last.
+        // A packet of the same tick of the clock still takes a later identifier.
         buffer.clear();
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        let same_tick = mtp.push(&mut buffer, REQUEST).unwrap();
+        mtp.finalize_plain(&mut buffer);
+        assert!(same_tick.0 > ack + 12);
+
+        // The next packet reads the clock again instead of counting on from the last.
+        // That reading is as of the kernel's last tick, at most 10 ms before.
+        buffer.clear();
+        std::thread::sleep(std::time::Duration::from_millis(25));
         let later = mtp.push(&mut buffer, REQUEST).unwrap();
         mtp.finalize_plain(&mut buffer);
         assert_eq!(packet_message_ids(&buffer[..], 1), [later.0]);
         assert!(
-            later.0 - (ack + 12) > 1_000_000 << 2,
+            later.0 - same_tick.0 > 1_000_000 << 2,
             "a later packet must carry its own time"
         );
 

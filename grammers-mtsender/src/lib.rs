@@ -41,6 +41,8 @@ pub use configuration::{
     UpdatesConfiguration,
 };
 pub use errors::{InvocationError, InvocationErrorCategory, ReadError, RpcError};
+/// The clock as of the kernel's last tick, for what only compares it with coarse deadlines.
+pub use grammers_mtproto::coarse_clock;
 #[cfg(feature = "proxy")]
 pub use net::ProxyTransport;
 pub use net::ServerAddr;

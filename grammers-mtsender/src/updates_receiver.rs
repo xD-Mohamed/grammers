@@ -98,6 +98,14 @@ pub struct UpdatesReceiver {
     // clock is a system call, a read for each is measurable per batch of updates. Cleared
     // at the start of a turn and after anything in it that can wait.
     turn_clock: Option<std::time::Instant>,
+    // The wait for a deadline timed out: the next reading of the clock is precise.
+    deadline_fired: bool,
+    // Stands for a kernel tick much longer than a real one.
+    #[cfg(test)]
+    pub(crate) coarse_lag: Duration,
+    // Turns of the loop in `next`, for a test to tell waiting from spinning.
+    #[cfg(test)]
+    pub(crate) turns: usize,
     last_clock_read: Option<std::time::Instant>,
     // Keyed by channel; `None` is the account sequence.
     unreadable_differences: BTreeMap<Option<i64>, u8>,
@@ -197,6 +205,11 @@ impl UpdatesReceiver {
             recovery_paused_until: None,
             recovery_failures: 0,
             turn_clock: None,
+            deadline_fired: false,
+            #[cfg(test)]
+            coarse_lag: Duration::ZERO,
+            #[cfg(test)]
+            turns: 0,
             last_clock_read: None,
             unreadable_differences: BTreeMap::new(),
         })
@@ -218,6 +231,10 @@ impl UpdatesReceiver {
         loop {
             tokio::task::consume_budget().await;
             self.turn_clock = None;
+            #[cfg(test)]
+            {
+                self.turns += 1;
+            }
             let generation = self.handle.home_failure_generation();
             if generation != self.home_failure_generation {
                 self.process_socket_updates(UpdatesLike::ConnectionClosed)
@@ -575,7 +592,7 @@ impl UpdatesReceiver {
             match received {
                 Ok(Some(updates)) => self.process_socket_updates(updates).await,
                 Ok(None) => break Err(InvocationError::Dropped("updates channel was closed")),
-                Err(_) => {}
+                Err(_) => self.deadline_fired = true,
             }
         }
     }
@@ -615,11 +632,23 @@ impl UpdatesReceiver {
     }
 
     /// The time for this turn of the loop, read once.
+    ///
+    /// It may be one kernel tick old, which no deadline here is fine enough to notice,
+    /// except in the turn after a deadline's timer fired: a reading a tick short of that
+    /// deadline would find nothing due, wait for it again and spin until the tick.
     fn turn_now(&mut self) -> std::time::Instant {
         match self.turn_clock {
             Some(now) => now,
             None => {
-                let now = std::time::Instant::now();
+                let now = if std::mem::take(&mut self.deadline_fired) {
+                    std::time::Instant::now()
+                } else {
+                    let now = grammers_mtproto::coarse_clock::instant();
+                    #[cfg(test)]
+                    let now = now.checked_sub(self.coarse_lag).unwrap_or(now);
+                    // Not earlier than the precise reading a turn after a timer took.
+                    self.last_clock_read.map_or(now, |last| now.max(last))
+                };
                 self.turn_clock = Some(now);
                 self.last_clock_read = Some(now);
                 now
@@ -630,7 +659,9 @@ impl UpdatesReceiver {
     /// The last reading of the monotonic clock this receiver took, while checking
     /// deadlines or applying updates. `None` before the first.
     ///
-    /// It is never in the future. It can be older than the batch [`Self::next`] last
+    /// It is never in the future, never earlier than the one before it, and can be as
+    /// of the kernel's last tick, a few milliseconds old, where the kernel keeps one
+    /// (see [`crate::coarse_clock`]). It can be older than the batch [`Self::next`] last
     /// returned by the time that batch waited to be taken, or by the duration of the
     /// recovery request that produced it; a receiver that has been waiting reads the
     /// clock again before it applies what arrives. That is recent enough to age a cache

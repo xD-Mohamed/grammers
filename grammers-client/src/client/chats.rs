@@ -75,7 +75,8 @@ impl StoredPeers {
 
     #[cfg(test)]
     pub(crate) fn expire_for_tests(&self) {
-        self.0.lock().unwrap().forget_at = Some(Instant::now());
+        // By the clock `forget_if_old` reads, which can be a tick behind `Instant::now`.
+        self.0.lock().unwrap().forget_at = Some(grammers_mtsender::coarse_clock::instant());
     }
 
     #[cfg(test)]
@@ -84,12 +85,13 @@ impl StoredPeers {
     }
 
     /// `now` is a recent reading of the clock when the caller has one. The clock is only
-    /// read here without it, and only once something has been remembered.
+    /// read here without it, and only once something has been remembered. That reading
+    /// may be a kernel tick old: what it is compared with is ten minutes away.
     fn forget_if_old(&self, now: Option<Instant>) {
         let mut table = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if table
             .forget_at
-            .is_some_and(|at| now.unwrap_or_else(Instant::now) >= at)
+            .is_some_and(|at| now.unwrap_or_else(grammers_mtsender::coarse_clock::instant) >= at)
         {
             table.slots.fill(0);
             table.forget_at = None;

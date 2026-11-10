@@ -2845,19 +2845,120 @@ mod optimization_tests {
         let (updates, _, _) = receiver.next().await.unwrap();
         let after = std::time::Instant::now();
         assert_eq!(updates[0].0, tl::enums::Update::Config);
+        // The reading is as of the kernel's last tick where it keeps one: never later
+        // than the clock, and earlier by 10 ms at most.
+        let tick = Duration::from_millis(50);
         let read = receiver.last_clock_read().unwrap();
-        assert!(before <= read && read <= after);
+        assert!(read <= after);
+        assert!(before.saturating_duration_since(read) < tick);
 
         // A batch that arrives while `next` waits is applied at a reading taken after the
         // wait, not at the one its turn of the loop began with.
         let mut sent_at = None;
         let (batch, ()) = tokio::join!(receiver.next(), async {
-            tokio::time::sleep(Duration::from_millis(20)).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
             sent_at = Some(std::time::Instant::now());
             update_tx.send(config_update()).await.unwrap();
         });
         batch.unwrap();
-        assert!(receiver.last_clock_read().unwrap() >= sent_at.unwrap());
+        let read = receiver.last_clock_read().unwrap();
+        assert!(sent_at.unwrap().saturating_duration_since(read) < tick);
+    }
+
+    // A reading of the clock as of the last tick can be short of a deadline whose timer
+    // has just fired. The turn after a timer reads the precise clock, or the receiver
+    // would find nothing due and wait for the same deadline again until the tick.
+    #[tokio::test]
+    async fn a_deadline_that_fired_is_found_due_without_waiting_for_the_tick() {
+        use grammers_session::types::{UpdateState, UpdatesState};
+        use tl::{Identifiable, Serializable};
+        let session = Arc::new(grammers_session::storages::MemorySession::default());
+        session
+            .set_update_state(UpdateState::All(UpdatesState {
+                pts: 100,
+                date: 1,
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        cache_self_user(session.as_ref()).await;
+        let mut pool = SenderPool::new(Arc::clone(&session), 1);
+        let mut receiver = crate::UpdatesReceiver::create(
+            pool.handle.thin.clone(),
+            erase(Arc::clone(&session)),
+            pool.updates,
+            crate::UpdatesConfiguration { catch_up: true },
+        )
+        .await
+        .unwrap();
+        // A tick of 300 ms: every coarse reading is that far behind the clock.
+        receiver.coarse_lag = Duration::from_millis(300);
+        let update_tx = pool.runner.updates_tx.clone().unwrap();
+        let request_rx = &mut pool.runner.request_rx;
+
+        let waited = tokio::time::timeout(Duration::from_secs(5), async {
+            let next = receiver.next();
+            tokio::pin!(next);
+            let mut difference_asked = async |next: &mut std::pin::Pin<&mut _>| {
+                tokio::select! {
+                    biased;
+                    result = next => panic!("nothing can be delivered yet: {result:?}"),
+                    request = request_rx.recv() => {
+                        let Request::Invoke { body, tx, .. } = request.unwrap() else {
+                            panic!("expected a request for the difference");
+                        };
+                        assert_eq!(
+                            u32::from_le_bytes(body[..4].try_into().unwrap()),
+                            tl::functions::updates::GetDifference::CONSTRUCTOR_ID
+                        );
+                        tx
+                    }
+                }
+            };
+
+            // Catching up from the saved position comes first, and finds nothing missed.
+            let caught_up = difference_asked(&mut next).await;
+            let nothing =
+                tl::enums::updates::Difference::Empty(tl::types::updates::DifferenceEmpty {
+                    date: 1,
+                    seq: 0,
+                });
+            caught_up.send(Ok(nothing.to_bytes())).unwrap();
+
+            // An update that leaves a gap waits half a second for what is missing.
+            update_tx
+                .send(UpdatesLike::Updates(
+                    tl::types::Updates {
+                        updates: vec![
+                            tl::types::UpdateDeleteMessages {
+                                messages: vec![1],
+                                pts: 105,
+                                pts_count: 1,
+                            }
+                            .into(),
+                        ],
+                        users: vec![],
+                        chats: vec![],
+                        date: 1,
+                        seq: 0,
+                    }
+                    .into(),
+                ))
+                .await
+                .unwrap();
+            let started = std::time::Instant::now();
+            drop(difference_asked(&mut next).await);
+            started.elapsed()
+        })
+        .await
+        .unwrap();
+
+        // The deadline was set from a reading 300 ms old, so its timer fires 300 ms
+        // early, when a coarse reading is still that far short of it. Catching up, the
+        // arrival, the wait and the turn that finds the deadline due are a handful of
+        // turns: a receiver waiting for the tick would have turned thousands of times.
+        assert!(receiver.turns < 30, "{} turns", receiver.turns);
+        assert!(waited < Duration::from_secs(3), "{waited:?}");
     }
 
     #[tokio::test(start_paused = true)]

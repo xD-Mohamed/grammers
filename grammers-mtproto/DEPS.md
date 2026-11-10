@@ -22,6 +22,12 @@ Used to serialize and deserialize the messages exchanged with Telegram's servers
 Messages may be gzip-encoded to reduce bandwidth, so this crate is used for both decompressing
 incoming messages and compressing them when it is worth it (based on some simple heuristics).
 
+## libc
+
+On Linux and Android, to read the kernel's coarse clocks (`CLOCK_MONOTONIC_COARSE` and
+`CLOCK_REALTIME_COARSE`), which the standard library has no way to ask for. It is already
+part of every build through the runtime and the random number generator.
+
 ## num-bigint
 
 Used during the generation of the Authorization Key.
