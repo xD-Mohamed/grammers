@@ -107,6 +107,57 @@ async fn map_random_ids_to_messages(
         .collect())
 }
 
+/// [`map_random_ids_to_messages`] for the one message of a send: the same choice, made
+/// without the two maps and the vector that sorting out an album takes, and wrapping
+/// only the message that is returned.
+async fn map_random_id_to_message(
+    client: &Client,
+    fetched_in: PeerRef,
+    random_id: i64,
+    parts: SentUpdateParts,
+) -> Option<Message> {
+    let (updates, users, chats) = parts?;
+    let peers = client.build_peer_map(users, chats).await;
+
+    // What a map by random identifier would hold for it: the last identifier given.
+    let wanted = updates.iter().rev().find_map(|update| match update {
+        tl::enums::Update::MessageId(u) if u.random_id == random_id => Some(u.id),
+        _ => None,
+    });
+
+    // What a map by message identifier would give: the last message with the wanted
+    // identifier, or else the last message of the only identifier there is.
+    let mut found = None;
+    let mut other: Option<(i32, tl::enums::Message)> = None;
+    let mut several = false;
+    for update in updates {
+        let message = match update {
+            tl::enums::Update::NewMessage(tl::types::UpdateNewMessage { message, .. }) => message,
+            tl::enums::Update::NewChannelMessage(tl::types::UpdateNewChannelMessage {
+                message,
+                ..
+            }) => message,
+            tl::enums::Update::NewScheduledMessage(tl::types::UpdateNewScheduledMessage {
+                message,
+                ..
+            }) => message,
+            _ => continue,
+        };
+        let id = message.id();
+        if wanted == Some(id) {
+            found = Some(message);
+            continue;
+        }
+        match &mut other {
+            Some((known, last)) if *known == id => *last = message,
+            Some(_) => several = true,
+            None => other = Some((id, message)),
+        }
+    }
+    let message = found.or_else(|| other.filter(|_| !several).map(|(_, message)| message))?;
+    Some(Message::from_raw(client, message, Some(fetched_in), peers))
+}
+
 async fn send_message_peer(client: &Client, peer: PeerRef) -> Result<PeerRef, InvocationError> {
     if peer.id.bare_id().is_some() {
         return Ok(peer);
@@ -141,10 +192,7 @@ fn message_from_full_updates(
     let constructor = updates_constructor(&updates);
     let parts = sent_update_parts(updates);
     async move {
-        let mapped = map_random_ids_to_messages(client, peer, &[random_id], parts)
-            .await?
-            .pop()
-            .flatten();
+        let mapped = map_random_id_to_message(client, peer, random_id, parts).await;
         Ok(mapped.unwrap_or_else(|| {
             warn!(
                 constructor,
@@ -1644,6 +1692,131 @@ mod response_mapping_tests {
                 );
             }
         }
+    }
+
+    // The reply to a send of one message is sorted out without the maps an album needs.
+    // It must choose the message those maps choose, whatever the reply holds.
+    #[tokio::test]
+    async fn one_sent_message_is_chosen_as_among_several() {
+        let pool = SenderPool::new(Arc::new(MemorySession::default()), 1);
+        let client = Client::new(pool.handle);
+        let peer = PeerId::user(7).unwrap().to_ambient_ref();
+        // Messages of one identifier are told apart by the peer they name.
+        let message = |id, from| {
+            tl::enums::Message::Empty(tl::types::MessageEmpty {
+                id,
+                peer_id: Some(tl::types::PeerUser { user_id: from }.into()),
+            })
+        };
+        let new = |id, from| -> tl::enums::Update {
+            tl::types::UpdateNewMessage {
+                message: message(id, from),
+                pts: 1,
+                pts_count: 1,
+            }
+            .into()
+        };
+        let channel = |id, from| -> tl::enums::Update {
+            tl::types::UpdateNewChannelMessage {
+                message: message(id, from),
+                pts: 1,
+                pts_count: 1,
+            }
+            .into()
+        };
+        let scheduled = |id, from| -> tl::enums::Update {
+            tl::types::UpdateNewScheduledMessage {
+                message: message(id, from),
+            }
+            .into()
+        };
+        let sent = |random_id, id| -> tl::enums::Update {
+            tl::types::UpdateMessageId { id, random_id }.into()
+        };
+        const RANDOM: i64 = 55;
+
+        // The updates of a reply, and the message expected: its identifier and peer.
+        type Case = (Vec<tl::enums::Update>, Option<(i32, i64)>);
+        let cases: Vec<Case> = vec![
+            // Mapped by its random identifier, among others.
+            (
+                vec![sent(RANDOM, 2), new(1, 10), new(2, 20), new(3, 30)],
+                Some((2, 20)),
+            ),
+            (
+                vec![new(1, 10), channel(2, 20), sent(RANDOM, 2)],
+                Some((2, 20)),
+            ),
+            (
+                vec![sent(RANDOM, 2), scheduled(2, 20), new(1, 10)],
+                Some((2, 20)),
+            ),
+            // The last identifier given for it, and the last message of that identifier.
+            (
+                vec![sent(RANDOM, 1), sent(RANDOM, 2), new(1, 10), new(2, 20)],
+                Some((2, 20)),
+            ),
+            (vec![sent(RANDOM, 2), new(2, 20), new(2, 21)], Some((2, 21))),
+            // Another send's random identifier does not name it.
+            (vec![sent(RANDOM + 1, 2), new(1, 10), new(2, 20)], None),
+            // Not mapped, or mapped to a message that is not there: the only message.
+            (vec![new(4, 40)], Some((4, 40))),
+            (vec![sent(RANDOM, 9), channel(4, 40)], Some((4, 40))),
+            (vec![sent(RANDOM, 9), new(4, 40), new(4, 41)], Some((4, 41))),
+            // The last identifier given names nothing, though an earlier one did.
+            (
+                vec![sent(RANDOM, 2), sent(RANDOM, 9), new(2, 20)],
+                Some((2, 20)),
+            ),
+            // Updates of other kinds are passed over.
+            (
+                vec![
+                    tl::enums::Update::Config,
+                    new(4, 40),
+                    tl::enums::Update::Config,
+                ],
+                Some((4, 40)),
+            ),
+            (
+                vec![
+                    sent(RANDOM, 2),
+                    new(1, 10),
+                    tl::enums::Update::Config,
+                    new(2, 20),
+                ],
+                Some((2, 20)),
+            ),
+            // Not the only one, or none at all.
+            (vec![sent(RANDOM, 9), new(4, 40), new(5, 50)], None),
+            (vec![new(4, 40), new(5, 50), new(4, 41)], None),
+            (vec![sent(RANDOM, 2)], None),
+            (vec![], None),
+        ];
+        for (updates, expected) in cases {
+            let parts = || Some((updates.clone(), Vec::new(), Vec::new()));
+            let several = map_random_ids_to_messages(&client, peer, &[RANDOM], parts())
+                .await
+                .unwrap()
+                .pop()
+                .unwrap();
+            let one = map_random_id_to_message(&client, peer, RANDOM, parts()).await;
+            let found = |chosen: &Option<Message>| {
+                chosen.as_ref().map(|chosen| match &chosen.raw {
+                    tl::enums::Message::Empty(tl::types::MessageEmpty {
+                        id,
+                        peer_id: Some(tl::enums::Peer::User(from)),
+                    }) => (*id, from.user_id),
+                    other => panic!("not one of the reply's messages: {other:?}"),
+                })
+            };
+            assert_eq!(found(&several), expected, "{updates:?}");
+            assert_eq!(found(&one), expected, "{updates:?}");
+        }
+        assert!(
+            map_random_id_to_message(&client, peer, RANDOM, None)
+                .await
+                .is_none()
+        );
     }
 
     #[tokio::test]
