@@ -1,0 +1,12 @@
+GUARD start rss-harness-fixed-client-doc: avail=3419MB swap_used=1216MB swap_free=2879MB vlimit=4000000
+GUARD end rss-harness-fixed-client-doc: rc=0 secs=21 peak_rss_one_proc=1134MB peak_rss_all=1230MB min_avail=2341MB swap_used_max=1216MB (start 1216MB, moved 0MB) 
+   Compiling grammers-tl-parser v1.2.2 (/tmp/claude-0/de27/work/rss-base/grammers-tl-parser)
+   Compiling grammers-tl-gen v0.10.0 (/tmp/claude-0/de27/work/rss-base/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/tmp/claude-0/de27/work/rss-base/grammers-tl-types)
+    Checking grammers-crypto v0.10.0 (/tmp/claude-0/de27/work/rss-base/grammers-crypto)
+    Checking grammers-session v0.10.0 (/tmp/claude-0/de27/work/rss-base/grammers-session)
+    Checking grammers-mtproto v0.10.0 (/tmp/claude-0/de27/work/rss-base/grammers-mtproto)
+    Checking grammers-mtsender v0.10.0 (/tmp/claude-0/de27/work/rss-base/grammers-mtsender)
+ Documenting grammers-client v0.10.0 (/tmp/claude-0/de27/work/rss-base/grammers-client)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.72s
+   Generated /root/grammers/target/doc/grammers_client/index.html

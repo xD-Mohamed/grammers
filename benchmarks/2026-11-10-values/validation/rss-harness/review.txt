@@ -1,0 +1,11 @@
+Fresh code review: /root/validation_inventory
+Engine: inherited Codex session; native model/effort not exposed in the agent result.
+Scope: actual proc_status_kib helper and rss-accounting.md, read after implementation.
+
+Approved, no blockers. Rss: selects the intended smaps_rollup field; VmHWM retains
+its previous approximate meaning. The read stays outside CPU and allocation
+windows. The documentation covers live mapping races, scratch allocation, identical
+harnesses and the need to investigate the original peers pair separately.
+
+The smoke run proves the helper works and that counters disagree; it is not a
+before/after memory result. The reviewer did not edit code or run tests.

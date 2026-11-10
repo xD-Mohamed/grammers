@@ -248,7 +248,16 @@ fn context_switches() -> (i64, i64) {
 }
 
 fn proc_status_kib(field: &str) -> u64 {
-    let status = std::fs::read_to_string("/proc/self/status").unwrap();
+    // VmRSS is asynchronously batched by the kernel, distorting small-process
+    // comparisons. Read page tables for the steady snapshot instead.
+    // This runs after the CPU window and before allocation accounting begins.
+    let (path, field) = if field == "VmRSS" {
+        ("/proc/self/smaps_rollup", "Rss:")
+    } else {
+        // VmHWM remains the kernel's approximate high-water counter.
+        ("/proc/self/status", field)
+    };
+    let status = std::fs::read_to_string(path).unwrap();
     let line = status.lines().find(|line| line.starts_with(field)).unwrap();
     line.split_whitespace().nth(1).unwrap().parse().unwrap()
 }

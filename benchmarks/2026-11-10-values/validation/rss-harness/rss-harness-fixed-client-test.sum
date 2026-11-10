@@ -1,0 +1,27 @@
+GUARD start rss-harness-fixed-client-test: avail=3434MB swap_used=1211MB swap_free=2884MB vlimit=4000000
+GUARD end rss-harness-fixed-client-test: rc=0 secs=186 peak_rss_one_proc=685MB peak_rss_all=784MB min_avail=1540MB swap_used_max=1216MB (start 1211MB, moved 5MB) 
+test grammers-client/src/client/net.rs - client::net::Client::invoke (line 84) ... ok
+test grammers-client/src/client/net.rs - client::net::Client::new (line 30) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputAudio (line 31) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputMedia::attribute (line 330) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputMedia::thumbnail (line 285) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputVideo (line 66) ... ok
+test grammers-client/src/message/input_message.rs - message::input_message::InputMessage::attribute (line 338) ... ok
+test grammers-client/src/message/input_message.rs - message::input_message::InputMessage::thumbnail (line 293) ... ok
+test grammers-client/src/message/input_message.rs - message::input_message::InputMessage::with_options (line 52) ... ok
+test grammers-client/src/message/input_rich_message.rs - message::input_rich_message::InputRichMessage::html (line 42) ... ok
+test grammers-client/src/message/input_rich_message.rs - message::input_rich_message::InputRichMessage::markdown (line 68) ... ok
+test grammers-client/src/message/input_rich_message.rs - message::input_rich_message::InputRichMessage::photo (line 130) ... ok
+test grammers-client/src/message/message.rs - message::model::Message::react (line 507) ... ok
+test grammers-client/src/message/message.rs - message::model::Message::react (line 516) ... ok
+test grammers-client/src/message/message.rs - message::model::Message::react (line 529) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::force_reply (line 224) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::from_buttons (line 54) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::from_keys (line 132) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::hide (line 198) ... ok
+test grammers-client/src/message/send_options.rs - message::send_options::SendOptions (line 17) ... ok
+test grammers-client/src/peer/action.rs - peer::action::ActionSender::repeat (line 79) ... ok
+
+test result: ok. 69 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+all doctests ran in 0.83s; merged doctests compilation took 0.68s
