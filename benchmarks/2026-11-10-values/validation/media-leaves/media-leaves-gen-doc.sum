@@ -1,0 +1,5 @@
+GUARD start media-leaves-gen-doc: avail=3608MB swap_used=1302MB swap_free=2793MB vlimit=4000000
+GUARD end media-leaves-gen-doc: rc=0 secs=4 peak_rss_one_proc=893MB peak_rss_all=976MB min_avail=2823MB swap_used_max=1302MB (start 1302MB, moved 0MB)
+ Documenting grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.43s
+   Generated /root/grammers/target/doc/grammers_tl_gen/index.html

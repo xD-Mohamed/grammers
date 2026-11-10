@@ -1,0 +1,4 @@
+GUARD start media-leaves-gen-clippy: avail=3619MB swap_used=1302MB swap_free=2793MB vlimit=4000000
+GUARD end media-leaves-gen-clippy: rc=0 secs=0 peak_rss_one_proc=18MB peak_rss_all=36MB min_avail=3618MB swap_used_max=1302MB (start 1302MB, moved 0MB)
+    Checking grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.39s

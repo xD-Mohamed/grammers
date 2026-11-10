@@ -1,0 +1,10 @@
+media-leaves-open5000 exit 0
+GUARD end media-leaves-open5000: rc=0 secs=81 peak_rss_one_proc=28MB peak_rss_all=78MB min_avail=3612MB swap_used_max=1318MB (start 1318MB, moved 0MB)
+media-leaves-open500 exit 0
+GUARD end media-leaves-open500: rc=0 secs=242 peak_rss_one_proc=28MB peak_rss_all=70MB min_avail=1840MB swap_used_max=1318MB (start 1318MB, moved 0MB)
+media-leaves-tcache0 exit 0
+GUARD end media-leaves-tcache0: rc=0 secs=81 peak_rss_one_proc=28MB peak_rss_all=76MB min_avail=3605MB swap_used_max=1317MB (start 1317MB, moved 0MB)
+media-leaves-raw exit 0
+GUARD end media-leaves-raw: rc=0 secs=217 peak_rss_one_proc=18MB peak_rss_all=71MB min_avail=3620MB swap_used_max=1315MB (start 1315MB, moved 0MB)
+media-leaves-footprint exit 0
+GUARD end media-leaves-footprint: rc=0 secs=35 peak_rss_one_proc=18MB peak_rss_all=53MB min_avail=3624MB swap_used_max=1315MB (start 1315MB, moved 0MB)

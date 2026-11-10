@@ -1,13 +1,51 @@
 # Changelog
 
+## Unreleased: smaller webpage and game values
+
+- `tl::enums::WebPage::Page` and `tl::enums::Game::Game` now hold their existing
+  payload structs in `Box`. This shrinks the containing media and message values
+  without adding allocations for ordinary photos or documents. Full webpages and
+  games each add one allocation; empty, pending and unchanged webpage variants
+  retain their existing shapes. The TL wire and session formats are unchanged.
+- Payload struct literals, `.into()`, field access and variant matches keep
+  compiling. Direct enum construction must box the payload or use `.into()`.
+  Moving out requires `*value`; destructure that owned value for nested patterns.
+  `Update::WebPage`, `Update::ChannelWebPage`, `MessageMedia::WebPage` and
+  `MessageMedia::Game` retain their inline wrapper structs.
+
+  ```rust
+  // before
+  let page = tl::enums::WebPage::Page(raw_page);
+  let game = tl::enums::Game::Game(raw_game);
+  if let tl::enums::WebPage::Page(value) = page { consume(value); }
+  // after
+  let page: tl::enums::WebPage = raw_page.into();
+  let game: tl::enums::Game = raw_game.into();
+  if let tl::enums::WebPage::Page(value) = page { consume(*value); }
+  ```
+
+  The temporary outer boxes on `Update::WebPage` and `Update::ChannelWebPage`
+  introduced at `acaf759` are removed: the full page now owns the only new box.
+  Consumers of that intermediate revision restore inline wrapper construction
+  and extraction:
+
+  ```rust
+  // at acaf759
+  let update = tl::enums::Update::WebPage(Box::new(wrapper));
+  if let tl::enums::Update::WebPage(value) = update { consume(*value); }
+  // after (the same change applies to ChannelWebPage)
+  let update = tl::enums::Update::WebPage(wrapper);
+  if let tl::enums::Update::WebPage(value) = update { consume(value); }
+  ```
+
 ## Unreleased: smaller raw updates
 
-- Twelve large `tl::enums::Update` variants now hold their existing payload structs
+- Ten large `tl::enums::Update` variants now hold their existing payload structs
   in `Box`: `SentWalletTransaction`, `ServiceNotification`, `SentPhoneCode`,
-  `DraftMessage`, `ChannelWebPage`, `WebPage`, `ChannelParticipant`, `NotifySettings`,
+  `DraftMessage`, `ChannelParticipant`, `NotifySettings`,
   `BotPrecheckoutQuery`, `PeerWallpaper`, `Theme`, and `ChatParticipant`.
   Ordinary message-update variants stay inline. The TL wire and session formats
-  are unchanged. These twelve variants add one allocation when present.
+  are unchanged. These ten variants add one allocation when present.
 - Payload struct literals, `.into()`, field access, `Update::Variant(_)` matches
   and accessors keep compiling. Direct enum construction must box the payload or
   use `.into()`. Moving out requires `*value`; destructure that owned value for a
@@ -15,11 +53,11 @@
 
   ```rust
   // before
-  let update = tl::enums::Update::WebPage(value);
-  if let tl::enums::Update::WebPage(value) = update { consume(value); }
+  let update = tl::enums::Update::ServiceNotification(value);
+  if let tl::enums::Update::ServiceNotification(value) = update { consume(value); }
   // after
   let update: tl::enums::Update = value.into();
-  if let tl::enums::Update::WebPage(value) = update { consume(*value); }
+  if let tl::enums::Update::ServiceNotification(value) = update { consume(*value); }
   ```
 
 ## Unreleased: smaller reply headers

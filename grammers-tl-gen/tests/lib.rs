@@ -212,8 +212,6 @@ fn large_update_variants_are_boxed_with_owned_conversions() -> io::Result<()> {
         ("updateServiceNotification", "ServiceNotification"),
         ("updateSentPhoneCode", "SentPhoneCode"),
         ("updateDraftMessage", "DraftMessage"),
-        ("updateChannelWebPage", "ChannelWebPage"),
-        ("updateWebPage", "WebPage"),
         ("updateChannelParticipant", "ChannelParticipant"),
         ("updateNotifySettings", "NotifySettings"),
         ("updateBotPrecheckoutQuery", "BotPrecheckoutQuery"),
@@ -243,5 +241,43 @@ fn large_update_variants_are_boxed_with_owned_conversions() -> io::Result<()> {
     assert!(enums.contains("Channel(crate::types::UpdateChannel),"));
     assert!(enums.contains("Update::Channel(x)"));
     assert!(types.contains("crate::enums::Update::Channel(x) => Ok(x),"));
+    Ok(())
+}
+
+#[test]
+fn large_media_leaves_are_boxed_and_wrappers_stay_inline() -> io::Result<()> {
+    let definitions = get_definitions(
+        "
+        webPage#e89c45b2 id:long = WebPage;
+        webPageEmpty#211a1788 id:long = WebPage;
+        game#bdf9653b id:long = Game;
+        messageMediaWebPage#ddf10c3b webpage:WebPage = MessageMedia;
+        messageMediaGame#fdb19008 game:Game = MessageMedia;
+        updateWebPage#7f891213 webpage:WebPage pts:int pts_count:int = Update;
+        updateChannelWebPage#2f2ba99f channel_id:long webpage:WebPage pts:int pts_count:int = Update;
+    ",
+    );
+    let (_, types, _, enums) = gen_rust_code(&definitions)?;
+    assert!(enums.contains("Page(Box<crate::types::WebPage>),"));
+    assert!(enums.contains("Game(Box<crate::types::Game>),"));
+    assert!(enums.contains("Self::Page(Box::new(crate::types::WebPage::deserialize(buf)?)),"));
+    assert!(enums.contains("Self::Game(Box::new(crate::types::Game::deserialize(buf)?)),"));
+    assert!(enums.contains("WebPage::Page(Box::new(x))"));
+    assert!(enums.contains("Game::Game(Box::new(x))"));
+    assert!(types.contains("crate::enums::WebPage::Page(x) => Ok(*x),"));
+    assert!(types.contains("crate::enums::Game::Game(x) => *x,"));
+    assert!(enums.contains("Empty(crate::types::WebPageEmpty),"));
+    for (variant, payload) in [
+        ("WebPage", "MessageMediaWebPage"),
+        ("Game", "MessageMediaGame"),
+        ("WebPage", "UpdateWebPage"),
+        ("ChannelWebPage", "UpdateChannelWebPage"),
+    ] {
+        assert!(enums.contains(&format!("{variant}(crate::types::{payload}),")));
+    }
+    assert!(enums.contains("Update::WebPage(x)"));
+    assert!(enums.contains("Update::ChannelWebPage(x)"));
+    assert!(types.contains("crate::enums::Update::WebPage(x) => Ok(x),"));
+    assert!(types.contains("crate::enums::Update::ChannelWebPage(x) => Ok(x),"));
     Ok(())
 }

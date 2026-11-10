@@ -434,6 +434,94 @@ fn boxed_updates_keep_wire_format_and_owned_conversions() {
     assert_eq!(channel.channel_id, 7);
 }
 
+fn small_web_page() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    id::<types::WebPage>(&mut bytes);
+    0u32.serialize(&mut bytes);
+    7i64.serialize(&mut bytes);
+    b"https://example.test/".as_slice().serialize(&mut bytes);
+    b"example.test".as_slice().serialize(&mut bytes);
+    17i32.serialize(&mut bytes);
+    bytes
+}
+
+fn small_game() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    id::<types::Game>(&mut bytes);
+    0u32.serialize(&mut bytes);
+    7i64.serialize(&mut bytes);
+    9i64.serialize(&mut bytes);
+    b"short".as_slice().serialize(&mut bytes);
+    b"title".as_slice().serialize(&mut bytes);
+    b"description".as_slice().serialize(&mut bytes);
+    id::<types::PhotoEmpty>(&mut bytes);
+    23i64.serialize(&mut bytes);
+    bytes
+}
+
+#[test]
+fn boxed_media_leaves_keep_their_wire_format() {
+    let page_bytes = small_web_page();
+    round_trip::<enums::WebPage>(&page_bytes);
+    let page = enums::WebPage::from_bytes(&page_bytes).unwrap();
+    let enums::WebPage::Page(raw) = &page else {
+        panic!("expected a full webpage");
+    };
+    assert_eq!(raw.id, 7);
+    assert_eq!(raw.url, "https://example.test/");
+    assert_eq!(raw.display_url, "example.test");
+    assert_eq!(raw.hash, 17);
+    assert!(raw.photo.is_none());
+    let rebuilt: enums::WebPage = types::WebPage::try_from(page).unwrap().into();
+    assert_eq!(rebuilt.to_bytes(), page_bytes);
+    for end in 0..page_bytes.len() {
+        assert_error::<enums::WebPage>(&page_bytes[..end], Error::UnexpectedEof);
+    }
+
+    let game_bytes = small_game();
+    round_trip::<enums::Game>(&game_bytes);
+    let game = enums::Game::from_bytes(&game_bytes).unwrap();
+    let enums::Game::Game(raw) = &game;
+    assert_eq!(raw.id, 7);
+    assert_eq!(raw.access_hash, 9);
+    assert_eq!(raw.short_name, "short");
+    assert_eq!(raw.title, "title");
+    assert_eq!(raw.description, "description");
+    assert!(matches!(&raw.photo, enums::Photo::Empty(photo) if photo.id == 23));
+    assert!(raw.document.is_none());
+    let rebuilt: enums::Game = types::Game::from(game).into();
+    assert_eq!(rebuilt.to_bytes(), game_bytes);
+    for end in 0..game_bytes.len() {
+        assert_error::<enums::Game>(&game_bytes[..end], Error::UnexpectedEof);
+    }
+
+    let mut page_media = Vec::new();
+    id::<types::MessageMediaWebPage>(&mut page_media);
+    0u32.serialize(&mut page_media);
+    page_media.extend_from_slice(&page_bytes);
+    round_trip::<enums::MessageMedia>(&page_media);
+    let enums::MessageMedia::WebPage(raw) = enums::MessageMedia::from_bytes(&page_media).unwrap()
+    else {
+        panic!("expected webpage media");
+    };
+    let _: types::MessageMediaWebPage = raw;
+
+    let mut game_media = Vec::new();
+    id::<types::MessageMediaGame>(&mut game_media);
+    game_media.extend_from_slice(&game_bytes);
+    round_trip::<enums::MessageMedia>(&game_media);
+    let enums::MessageMedia::Game(raw) = enums::MessageMedia::from_bytes(&game_media).unwrap()
+    else {
+        panic!("expected game media");
+    };
+    let _: types::MessageMediaGame = raw;
+    for bytes in [&page_media, &game_media] {
+        for end in 0..bytes.len() {
+            assert_error::<enums::MessageMedia>(&bytes[..end], Error::UnexpectedEof);
+        }
+    }
+}
+
 // These values move through every step of the update path. Holding the largest variants
 // inline made a single update over 5 KiB, so a schema change undoing this must be noticed.
 // At layer 233 `Update` measured 1,264 B with `wallet.card` and `wallet.nftItem`'s `gift`
@@ -442,23 +530,37 @@ fn boxed_updates_keep_wire_format_and_owned_conversions() {
 #[test]
 fn update_types_stay_small_enough_to_move_around() {
     eprintln!(
-        "TL sizes: MessageReplyHeader={} Message={} MessageService={} Update={} Updates={}",
+        "TL sizes: MessageReplyHeader={} Message={} MessageService={} Update={} Updates={} Media={} WebPage={} Game={}",
         size_of::<types::MessageReplyHeader>(),
         size_of::<types::Message>(),
         size_of::<types::MessageService>(),
         size_of::<enums::Update>(),
         size_of::<enums::Updates>(),
+        size_of::<enums::MessageMedia>(),
+        size_of::<enums::WebPage>(),
+        size_of::<enums::Game>(),
     );
     assert!(size_of::<enums::Message>() <= 32);
     assert!(size_of::<enums::EphemeralMessage>() <= 32);
     assert!(size_of::<enums::wallet::Card>() <= 8);
+    assert!(
+        size_of::<enums::WebPage>() <= 64,
+        "{}",
+        size_of::<enums::WebPage>()
+    );
+    assert!(size_of::<enums::Game>() <= 8);
+    assert!(
+        size_of::<enums::MessageMedia>() <= 320,
+        "{}",
+        size_of::<enums::MessageMedia>()
+    );
     assert!(
         size_of::<types::MessageReplyHeader>() <= 384,
         "{}",
         size_of::<types::MessageReplyHeader>()
     );
     assert!(
-        size_of::<types::Message>() <= 2048,
+        size_of::<types::Message>() <= 1664,
         "{}",
         size_of::<types::Message>()
     );

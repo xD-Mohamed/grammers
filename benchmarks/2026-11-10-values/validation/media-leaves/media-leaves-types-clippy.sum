@@ -1,0 +1,5 @@
+GUARD start media-leaves-types-clippy: avail=3619MB swap_used=1302MB swap_free=2793MB vlimit=4000000
+GUARD end media-leaves-types-clippy: rc=0 secs=16 peak_rss_one_proc=1149MB peak_rss_all=1254MB min_avail=2584MB swap_used_max=1302MB (start 1302MB, moved 0MB)
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 15.63s

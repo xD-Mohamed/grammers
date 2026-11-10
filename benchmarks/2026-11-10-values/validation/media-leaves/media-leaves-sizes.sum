@@ -1,0 +1,2 @@
+GUARD start media-leaves-sizes: avail=3636MB swap_used=1302MB swap_free=2793MB vlimit=4000000
+GUARD end media-leaves-sizes: rc=0 secs=0 peak_rss_one_proc=18MB peak_rss_all=25MB min_avail=3636MB swap_used_max=1302MB (start 1302MB, moved 0MB)

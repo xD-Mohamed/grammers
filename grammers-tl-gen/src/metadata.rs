@@ -18,17 +18,19 @@ use grammers_tl_parser::tl::{Category, Definition, Parameter, ParameterType, Typ
 /// `Update` 1,264 B, and boxed it only allocates when an update carries a card.
 /// Rare, large update variants are boxed so ordinary updates stay small without
 /// allocating. Their payload structs and generated conversions keep their shape.
+/// Full webpages and games are boxed at the leaf, shrinking their media wrappers
+/// too. The webpage update wrappers then stay inline without a second allocation.
 const BOXED_FOR_SIZE: [&str; 16] = [
     "message",
     "messageService",
     "ephemeralMessage",
     "wallet.card",
+    "webPage",
+    "game",
     "updateSentWalletTransaction",
     "updateServiceNotification",
     "updateSentPhoneCode",
     "updateDraftMessage",
-    "updateChannelWebPage",
-    "updateWebPage",
     "updateChannelParticipant",
     "updateNotifySettings",
     "updateBotPrecheckoutQuery",

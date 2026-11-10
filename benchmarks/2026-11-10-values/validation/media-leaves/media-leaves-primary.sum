@@ -1,0 +1,11 @@
+media-leaves-types-doc-unit exit 0
+GUARD end media-leaves-types-doc-unit: rc=0 secs=27 peak_rss_one_proc=2868MB peak_rss_all=2949MB min_avail=881MB swap_used_max=1306MB (start 1302MB, moved 4MB)
+	Maximum resident set size (kbytes): 2977744
+media-leaves-serde-api-check exit 0
+GUARD end media-leaves-serde-api-check: rc=0 secs=46 peak_rss_one_proc=3312MB peak_rss_all=3383MB min_avail=446MB swap_used_max=1339MB (start 1306MB, moved 33MB)
+	Maximum resident set size (kbytes): 3440472
+media-leaves-serde-api-clippy exit 0
+GUARD end media-leaves-serde-api-clippy: rc=0 secs=53 peak_rss_one_proc=3341MB peak_rss_all=3433MB min_avail=435MB swap_used_max=1340MB (start 1339MB, moved 1MB)
+	Maximum resident set size (kbytes): 3456800
+media-leaves-closed64 exit 0
+GUARD end media-leaves-closed64: rc=0 secs=304 peak_rss_one_proc=29MB peak_rss_all=57MB min_avail=1747MB swap_used_max=1340MB (start 1340MB, moved 0MB)

@@ -149,7 +149,7 @@ the scopes recorded below. Full all-feature serde checking remains watchdog-limi
 
 ## Step 2: rare update payloads are boxed
 
-Twelve variants listed in CHANGELOG use the existing definition-boxing rule;
+At `acaf759`, twelve variants used the existing definition-boxing rule;
 common message updates and payload struct literals stay inline/unchanged. Populated
 rare variants add one allocation. `Update` falls from 760 to 240 B, `Updates` from
 768 to 712 B. Independent raw-wire fixtures, owned conversions, every truncated
@@ -185,3 +185,55 @@ hit the 4,000,000 KiB virtual cap, then passed as a proven single heavy unit und
 the owner's exception, peaking at 2,750 MiB reported RSS with at least 1,011 MiB
 available and 26 MiB swap movement. Full all-feature check/Clippy remains distinct
 from these narrower passing scopes and watchdog-limited as recorded above.
+
+## Step 3: box the large webpage and game leaves
+
+Full `WebPage::Page` and `Game::Game` payloads now use the same definition rule.
+Empty and pending webpages stay inline. The temporary outer boxes on webpage
+update wrappers from step 2 are removed to avoid allocating twice. CHANGELOG
+records both migrations, including consumers of the intermediate commit.
+
+| Type | Before, B | After, B |
+|---|---:|---:|
+| MessageMedia | 656 | 304 |
+| Message | 1,960 | 1,608 |
+| MessageService | 1,248 | 1,128 |
+| Updates | 712 | 624 |
+| WebPage | 648 | 40 |
+| Game | 344 | 8 |
+
+The paired binaries differ only in this library step and its regression tests;
+the release profile, features and fixed RSS harness match. Both use the coarse
+clock on this host, where the precise clock is a syscall. All measurements are
+local mocks, with paired median-ratio bootstrap intervals as in prior steps.
+
+| Scenario | CPU/RPC change, 95% interval | Other result |
+|---|---:|---|
+| Saturated 64 callers, 30 pairs | -3.03% [-4.23, -1.81] | rate +2.90% [+1.65, +4.43] |
+| 5,000 RPC/s, 8 pairs | +0.76% [-0.68, +1.36] | no resolved change |
+| 500 RPC/s, 12 pairs | +0.34% [-5.30, +5.78] | no resolved change |
+| Raw plain, 14 pairs | +0.36% [-0.83, +3.31] | no resolved change |
+| Raw gzip, 14 pairs | +1.09% [-2.16, +2.00] | no resolved change |
+
+Saturated allocations/RPC fall from 17.69 to 17.63, allocated bytes from median
+9,574.5 to 8,231 (-14.13% paired); ordinary photos/documents add no allocation.
+Page-table steady RSS is -0.49% [-1.04, +0.24] at saturation, +0.17% [-1.44, +2.40]
+at 5,000/s and +0.60% [-0.55, +0.98] at 500/s, all unresolved. With tcache off,
+eight more saturated pairs show heap -8.31% [-8.33, -8.30], from process medians
+415,672 to 381,120 B. This busy-process heap result is not a per-session census.
+
+Generator tests (10 plus dependency test), TL tests (16 plus dependency test and
+24 doctests) and strict all-target Clippy pass with TL default features plus
+`tl-mtproto,deserializable-functions`, without serde. Generator Clippy and
+Rustdoc cover all its features; TL all-feature Rustdoc passes separately.
+The complete API serde unit passes check and Clippy again: 3,360/3,376 MiB peak
+reported RSS, minimum available 446/435 MiB, swap movement 33/1 MiB. All-feature
+Rustdoc passes as the previously established indivisible unit under the memory
+exception: 2,908 MiB reported peak, minimum available 881 MiB, swap movement 4 MiB.
+These passing scopes do not establish all-feature serde check/Clippy success.
+
+The raw 400-session census remains exactly 2,143 / 5,959 / 6,031 / 12,079 B per
+session before connecting / after one / nine / 1,100 replies. Raw peak RSS changes
++0.07% [-0.07, +0.14], unresolved. Decision: keep the resolved CPU and allocation
+gain, with no resolved open-loop/raw/RSS increase and an unchanged session census.
+[Measurements](media-leaves), [validation](validation/media-leaves).

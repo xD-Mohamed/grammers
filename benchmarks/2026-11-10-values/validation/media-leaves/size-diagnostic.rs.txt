@@ -1,0 +1,23 @@
+use grammers_tl_types::{types,enums};
+fn main(){
+println!("types::MessageMediaDocument {}",std::mem::size_of::<types::MessageMediaDocument>());
+println!("types::MessageMediaPhoto {}",std::mem::size_of::<types::MessageMediaPhoto>());
+println!("types::MessageReplyHeader {}",std::mem::size_of::<types::MessageReplyHeader>());
+println!("types::MessageFwdHeader {}",std::mem::size_of::<types::MessageFwdHeader>());
+println!("types::PollAnswer {}",std::mem::size_of::<types::PollAnswer>());
+println!("types::InputPollAnswer {}",std::mem::size_of::<types::InputPollAnswer>());
+println!("types::MessageActionPollAppendAnswer {}",std::mem::size_of::<types::MessageActionPollAppendAnswer>());
+println!("types::MessageActionStarGift {}",std::mem::size_of::<types::MessageActionStarGift>());
+println!("types::MessageActionStarGiftUnique {}",std::mem::size_of::<types::MessageActionStarGiftUnique>());
+println!("types::MessageActionStarGiftPurchaseOffer {}",std::mem::size_of::<types::MessageActionStarGiftPurchaseOffer>());
+println!("types::MessageActionStarGiftPurchaseOfferDeclined {}",std::mem::size_of::<types::MessageActionStarGiftPurchaseOfferDeclined>());
+println!("enums::Photo {}",std::mem::size_of::<enums::Photo>());
+println!("enums::Document {}",std::mem::size_of::<enums::Document>());
+println!("enums::MessageFwdHeader {}",std::mem::size_of::<enums::MessageFwdHeader>());
+println!("enums::MessageReplyHeader {}",std::mem::size_of::<enums::MessageReplyHeader>());
+println!("enums::PollAnswer {}",std::mem::size_of::<enums::PollAnswer>());
+println!("enums::InputMedia {}",std::mem::size_of::<enums::InputMedia>());
+println!("enums::MessageAction {}",std::mem::size_of::<enums::MessageAction>());
+println!("enums::MessageMedia {}",std::mem::size_of::<enums::MessageMedia>());
+println!("enums::Updates {}",std::mem::size_of::<enums::Updates>());
+}

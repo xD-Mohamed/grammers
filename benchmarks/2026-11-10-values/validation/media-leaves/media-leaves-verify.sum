@@ -1,0 +1,17 @@
+media-leaves-fmt exit 0
+GUARD end media-leaves-fmt: rc=0 secs=1 peak_rss_one_proc=57MB peak_rss_all=95MB min_avail=3630MB swap_used_max=1302MB (start 1302MB, moved 0MB)
+media-leaves-gen-tests exit 0
+GUARD end media-leaves-gen-tests: rc=0 secs=4 peak_rss_one_proc=157MB peak_rss_all=236MB min_avail=3566MB swap_used_max=1302MB (start 1302MB, moved 0MB)
+test result: ok. 0 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+media-leaves-types-tests exit 0
+GUARD end media-leaves-types-tests: rc=0 secs=35 peak_rss_one_proc=1255MB peak_rss_all=1336MB min_avail=2463MB swap_used_max=1302MB (start 1302MB, moved 0MB)
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+media-leaves-gen-clippy exit 0
+GUARD end media-leaves-gen-clippy: rc=0 secs=0 peak_rss_one_proc=18MB peak_rss_all=36MB min_avail=3618MB swap_used_max=1302MB (start 1302MB, moved 0MB)
+media-leaves-types-clippy exit 0
+GUARD end media-leaves-types-clippy: rc=0 secs=16 peak_rss_one_proc=1149MB peak_rss_all=1254MB min_avail=2584MB swap_used_max=1302MB (start 1302MB, moved 0MB)
+media-leaves-gen-doc exit 0
+GUARD end media-leaves-gen-doc: rc=0 secs=4 peak_rss_one_proc=893MB peak_rss_all=976MB min_avail=2823MB swap_used_max=1302MB (start 1302MB, moved 0MB)
+media-leaves-build-loop exit 0
+GUARD end media-leaves-build-loop: rc=0 secs=32 peak_rss_one_proc=315MB peak_rss_all=402MB min_avail=3423MB swap_used_max=1302MB (start 1302MB, moved 0MB)
