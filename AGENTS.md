@@ -2,9 +2,11 @@
 
 ## Large TL values (2026-11-10, evening)
 
-- Ten rare, large update payloads are boxed by the existing full-name rule.
-  `Update` measured 240 B instead of 760 B; normal message updates stay inline.
-  Keep the owned-conversion/wire/partial-drop tests and the 256 B size guard.
+- Every update payload over 128 B is boxed by the existing full-name rule: ten on
+  2026-11-10 and thirteen on 2026-11-11. `Update` is 136 B instead of 760 B; what a
+  bot receives all day stays inline. The thirteen changed no CPU and were kept for
+  allocated bytes and heap. Keep the owned-conversion/wire/partial-drop tests and the
+  144 B size guard: a new update over 128 B needs the rule, or the guard fails.
 - Full `webPage` and `game` payloads are boxed at their leaves, shrinking
   `MessageMedia` to 304 B and `Message` to 1,608 B. Their update and media wrappers
   stay inline; do not reintroduce a redundant outer box on webpage updates.
@@ -20,11 +22,11 @@
   large constructor in a type every user or channel carries needs the same rule.
 - The short updates hold `fwd_from`, `reply_to` and (short-sent) `media` as optional
   boxed fields, and `UpdatesLike::ShortSentMessage` holds its request in a `Box`:
-  `Updates` is 248 B instead of 624 and `UpdatesLike` 272 B instead of 832. The
+  `Updates` is 144 B instead of 624 and `UpdatesLike` 168 B instead of 832. The
   session adaptor and `Message::from_raw_short_updates` unbox them into the message,
   which keeps them inline: a new place that turns a short update into a message does
   the same. `Updates` is now the size of `updateShort`, one inline `Update`: its guard
-  is 256 B, and it only gets smaller if `Update` does. The boxed request costs one
+  is 160 B, and it only gets smaller if `Update` does. The boxed request costs one
   allocation per short-sent message and was kept for 3% of CPU: do not unbox it
   without measuring, and Clippy's `large_enum_variant` fails if it is inline.
 - A message behind an `Arc` and a send's reply decoded once were built on 2026-11-11
@@ -33,9 +35,11 @@
   `benchmarks/2026-11-10-values/shared-reply`. This replaces "do not build it a third
   time without shared ownership" in the typed section below: it was built with it.
 - Rustdoc for a workspace crate merges the shared search index in `target/doc` and
-  aborts there under the 4,000,000 KiB address-space cap. Document `grammers-tl-gen`
-  into its own target directory; `grammers-client` and `grammers-tl-types` run as
-  single units under the watchdog (1.7 and 3.5 GiB resident).
+  aborts there under the 4,000,000 KiB address-space cap. Document the small crates
+  into their own target directory; `grammers-client` and `grammers-tl-types` run as
+  single units under the watchdog. The TL types' all-feature Rustdoc reached 3.9 GiB
+  resident with 39 MiB left on 2026-11-11, and the serde unit left 12 MiB once: run
+  neither while the host's bots are busy, and never two of them close together.
 - Enum deserializers charge TL constructor depth independently of Rust heap
   boxing. A storage change must preserve the cursor's RAII depth scope.
 - `messageReplyHeader.reply_media` is an optional boxed field, using the existing

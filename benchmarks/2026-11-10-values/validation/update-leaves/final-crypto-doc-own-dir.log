@@ -1,0 +1,6 @@
+   Compiling libc v0.2.191
+    Checking getrandom v0.4.3
+    Checking glass_pumpkin v2.0.0
+ Documenting grammers-crypto v0.10.0 (/root/grammers/grammers-crypto)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.22s
+   Generated /tmp/claude-0/de27/target-gendoc/doc/grammers_crypto/index.html

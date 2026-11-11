@@ -1,0 +1,7 @@
+GUARD start final-session-doc-own-dir: avail=3513MB swap_used=1367MB swap_free=2728MB vlimit=4000000
+GUARD end final-session-doc-own-dir: rc=0 secs=7 peak_rss_one_proc=1017MB peak_rss_all=1091MB min_avail=2623MB swap_used_max=1367MB (start 1367MB, moved 0MB)
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+ Documenting grammers-session v0.10.0 (/root/grammers/grammers-session)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.60s
+   Generated /tmp/claude-0/de27/target-gendoc/doc/grammers_session/index.html

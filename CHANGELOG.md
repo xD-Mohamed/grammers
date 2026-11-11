@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased: every update over 128 B is boxed
+
+- Thirteen more `tl::enums::Update` variants hold their payload structs in `Box`:
+  `InlineBotWidgetQuery`, `WalletTonConnectSession`, `BotWidgetQuery`, `NewStickerSet`,
+  `BotChatInviteRequester`, `MessagePoll`, `PeerSettings`, `BotShippingQuery`,
+  `GroupCall`, `DialogFilter`, `PhoneCall`, `BotWidgetCopyQuery` and `BotChatBoost`.
+  `Update` shrinks from 240 to 136 B, `tl::enums::Updates` to 144 B and
+  `grammers_session::updates::UpdatesLike` to 168 B. Each of those updates allocates
+  once when it arrives; every other update is unchanged. Wire and session formats are
+  unchanged.
+- Payload struct literals, `.into()`, field access and matches by reference keep
+  compiling. Direct enum construction must box the payload or use `.into()`; moving
+  the payload out of a match requires `*value`.
+
+  ```rust
+  // before
+  if let tl::enums::Update::BotChatInviteRequester(request) = update { approve(request); }
+  // after
+  if let tl::enums::Update::BotChatInviteRequester(request) = update { approve(*request); }
+  ```
+
 ## Unreleased: smaller short updates
 
 - `tl::types::UpdateShortMessage` and `UpdateShortChatMessage` hold `fwd_from` and
@@ -29,7 +50,8 @@
 Each entry below and above has its own snippet. The same four edits cover all of them:
 
 - **Building an enum variant that is now boxed**: use `.into()` on the payload struct,
-  or `Box::new(payload)`. Variants: the ten rare `Update` variants, `WebPage::Page`,
+  or `Box::new(payload)`. Variants: the twenty-three `Update` variants named in the
+  two entries about updates, `WebPage::Page`,
   `Game::Game`, the three `InputRichMessage` variants, `EmojiStatus::Collectible`,
   `PeerColor::Collectible`.
 - **Moving the payload out of such a variant**: `*payload`, or

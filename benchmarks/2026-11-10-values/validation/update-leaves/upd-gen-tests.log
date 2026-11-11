@@ -1,0 +1,86 @@
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+    Finished `release` profile [optimized] target(s) in 1.89s
+     Running unittests src/lib.rs (target/release/deps/grammers_tl_gen-6b47ca280a93a105)
+
+running 28 tests
+test rustifier::tests::check_def_empty_variant_name ... ok
+test rustifier::tests::check_def_namespaced_qual_name ... ok
+test rustifier::tests::check_def_numeric_variant_name ... ok
+test rustifier::tests::check_def_qual_name ... ok
+test rustifier::tests::check_def_self_variant_name ... ok
+test rustifier::tests::check_def_type_name ... ok
+test rustifier::tests::check_def_variant_name ... ok
+test rustifier::tests::check_param_attr_name ... ok
+test rustifier::tests::check_param_flag_def_qual_name ... ok
+test rustifier::tests::check_param_flags_qual_name ... ok
+test rustifier::tests::check_param_qual_name ... ok
+test rustifier::tests::check_param_reserved_attr_name ... ok
+test rustifier::tests::check_param_self_attr_name ... ok
+test rustifier::tests::check_param_true_flags_qual_name ... ok
+test rustifier::tests::check_rusty_type_name ... ok
+test rustifier::tests::check_type_bytes_item_path ... ok
+test rustifier::tests::check_type_bytes_qual_name ... ok
+test rustifier::tests::check_type_generic_ref_qual_name ... ok
+test rustifier::tests::check_type_item_path ... ok
+test rustifier::tests::check_type_large_int_item_path ... ok
+test rustifier::tests::check_type_large_int_qual_name ... ok
+test rustifier::tests::check_type_qual_bare_name ... ok
+test rustifier::tests::check_type_qual_name ... ok
+test rustifier::tests::check_type_qual_namespaced_bare_name ... ok
+test rustifier::tests::check_type_qual_namespaced_name ... ok
+test rustifier::tests::check_type_raw_vec_qual_name ... ok
+test rustifier::tests::check_type_type_name ... ok
+test rustifier::tests::check_type_vec_qual_name ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deps.rs (target/release/deps/deps-7304035a2cfc523d)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/lib.rs (target/release/deps/lib-3fac511c82c18e42)
+
+running 13 tests
+test collectible_leaves_are_boxed_and_ordinary_ones_stay_inline ... ok
+test fields_boxed_for_size_keep_their_variant_inline ... ok
+test generic_bytes_with_serde_bytes ... ok
+test generic_functions_use_generic_parameters ... ok
+test input_rich_message_leaves_are_boxed_with_owned_conversions ... ok
+test large_media_leaves_are_boxed_and_wrappers_stay_inline ... ok
+test large_update_variants_are_boxed_with_owned_conversions ... ok
+test namespaced_definitions_are_boxed_for_size ... ok
+test recursive_types_direct_boxed ... ok
+test recursive_types_indirect_boxed ... ok
+test recursive_types_indirect_no_hang ... ok
+test recursive_types_vec_indirect_not_boxed ... ok
+test short_update_fields_are_boxed_only_in_those_updates ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests grammers_tl_gen
+
+running 11 tests
+test grammers-tl-gen/src/enums.rs - enums::write_common_field_impl (line 94) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_deserializable (line 246) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_enum (line 26) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_impl_from (line 320) ... ignored
+test grammers-tl-gen/src/enums.rs - enums::write_serializable (line 187) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_deserializable (line 273) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_identifiable (line 136) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_impl_from (line 419) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_rpc (line 387) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_serializable (line 166) ... ignored
+test grammers-tl-gen/src/structs.rs - structs::write_struct (line 51) ... ignored
+
+test result: ok. 0 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test grammers-tl-gen/src/structs.rs - structs::get_generic_param_list (line 22) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.13s; merged doctests compilation took 0.13s

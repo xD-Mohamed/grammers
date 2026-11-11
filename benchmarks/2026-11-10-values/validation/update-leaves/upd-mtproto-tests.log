@@ -1,0 +1,167 @@
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+   Compiling grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+    Finished `release` profile [optimized] target(s) in 28.04s
+     Running unittests src/lib.rs (target/release/deps/grammers_mtproto-fa4f9e5e837b4722)
+
+running 136 tests
+test authentication::tests::authenticated_dh_fixture_reaches_each_validation_gate ... ok
+test authentication::tests::emulate_successful_auth_key_gen_flow ... ok
+test authentication::tests::hashed_invalid_dh_parameters_are_checked_before_arithmetic ... ok
+test authentication::tests::malformed_pq_and_short_dh_answers_return_errors ... ok
+test authentication::tests::step1_rng_failure_is_a_typed_error_and_success_keeps_nonce ... ok
+test authentication::tests::validated_dh_retry_keeps_its_distinct_error ... ok
+test coarse_clock::tests::a_clock_the_kernel_refuses_gives_no_reading ... ok
+test coarse_clock::tests::a_reading_is_distrusted_when_later_or_too_far_behind ... ok
+test coarse_clock::tests::a_reading_is_never_later_than_the_precise_clock_and_not_far_behind ... ok
+test coarse_clock::tests::a_tick_is_placed_on_either_side_of_the_anchor ... ok
+test coarse_clock::tests::benchmark_coarse_clock_cost ... ignored, local clock cost comparison
+test coarse_clock::tests::readings_do_not_go_backwards_and_advance ... ok
+test coarse_clock::tests::the_raw_readings_are_ordered_like_their_clocks ... ok
+test coarse_clock::tests::unix_time_is_never_later_than_the_system_clock_and_not_far_behind ... ok
+test manual_tl::optimization_tests::benchmark_borrowed_response_envelope ... ignored, isolated decoder copy benchmark; no encryption, sockets or Telegram
+test manual_tl::optimization_tests::benchmark_gzip_resource_limit ... ignored, isolated release gzip budget/peak RSS measurement; run explicitly
+test manual_tl::optimization_tests::benchmark_reused_gzip_decoder ... ignored, local gzip decoder comparison; no sockets or server traffic
+test manual_tl::optimization_tests::benchmark_rpc_result_reuse ... ignored, isolated allocation/copy benchmark; run release with nocapture
+test manual_tl::optimization_tests::borrowed_containers_match_owned_decoder_and_validate_before_iteration ... ok
+test manual_tl::optimization_tests::borrowed_envelope_preserves_fields_and_points_into_input ... ok
+test manual_tl::optimization_tests::borrowed_gzip_keeps_crc_and_truncation_validation ... ok
+test manual_tl::optimization_tests::container_count_and_trailing_envelopes_are_rejected ... ok
+test manual_tl::optimization_tests::gzip_limits_check_exact_limit_crc_trailing_data_and_recover ... ok
+test manual_tl::optimization_tests::gzip_scratch_is_bounded_and_handles_optional_headers ... ok
+test manual_tl::optimization_tests::inbound_file_reply_is_independent_of_outbound_limit ... ok
+test manual_tl::optimization_tests::malformed_message_lengths_return_errors_without_panicking ... ok
+test manual_tl::optimization_tests::reused_gzip_preserves_validation_and_recovers_after_corruption ... ok
+test manual_tl::optimization_tests::rpc_result_reuses_allocation_and_matches_the_original_decoder ... ok
+test manual_tl::tests::gzip_decompress ... ok
+test mtp::encrypted::tests::a_driver_given_the_deadline_reports_it_instead_of_the_clock_being_read ... ok
+test mtp::encrypted::tests::acknowledgements_are_timed_from_the_last_packet_the_driver_reported ... ok
+test mtp::encrypted::tests::acknowledgements_match_typed_encoding_and_reuse_ids ... ok
+test mtp::encrypted::tests::acknowledgements_ride_on_every_message_by_default ... ok
+test mtp::encrypted::tests::age_evicted_ids_stay_stale_while_later_messages_remain_usable ... ok
+test mtp::encrypted::tests::authenticated_container_envelopes_validate_before_delivery ... ok
+test mtp::encrypted::tests::authenticated_envelope_checks_and_replay_suppression ... ok
+test mtp::encrypted::tests::authenticated_failed_gzip_crc_charges_sibling_budget ... ok
+test mtp::encrypted::tests::authenticated_future_salts_handles_internal_external_and_empty_replies ... ok
+test mtp::encrypted::tests::authenticated_inner_reply_before_cache_minimum_is_not_assumed_stale ... ok
+test mtp::encrypted::tests::authenticated_invalid_future_salts_preserve_service_state ... ok
+test mtp::encrypted::tests::authenticated_out_of_order_and_inner_replays_deliver_only_once ... ok
+test mtp::encrypted::tests::authenticated_sibling_gzip_wrappers_share_expansion_budget ... ok
+test mtp::encrypted::tests::authenticated_sibling_rpc_gzip_shares_expansion_budget ... ok
+test mtp::encrypted::tests::batched_acknowledgements_wait_for_the_batch_or_the_delay ... ok
+test mtp::encrypted::tests::benchmark_ack_serialization ... ignored, isolated ACK allocation benchmark; run release with nocapture
+test mtp::encrypted::tests::borrowed_and_owned_rpc_results_survive_plain_and_gzip_paths ... ok
+test mtp::encrypted::tests::checked_builder_reports_rng_failure_without_panicking ... ok
+test mtp::encrypted::tests::container_replay_classification_is_independent_of_sibling_order ... ok
+test mtp::encrypted::tests::continuous_ack_demand_does_not_starve_maximum_user_requests ... ok
+test mtp::encrypted::tests::corrected_clock_resets_floor_only_beyond_three_seconds ... ok
+test mtp::encrypted::tests::disabled_updates_are_acknowledged_but_rpc_updates_are_returned ... ok
+test mtp::encrypted::tests::disabled_updates_keep_compressed_containers_errors_and_service_messages ... ok
+test mtp::encrypted::tests::empty_salt_prefetch_replies_preserve_salt_and_eventually_allow_user_request ... ok
+test mtp::encrypted::tests::ensure_correct_multi_large_serialization ... ok
+test mtp::encrypted::tests::ensure_correct_multi_serialization ... ok
+test mtp::encrypted::tests::ensure_correct_single_large_serialization ... ok
+test mtp::encrypted::tests::ensure_correct_single_serialization ... ok
+test mtp::encrypted::tests::ensure_large_payload_is_rejected ... ok
+test mtp::encrypted::tests::ensure_no_compression_is_honored ... ok
+test mtp::encrypted::tests::ensure_non_padded_payload_is_rejected ... ok
+test mtp::encrypted::tests::ensure_serialization_has_salt_session_id ... ok
+test mtp::encrypted::tests::ensure_some_compression ... ok
+test mtp::encrypted::tests::explicit_service_deadline_flushes_small_batch_and_backlog_is_bounded ... ok
+test mtp::encrypted::tests::failed_container_does_not_commit_partial_replay_history ... ok
+test mtp::encrypted::tests::failed_optional_salt_prefetch_keeps_requests_and_salt_recovery_working ... ok
+test mtp::encrypted::tests::fast_clock_bad_message_resets_monotonic_floor ... ok
+test mtp::encrypted::tests::gzip_depth_cumulative_budget_and_hidden_container_nesting ... ok
+test mtp::encrypted::tests::high_sequence_rejection_preserves_valid_sibling_results ... ok
+test mtp::encrypted::tests::idle_ack_only_packet_and_gzip_ack_once ... ok
+test mtp::encrypted::tests::invalid_push_preserves_services_and_salt_packet_excludes_ack ... ok
+test mtp::encrypted::tests::malformed_container_has_no_partial_inner_effects ... ok
+test mtp::encrypted::tests::maximum_compressible_request_preserves_existing_input_limit ... ok
+test mtp::encrypted::tests::maximum_inbound_container_preserves_all_results_and_bounds_replay_cache ... ok
+test mtp::encrypted::tests::maximum_request_fits_without_compression_or_indefinite_deferral ... ok
+test mtp::encrypted::tests::newly_received_salts_are_examined_by_the_next_request ... ok
+test mtp::encrypted::tests::no_updates_wraps_api_bytes_once_and_excludes_protocol_calls ... ok
+test mtp::encrypted::tests::one_packet_reads_the_clock_once_for_all_its_message_ids ... ok
+test mtp::encrypted::tests::own_updates_are_reported_empty_to_a_driver_that_reads_them_from_the_result ... ok
+test mtp::encrypted::tests::regression_compressed_errors_and_short_replies_are_not_successes ... ok
+test mtp::encrypted::tests::regression_drop_answer_replies_complete_their_own_request ... ok
+test mtp::encrypted::tests::response_list_recycling_preserves_small_capacity_only ... ok
+test mtp::encrypted::tests::salt_prefetch_does_not_block_user_requests_waiting_for_response ... ok
+test mtp::encrypted::tests::seeded_authenticated_packet_mutations_are_bounded_and_panic_free ... ok
+test mtp::encrypted::tests::service_messages_respect_packet_capacity_and_preserve_deferred_acks ... ok
+test mtp::encrypted::tests::stale_direct_pong_remains_an_rpc_completion ... ok
+test mtp::encrypted::tests::stale_external_future_salts_complete_without_changing_service_state ... ok
+test mtp::encrypted::tests::stale_future_salts_are_validated_before_internal_retirement ... ok
+test mtp::encrypted::tests::stale_internal_future_salts_retire_prefetch_without_installing_salts ... ok
+test mtp::encrypted::tests::stale_rejections_preserve_service_state_and_retire_internal_requests ... ok
+test mtp::encrypted::tests::stale_rpc_siblings_complete_without_replaying_own_updates ... ok
+test mtp::encrypted::tests::the_next_salt_is_examined_when_the_clock_has_moved ... ok
+test mtp::encrypted::tests::time_offset_jitter_preserves_monotonic_message_ids ... ok
+test mtp::encrypted::tests::wrapped_salt_prefetch_failures_are_bounded_without_phantom_results ... ok
+test mtp::encrypted::tests::wrapped_salt_prefetch_success_and_stale_reply_follow_direct_semantics ... ok
+test mtp::plain::tests::ensure_finalize_preserves_buffer ... ok
+test mtp::plain::tests::ensure_only_one_push_allowed ... ok
+test mtp::plain::tests::plain_deserialize_rejects_invalid_headers_and_lengths ... ok
+test mtp::plain::tests::plain_deserialize_returns_only_the_declared_body ... ok
+test mtp::replay::tests::age_window_bounds_quiet_sessions_and_releases_burst_capacity ... ok
+test mtp::replay::tests::burst_uses_six_bytes_per_id_and_evicts_only_the_lowest ... ok
+test mtp::replay::tests::far_future_id_raises_floor_only_to_real_ids ... ok
+test mtp::replay::tests::history_matches_exact_model_across_ordering_age_and_base_changes ... ok
+test mtp::replay::tests::rebasing_retained_ids_preserves_every_decision ... ok
+test transport::abridged::tests::a_message_starting_with_negative_bytes_is_not_a_transport_error ... ok
+test transport::abridged::tests::pack_empty ... ok
+test transport::abridged::tests::pack_large ... ok
+test transport::abridged::tests::pack_non_padded - should panic ... ok
+test transport::abridged::tests::pack_normal ... ok
+test transport::abridged::tests::regression_extended_length_is_unsigned_and_waits_for_payload ... ok
+test transport::abridged::tests::unpack_bad_status ... ok
+test transport::abridged::tests::unpack_large ... ok
+test transport::abridged::tests::unpack_normal ... ok
+test transport::abridged::tests::unpack_small ... ok
+test transport::abridged::tests::unpack_two_at_once ... ok
+test transport::full::tests::pack_empty ... ok
+test transport::full::tests::pack_non_padded - should panic ... ok
+test transport::full::tests::pack_normal ... ok
+test transport::full::tests::pack_twice ... ok
+test transport::full::tests::regression_minimum_status_does_not_overflow ... ok
+test transport::full::tests::unpack_bad_crc ... ok
+test transport::full::tests::unpack_bad_seq ... ok
+test transport::full::tests::unpack_bad_status ... ok
+test transport::full::tests::unpack_normal ... ok
+test transport::full::tests::unpack_small ... ok
+test transport::full::tests::unpack_two_at_once ... ok
+test transport::intermediate::tests::pack_empty ... ok
+test transport::intermediate::tests::pack_non_padded - should panic ... ok
+test transport::intermediate::tests::pack_normal ... ok
+test transport::intermediate::tests::regression_fragmented_packets_wait_for_header_and_entire_body ... ok
+test transport::intermediate::tests::unpack_bad_status ... ok
+test transport::intermediate::tests::unpack_normal ... ok
+test transport::intermediate::tests::unpack_small ... ok
+test transport::intermediate::tests::unpack_two_at_once ... ok
+test transport::obfuscated::tests::benchmark_obfuscated_handshake_setup ... ignored, isolated obfuscated handshake setup benchmark; randomness included, no network
+test transport::obfuscated::tests::obfuscated_handshake_preserves_tag_and_advances_outgoing_cipher_once ... ok
+test transport::property_tests::seeded_transport_mutations_never_return_out_of_bounds_offsets ... ok
+
+test result: ok. 129 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 0.47s
+
+     Running tests/deps.rs (target/release/deps/deps-100358bce76c49cb)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/message_id.rs (target/release/deps/message_id-8c6be2a174ebd522)
+
+running 1 test
+test public_message_ids_correlate_with_serialized_request_headers ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests grammers_mtproto
+
+running 1 test
+test grammers-mtproto/src/authentication.rs - authentication (line 13) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.17s; merged doctests compilation took 0.16s

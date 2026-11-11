@@ -1,0 +1,5 @@
+GUARD start final-gen-doc-own-dir: avail=3520MB swap_used=1367MB swap_free=2728MB vlimit=4000000
+GUARD end final-gen-doc-own-dir: rc=0 secs=1 peak_rss_one_proc=10MB peak_rss_all=20MB min_avail=3520MB swap_used_max=1367MB (start 1367MB, moved 0MB)
+ Documenting grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.24s
+   Generated /tmp/claude-0/de27/target-gendoc/doc/grammers_tl_gen/index.html

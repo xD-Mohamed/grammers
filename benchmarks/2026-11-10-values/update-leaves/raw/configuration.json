@@ -1,0 +1,22 @@
+{
+  "binaries": {
+    "baseline": {
+      "name": "boxed-request-loopback",
+      "sha256": "dfb6a13274132a273143fc37b200de61109151be922c7192adece8b987836cb5"
+    },
+    "candidate": {
+      "name": "update-leaves-loopback",
+      "sha256": "0437f479124fdad522b20cdbbb3b9fb713b488a0da6348deb12e592c64cb7002"
+    }
+  },
+  "environment": {
+    "LOOPBACK_SHORT": "1",
+    "LOOPBACK_WINDOW_MS": "1500",
+    "LOOPBACK_CLIENT_CPUS": "0",
+    "LOOPBACK_SERVER_CPUS": "2,3",
+    "LOOPBACK_RUNTIME": "current"
+  },
+  "pairs": 14,
+  "command": "<binary> --exact loopback_rpc_cost --ignored --nocapture --test-threads=1",
+  "cpu_affinity": "client thread 0; responder threads 2,3"
+}

@@ -1,0 +1,8 @@
+GUARD start final-crypto-doc-own-dir: avail=3519MB swap_used=1367MB swap_free=2728MB vlimit=4000000
+GUARD end final-crypto-doc-own-dir: rc=0 secs=2 peak_rss_one_proc=167MB peak_rss_all=234MB min_avail=3409MB swap_used_max=1367MB (start 1367MB, moved 0MB)
+   Compiling libc v0.2.191
+    Checking getrandom v0.4.3
+    Checking glass_pumpkin v2.0.0
+ Documenting grammers-crypto v0.10.0 (/root/grammers/grammers-crypto)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.22s
+   Generated /tmp/claude-0/de27/target-gendoc/doc/grammers_crypto/index.html

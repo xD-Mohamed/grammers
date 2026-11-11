@@ -1,0 +1,27 @@
+GUARD start final-serde-api-check: avail=3531MB swap_used=1367MB swap_free=2728MB vlimit=none
+GUARD end final-serde-api-check: rc=0 secs=57 peak_rss_one_proc=3067MB peak_rss_all=3076MB min_avail=12MB swap_used_max=2207MB (start 1367MB, moved 840MB)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Finished `dev` profile [unoptimized] target(s) in 56.37s
+	Command being timed: "cargo check --locked -j 1 -p grammers-tl-types --no-default-features --features impl-serde,tl-api --lib"
+	User time (seconds): 42.93
+	System time (seconds): 5.62
+	Percent of CPU this job got: 85%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:56.50
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 3223268
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 104963
+	Minor (reclaiming a frame) page faults: 1159053
+	Voluntary context switches: 105628
+	Involuntary context switches: 937
+	Swaps: 0
+	File system inputs: 1457144
+	File system outputs: 143328
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

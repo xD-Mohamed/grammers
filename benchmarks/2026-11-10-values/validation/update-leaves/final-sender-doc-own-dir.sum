@@ -1,0 +1,9 @@
+GUARD start final-sender-doc-own-dir: avail=3538MB swap_used=1367MB swap_free=2728MB vlimit=4000000
+GUARD end final-sender-doc-own-dir: rc=0 secs=9 peak_rss_one_proc=1078MB peak_rss_all=1154MB min_avail=2569MB swap_used_max=1367MB (start 1367MB, moved 0MB)
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Checking grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+    Checking grammers-session v0.10.0 (/root/grammers/grammers-session)
+ Documenting grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.24s
+   Generated /tmp/claude-0/de27/target-gendoc/doc/grammers_mtsender/index.html

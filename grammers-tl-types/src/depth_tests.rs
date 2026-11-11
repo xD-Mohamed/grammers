@@ -569,14 +569,15 @@ fn update_types_stay_small_enough_to_move_around() {
         "{}",
         size_of::<types::UpdateSentWalletTransaction>()
     );
+    // Every update over 128 B is boxed.
     assert!(
-        size_of::<enums::Update>() <= 256,
+        size_of::<enums::Update>() <= 144,
         "{}",
         size_of::<enums::Update>()
     );
     // `updateShort` holds one `Update` inline: this follows the guard above.
     assert!(
-        size_of::<enums::Updates>() <= 256,
+        size_of::<enums::Updates>() <= 160,
         "{}",
         size_of::<enums::Updates>()
     );
@@ -959,5 +960,96 @@ fn boxed_short_update_fields_keep_their_wire_format() {
     assert!(size_of::<types::UpdateShortChatMessage>() <= 136);
     assert!(size_of::<types::UpdateShortSentMessage>() <= 72);
     // What is left is `updateShort`, which holds one `Update` inline.
-    assert!(size_of::<enums::Updates>() <= 256);
+    assert!(size_of::<enums::Updates>() <= 160);
+}
+
+fn invite_requester(with_query: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    id::<types::UpdateBotChatInviteRequester>(&mut bytes);
+    u32::from(with_query).serialize(&mut bytes);
+    id::<types::PeerChannel>(&mut bytes);
+    9i64.serialize(&mut bytes);
+    10i32.serialize(&mut bytes);
+    11i64.serialize(&mut bytes);
+    b"about me".as_slice().serialize(&mut bytes);
+    id::<types::ChatInviteExported>(&mut bytes);
+    (1u32 << 8).serialize(&mut bytes);
+    b"https://t.me/+link".as_slice().serialize(&mut bytes);
+    12i64.serialize(&mut bytes);
+    13i32.serialize(&mut bytes);
+    b"title".as_slice().serialize(&mut bytes);
+    14i32.serialize(&mut bytes);
+    if with_query {
+        15i64.serialize(&mut bytes);
+    }
+    bytes
+}
+
+fn shipping_query() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    id::<types::UpdateBotShippingQuery>(&mut bytes);
+    1i64.serialize(&mut bytes);
+    2i64.serialize(&mut bytes);
+    b"payload".as_slice().serialize(&mut bytes);
+    id::<types::PostAddress>(&mut bytes);
+    for part in ["line one", "line two", "city", "state", "EG", "11511"] {
+        part.as_bytes().serialize(&mut bytes);
+    }
+    bytes
+}
+
+/// Two of the thirteen updates between 128 and 240 B that are boxed, as a bot meets
+/// them: a join request and a shipping query.
+#[test]
+fn boxed_bot_updates_keep_wire_format_and_owned_conversions() {
+    for with_query in [false, true] {
+        let bytes = invite_requester(with_query);
+        round_trip::<enums::Update>(&bytes);
+        let update = enums::Update::from_bytes(&bytes).unwrap();
+        let enums::Update::BotChatInviteRequester(request) = &update else {
+            panic!("expected a join request");
+        };
+        assert!(matches!(&request.peer, enums::Peer::Channel(peer) if peer.channel_id == 9));
+        assert_eq!((request.date, request.user_id, request.qts), (10, 11, 14));
+        assert_eq!(request.about, "about me");
+        assert_eq!(request.query_id, with_query.then_some(15));
+        assert!(matches!(
+            &request.invite,
+            enums::ExportedChatInvite::ChatInviteExported(invite)
+                if invite.title.as_deref() == Some("title") && invite.admin_id == 12
+        ));
+        let owned = types::UpdateBotChatInviteRequester::try_from(update).unwrap();
+        let rebuilt: enums::Update = owned.into();
+        assert_eq!(rebuilt.to_bytes(), bytes);
+        // Includes prefixes that end after the invite's strings were allocated.
+        for end in 0..bytes.len() {
+            assert_error::<enums::Update>(&bytes[..end], Error::UnexpectedEof);
+        }
+    }
+
+    let bytes = shipping_query();
+    round_trip::<enums::Update>(&bytes);
+    let update = enums::Update::from_bytes(&bytes).unwrap();
+    let enums::Update::BotShippingQuery(query) = &update else {
+        panic!("expected a shipping query");
+    };
+    assert_eq!((query.query_id, query.user_id), (1, 2));
+    assert_eq!(query.payload, b"payload");
+    assert!(matches!(
+        &query.shipping_address,
+        enums::PostAddress::Address(address)
+            if address.city == "city" && address.country_iso2 == "EG" && address.post_code == "11511"
+    ));
+    let owned = types::UpdateBotShippingQuery::try_from(update).unwrap();
+    let rebuilt: enums::Update = owned.into();
+    assert_eq!(rebuilt.to_bytes(), bytes);
+    for end in 0..bytes.len() {
+        assert_error::<enums::Update>(&bytes[..end], Error::UnexpectedEof);
+    }
+
+    // What a bot receives all day stays inline.
+    assert!(size_of::<types::UpdateBotCallbackQuery>() <= 128);
+    assert!(size_of::<types::UpdateBotInlineQuery>() <= 128);
+    assert!(size_of::<types::UpdateNewMessage>() <= 128);
+    assert!(size_of::<enums::Update>() <= 144);
 }

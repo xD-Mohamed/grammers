@@ -737,3 +737,81 @@ round and is now the command closest to this host's limit: it passed inside the
 watchdog's thresholds each time, with under 300 MiB available for less than four
 seconds. The shared `target/doc` whose search index it merges gained the other crates'
 pages in that time; whether that or the generated code is the growth was not measured.
+
+## Step 9: every update over 128 B is boxed
+
+After step 8 `Updates` was the size of one `Update`, 240 B, and that was set by
+thirteen rare updates between 128 and 240 B: the three bot widget queries, a TON
+connect session, a new sticker set, a join request, a poll, peer settings, a shipping
+query, a group call, a dialog filter, a phone call and a chat boost. They use the
+definition rule now, as the ten larger ones have since step 2.
+
+| Type | Before, B | After, B |
+|---|---:|---:|
+| `enums::Update` | 240 | 136 |
+| `enums::Updates` | 248 | 144 |
+| `grammers_session::updates::UpdatesLike` | 272 | 168 |
+
+What a bot receives all day (`updateNewMessage`, `updateBotCallbackQuery`,
+`updateBotInlineQuery` and the rest) is 128 B or less and stays inline, guarded.
+
+Base `5e875c5`, same harness and conditions as every step.
+
+| Scenario | CPU/RPC change, 95% interval | Allocated B/RPC | Live heap |
+|---|---:|---:|---:|
+| Saturated 64 callers, 30 pairs | -0.42% [-1.91, +1.77] | **-8.14%** [-8.16, -8.12] | **-4.53%** [-5.28, -3.85] |
+| Saturated, tcache disabled, 8 pairs | +0.38% [-3.90, +4.79] | -8.08% [-8.22, -8.00] | **-3.30%** [-4.57, -1.93] |
+| 5,000 RPC/s, 8 pairs | -5.11% [-15.49, +2.38] | **-4.77%** [-4.93, -4.66] | +0.74% [-4.93, +3.77] |
+| 500 RPC/s, 12 pairs | +0.24% [-3.14, +3.94] | **-3.97%** [-3.98, -3.96] | **-4.34%** [-5.26, -3.57] |
+| Raw plain / gzip, 14 pairs | -1.79% [-4.47, +2.83] / +2.15% [-0.79, +3.73] | | |
+
+**This step does not change CPU**: no interval resolves, in any scenario. The rate is
++0.33% [-1.93, +1.97] at saturation. In that run kernel time is +4.32% [+0.42, +8.73]
+and user time -1.77% [-2.91, +0.42]; the split between the two has moved in both
+directions between otherwise equal runs of this round, and their sum has not.
+Allocations stay 17.88 per request. What falls is the memory a request passes through:
+6,332.5 to 5,816 B allocated per request at saturation, and 10.6 KB of live heap with
+the thread cache out of the picture (321,840 to 311,208 B). Steady RSS does not
+resolve anywhere (-0.10% [-1.36, +0.35] saturated, +2.16% [-2.59, +3.32] at 500/s).
+The 400-session census is exactly 2,143 / 5,959 / 6,031 / 12,079 B per session.
+
+**Decision: keep, on the memory clause of the rule and not on CPU.** A clear cut in
+allocated bytes in every scenario and a resolved cut in live heap in three of four,
+with no CPU loss. It costs one allocation for each of those thirteen updates when one
+arrives. The ones a bot can meet often are a join request and a poll whose results
+change. It breaks code that moves the payload out of one of those thirteen variants.
+If that trade is not wanted, this step is one commit and reverts cleanly.
+[Measurements](update-leaves), [validation](validation/update-leaves).
+
+## Validation at the final source
+
+Step 9 is the last change to source in this round, and its tree is what was validated.
+One crate at a time, release tests with one test thread:
+
+| Crate | Tests passed (ignored) | Strict Clippy, all targets | Rustdoc, warnings denied |
+|---|---|---|---|
+| `grammers-tl-parser` | 39 + 1 + 6 doctests | pass | pass |
+| `grammers-tl-gen` | 28 + 1 + 13 (12 doctests ignored) | pass | pass |
+| `grammers-tl-types` (`tl-mtproto,deserializable-functions`) | 20 (1) + 1 + 24 doctests | pass | all features: pass, 3,905 MiB |
+| `grammers-crypto` | 39 (6) + 1 | pass | pass |
+| `grammers-mtproto` | 129 (7) + 3 | pass | pass |
+| `grammers-session` | 111 (4) + 33 | pass | pass |
+| `grammers-mtsender` | 189 (8) + 1 + 2 (5) + 5 doctests; 4 network probes ignored | pass | pass |
+| `grammers-client` | 132 + 3 + 69 doctests (4 ignored) | pass | pass, 2,102 MiB |
+| `grammers` (umbrella) | | pass | |
+
+All features unless stated. `cargo fmt --all -- --check` passes. The whole-API serde
+unit (`impl-serde,tl-api`, no defaults) passes `cargo check` at 3,148 MiB and Clippy at
+3,376 MiB. Small crates are documented into their own directory under the
+4,000,000 KiB cap; the client and the TL types are single units under the watchdog.
+
+Two of those commands came closer to this host's limit than any before them, and that
+is stated as it happened. During the serde check the host had 12 MiB available at its
+lowest sample and swap moved 840 MiB: the compiler itself peaked lower than in the
+earlier runs (3,148 against 3,314 MiB), so something else on the host needed memory in
+those seconds. The TL types' all-feature Rustdoc peaked at 3,905 MiB with 39 MiB
+available at its lowest. Neither stayed under 300 MiB for the four seconds that make
+the watchdog stop a command, the host did not stall, and swap free never went under
+1.8 GiB. They were not repeated, and they should not be run on this host while its
+bots are busy. Not run: all-feature `impl-serde` as one unit (the watchdog stops it,
+as recorded at the top), and anything on a consumer of the fork.

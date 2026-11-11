@@ -218,6 +218,19 @@ fn large_update_variants_are_boxed_with_owned_conversions() -> io::Result<()> {
         ("updatePeerWallpaper", "PeerWallpaper"),
         ("updateTheme", "Theme"),
         ("updateChatParticipant", "ChatParticipant"),
+        ("updateInlineBotWidgetQuery", "InlineBotWidgetQuery"),
+        ("updateWalletTonConnectSession", "WalletTonConnectSession"),
+        ("updateBotWidgetQuery", "BotWidgetQuery"),
+        ("updateNewStickerSet", "NewStickerSet"),
+        ("updateBotChatInviteRequester", "BotChatInviteRequester"),
+        ("updateMessagePoll", "MessagePoll"),
+        ("updatePeerSettings", "PeerSettings"),
+        ("updateBotShippingQuery", "BotShippingQuery"),
+        ("updateGroupCall", "GroupCall"),
+        ("updateDialogFilter", "DialogFilter"),
+        ("updatePhoneCall", "PhoneCall"),
+        ("updateBotWidgetCopyQuery", "BotWidgetCopyQuery"),
+        ("updateBotChatBoost", "BotChatBoost"),
     ];
     let mut schema = String::new();
     for (index, (definition, _)) in variants.iter().enumerate() {

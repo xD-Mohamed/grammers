@@ -1,0 +1,26 @@
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Finished `dev` profile [unoptimized] target(s) in 46.34s
+	Command being timed: "cargo clippy --locked -j 1 -p grammers-tl-types --no-default-features --features impl-serde,tl-api --lib -- -D warnings"
+	User time (seconds): 42.93
+	System time (seconds): 3.09
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:46.47
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 3457176
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 2521
+	Minor (reclaiming a frame) page faults: 1104736
+	Voluntary context switches: 3123
+	Involuntary context switches: 172
+	Swaps: 0
+	File system inputs: 405224
+	File system outputs: 143792
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,0 +1,64 @@
+    Finished `release` profile [optimized] target(s) in 0.19s
+     Running unittests src/lib.rs (target/release/deps/grammers_crypto-beb17f4c5dd099c6)
+
+running 45 tests
+test aes::tests::benchmark_decrypt_hashed ... ignored, local decrypt-and-authenticate comparison; run release with nocapture
+test aes::tests::benchmark_ige_backend_closure ... ignored, local IGE implementation comparison; run release with nocapture
+test aes::tests::decrypting_and_hashing_together_matches_one_after_the_other ... ok
+test aes::tests::matches_the_block_at_a_time_reference_and_round_trips ... ok
+test aes::tests::rejects_partial_blocks - should panic ... ok
+test aes::tests::selected_and_portable_paths_agree ... ok
+test aes::tests::selected_and_portable_paths_agree_on_edge_keys ... ok
+test aes::tests::single_block_matches_the_fips_197_aes_256_vector ... ok
+test aes::tests::the_digest_covers_the_prefix_and_every_plaintext_byte ... ok
+test auth_key::tests::auth_key_aux_hash ... ok
+test auth_key::tests::auth_key_id ... ok
+test auth_key::tests::calc_new_nonce_hash1 ... ok
+test auth_key::tests::calc_new_nonce_hash2 ... ok
+test auth_key::tests::calc_new_nonce_hash3 ... ok
+test benchmarks::benchmark_message_crypto_components ... ignored, local per-message crypto component costs; run release with nocapture
+test deque_buffer::tests::initialization ... ok
+test deque_buffer::tests::mutates_as_expected ... ok
+test deque_buffer::tests::shift_extends_if_needed ... ok
+test factorize::tests::benchmark_factorization_budget ... ignored, local full-budget factorization cost; no network
+test factorize::tests::checked_factorization_small_and_invalid ... ok
+test factorize::tests::factorization_has_a_process_deadline ... ok
+test factorize::tests::factorization_u64_edges_and_shared_budget ... ok
+test factorize::tests::full_factorization_budget_is_finite ... ok
+test factorize::tests::test_factorization_1 ... ok
+test factorize::tests::test_factorization_2 ... ok
+test factorize::tests::test_factorization_3 ... ok
+test obfuscated::tests::benchmark_obfuscated_cipher_setup ... ignored, isolated cipher setup benchmark; no network or per-packet work
+test obfuscated::tests::mtproxy_secret_mixing_matches_independent_openssl_ctr_vectors ... ok
+test obfuscated::tests::obfuscated_cipher_matches_independent_ctr_fixtures_across_chunks ... ok
+test rsa::tests::test_rsa_encryption ... ok
+test tests::calc_client_key ... ok
+test tests::calc_server_key ... ok
+test tests::decrypt_server_data_v2 ... ok
+test tests::encrypt_client_data_v2 ... ok
+test tests::key_from_nonce ... ok
+test tests::padding_bytes_are_used_once_and_refilled_from_the_system ... ok
+test tests::padding_is_the_smallest_the_specification_allows ... ok
+test tests::two_encryptions_of_one_message_differ ... ok
+test tests::verify_ige_decryption ... ok
+test tests::verify_ige_encryption ... ok
+test two_factor_auth::tests::benchmark_published_prime_validation ... ignored, local release A/B of full safe-prime validation and prevalidated Telegram prime
+test two_factor_auth::tests::check_calculations_1 ... ok
+test two_factor_auth::tests::check_calculations_2 ... ok
+test two_factor_auth::tests::published_prime_still_checks_every_generator ... ok
+test two_factor_auth::tests::test_check_p_and_g ... ok
+
+test result: ok. 39 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/deps.rs (target/release/deps/deps-798463b503528161)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests grammers_crypto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

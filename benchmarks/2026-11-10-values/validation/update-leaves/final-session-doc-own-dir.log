@@ -1,0 +1,5 @@
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+ Documenting grammers-session v0.10.0 (/root/grammers/grammers-session)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.60s
+   Generated /tmp/claude-0/de27/target-gendoc/doc/grammers_session/index.html

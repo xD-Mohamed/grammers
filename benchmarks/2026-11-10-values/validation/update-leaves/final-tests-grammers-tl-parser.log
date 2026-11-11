@@ -1,0 +1,66 @@
+    Finished `release` profile [optimized] target(s) in 0.08s
+     Running unittests src/lib.rs (target/release/deps/grammers_tl_parser-ed0915de4becc69a)
+
+running 39 tests
+test tl::definition::tests::parse_bad_id ... ok
+test tl::definition::tests::parse_complete ... ok
+test tl::definition::tests::parse_empty_def ... ok
+test tl::definition::tests::parse_missing_generic ... ok
+test tl::definition::tests::parse_multiline_definition ... ok
+test tl::definition::tests::parse_no_name ... ok
+test tl::definition::tests::parse_no_type ... ok
+test tl::definition::tests::parse_override_id ... ok
+test tl::definition::tests::parse_unimplemented ... ok
+test tl::definition::tests::parse_unknown_flags ... ok
+test tl::definition::tests::parse_valid_definition ... ok
+test tl::definition::tests::parsed_definitions_can_be_cloned_whole ... ok
+test tl::definition::tests::test_to_string ... ok
+test tl::parameter::tests::parse_bad_flags ... ok
+test tl::parameter::tests::parse_bad_generics ... ok
+test tl::parameter::tests::parse_empty_param ... ok
+test tl::parameter::tests::parse_type_def_param ... ok
+test tl::parameter::tests::parse_unknown_def_param ... ok
+test tl::parameter::tests::parse_unknown_param ... ok
+test tl::parameter::tests::parse_valid_param ... ok
+test tl::ty::tests::check_bare ... ok
+test tl::ty::tests::check_empty_namespaced ... ok
+test tl::ty::tests::check_empty_simple ... ok
+test tl::ty::tests::check_generic_arg ... ok
+test tl::ty::tests::check_generic_ref ... ok
+test tl::ty::tests::check_namespaced ... ok
+test tl::ty::tests::check_simple ... ok
+test tl_iterator::tests::parse_bad_separator ... ok
+test tl_iterator::tests::parse_file ... ok
+test utils::tests::check_infer_id ... ok
+test utils::tests::remove_comments_leading ... ok
+test utils::tests::remove_comments_many ... ok
+test utils::tests::remove_comments_noop ... ok
+test utils::tests::remove_comments_preserves_existing_crlf_behavior ... ok
+test utils::tests::remove_comments_preserves_lone_slashes ... ok
+test utils::tests::remove_comments_trailing ... ok
+test utils::tests::remove_comments_unicode_before_comment ... ok
+test utils::tests::remove_comments_unicode_comment ... ok
+test utils::tests::remove_comments_without_final_newline ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deps.rs (target/release/deps/deps-8593baf60c07fa01)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests grammers_tl_parser
+
+running 6 tests
+test grammers-tl-parser/src/lib.rs - parse_tl_file (line 34) - compile ... ok
+test grammers-tl-parser/src/tl/definition.rs - tl::definition::Definition::from_str (line 79) ... ok
+test grammers-tl-parser/src/tl/flag.rs - tl::flag::Flag::from_str (line 37) ... ok
+test grammers-tl-parser/src/tl/parameter.rs - tl::parameter::Parameter::from_str (line 38) ... ok
+test grammers-tl-parser/src/tl/parameter_type.rs - tl::parameter_type::ParameterType::from_str (line 53) ... ok
+test grammers-tl-parser/src/tl/ty.rs - tl::ty::Type::from_str (line 69) ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+all doctests ran in 0.33s; merged doctests compilation took 0.32s

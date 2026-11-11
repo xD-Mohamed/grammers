@@ -1,0 +1,182 @@
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+   Compiling grammers-session v0.10.0 (/root/grammers/grammers-session)
+    Finished `release` profile [optimized] target(s) in 45.65s
+     Running unittests src/lib.rs (target/release/deps/grammers_session-a6b242eb704c20f8)
+
+running 115 tests
+test import_files::tests::corrupt_database_errors_are_redacted_and_source_unchanged ... ok
+test import_files::tests::gotd_json_file_is_bounded_and_typed ... ok
+test import_files::tests::huge_text_endpoints_are_rejected_before_materialization ... ok
+test import_files::tests::immutable_uri_connection_is_actually_read_only ... ok
+test import_files::tests::immutable_uri_escapes_metacharacters_and_platform_path_syntax ... ok
+test import_files::tests::imports_pyrogram_3_with_metadata_and_only_home_key ... ok
+test import_files::tests::kurigram_7_keeps_exact_custom_endpoint_and_flags ... ok
+test import_files::tests::missing_source_is_not_created ... ok
+test import_files::tests::nonempty_wal_shm_or_journal_are_rejected_and_unchanged ... ok
+test import_files::tests::polling_without_tokio_returns_a_sanitized_error ... ok
+test import_files::tests::pyrogram_zero_and_null_api_id_are_missing_and_test_routes_stay_test ... ok
+test import_files::tests::read_only_source_and_empty_sidecars_are_unchanged ... ok
+test import_files::tests::real_uncheckpointed_wal_is_rejected_without_side_effects ... ok
+test import_files::tests::refuses_empty_or_ambiguous_rows ... ok
+test import_files::tests::refuses_missing_wrong_and_unsupported_schema_without_migration ... ok
+test import_files::tests::rejects_bad_keys_without_materializing_large_blobs ... ok
+test import_files::tests::rejects_malformed_metadata_and_endpoints ... ok
+test import_files::tests::telethon_7_and_8_keep_exact_routes_and_skip_temporary_keys ... ok
+test import_files::tests::telethon_test_endpoints_and_ipv6_require_explicit_preference ... ok
+test import_files::tests::unix_literal_backslash_source_cannot_select_a_different_session ... ok
+test message_box::adaptor::tests::a_short_message_hands_its_boxed_headers_to_the_message ... ok
+test message_box::adaptor::tests::a_short_sent_message_hands_its_boxed_media_to_the_message ... ok
+test message_box::tests::a_gap_kept_open_by_backoff_retains_a_bounded_number_of_updates ... ok
+test message_box::tests::a_possible_gap_waits_from_the_time_the_caller_passes ... ok
+test message_box::tests::a_rejected_channel_also_waits_when_telegram_says_it_is_too_long ... ok
+test message_box::tests::abandoned_account_difference_keeps_channel_positions ... ok
+test message_box::tests::all_deferred_channels_wait_until_the_earliest_retry ... ok
+test message_box::tests::an_unreadable_channel_reply_can_retry_without_the_rejection_delay ... ok
+test message_box::tests::an_update_closing_the_gap_delivers_what_a_short_difference_left_held ... ok
+test message_box::tests::benchmark_missing_hash_retry_pass ... ignored, local release component benchmark; run explicitly with --ignored --nocapture
+test message_box::tests::benchmark_pending_channel_deadlines ... ignored, local release component benchmark; run explicitly with --ignored --nocapture
+test message_box::tests::bot_updates_with_qts_advance_the_secondary_sequence ... ok
+test message_box::tests::bot_updates_with_qts_are_delivered_before_login ... ok
+test message_box::tests::channel_catch_up_rotates_after_nonfinal_pages ... ok
+test message_box::tests::channel_too_long_preserves_local_pts_and_requires_a_positive_initial_hint ... ok
+test message_box::tests::checked_saved_state_and_difference_reject_invalid_counters_without_mutation ... ok
+test message_box::tests::deadlines_follow_the_time_the_caller_passes ... ok
+test message_box::tests::deferred_channel_keeps_backlog_and_does_not_steal_another_channels_response ... ok
+test message_box::tests::deferred_channels_rejoin_ready_queue_once_and_keep_fair_order ... ok
+test message_box::tests::exhausted_grace_releases_held_updates_and_starts_a_fresh_position ... ok
+test message_box::tests::exhausted_missing_hash_grace_survives_a_second_episode ... ok
+test message_box::tests::extreme_update_counters_do_not_overflow ... ok
+test message_box::tests::failed_channel_recovery_allows_contiguous_live_updates_without_skipping_gaps ... ok
+test message_box::tests::failed_recovery_releases_postponed_channel_updates_without_skipping_gaps ... ok
+test message_box::tests::final_channel_timeout_replaces_deadline_computed_during_recovery ... ok
+test message_box::tests::final_difference_releases_held_updates_directly_after_its_position ... ok
+test message_box::tests::final_difference_short_of_a_held_update_does_not_restart_recovery ... ok
+test message_box::tests::held_count_zero_update_at_the_position_is_released_as_a_socket_update_would_apply ... ok
+test message_box::tests::held_updates_are_bounded_across_channels_and_exclude_account_state ... ok
+test message_box::tests::live_qts_without_primary_state_does_not_create_orphan_secondary ... ok
+test message_box::tests::malformed_difference_elements_do_not_block_account_or_channel_progress ... ok
+test message_box::tests::malformed_socket_metadata_cannot_poison_recovery_state ... ok
+test message_box::tests::peerless_channel_message_preserves_non_pts_siblings_and_difference_progress ... ok
+test message_box::tests::ready_recovery_accounting_survives_mixed_completion_and_defer ... ok
+test message_box::tests::relearning_primary_state_preserves_saved_channel_recovery ... ok
+test message_box::tests::releasing_one_channel_keeps_updates_held_for_another_pending_channel ... ok
+test message_box::tests::saved_state_deduplicates_channels_and_recovers_missing_common_pts ... ok
+test message_box::tests::sorting_updates_is_stable_and_matches_the_standard_sort ... ok
+test message_box::tests::successful_difference_supersedes_held_updates_without_delivering_them_twice ... ok
+test message_box::tests::temporary_rejections_back_off_until_a_difference_succeeds ... ok
+test message_box::tests::test_common_and_channel_difference_do_not_duplicate_message ... ok
+test message_box::tests::test_complete_login_flow ... ok
+test message_box::tests::test_connect_flow_empty ... ok
+test message_box::tests::test_connect_flow_with_data ... ok
+test message_box::tests::test_iter_dialogs_flow ... ok
+test message_box::tests::test_next_raw_update_flow_channel_ban ... ok
+test message_box::tests::test_next_raw_update_flow_channel_issues ... ok
+test message_box::tests::test_next_raw_update_flow_channel_timeout ... ok
+test message_box::tests::test_next_raw_update_flow_common_timeout ... ok
+test message_box::tests::test_next_raw_update_flow_empty ... ok
+test message_box::tests::test_next_raw_update_flow_no_new_get_diff_if_already_fetching ... ok
+test message_box::tests::test_process_socket_update_for_new_channel_dispatches_first_update ... ok
+test message_box::tests::test_process_socket_updates_flow_already_processed ... ok
+test message_box::tests::test_process_socket_updates_flow_common_already_applied ... ok
+test message_box::tests::test_process_socket_updates_flow_common_difference_ok ... ok
+test message_box::tests::test_process_socket_updates_flow_common_ok ... ok
+test message_box::tests::test_process_socket_updates_flow_common_pts_gap ... ok
+test message_box::tests::test_process_socket_updates_flow_common_pts_possible_gap_resolves ... ok
+test message_box::tests::test_process_socket_updates_flow_common_seq_gap ... ok
+test message_box::tests::test_process_socket_updates_trickle_causes_gap ... ok
+test message_box::tests::tolerant_saved_state_repair_preserves_valid_channels ... ok
+test message_box::tests::unavailable_channel_grace_is_bounded_and_other_channels_keep_delivering ... ok
+test message_box::tests::updates_of_a_real_gap_survive_until_its_channel_is_abandoned ... ok
+test message_box::tests::updates_out_of_order_in_one_batch_are_applied_in_order ... ok
+test message_box::tests::usable_access_and_success_each_reset_missing_hash_allowance ... ok
+test message_box::tests::usable_access_mid_grace_resets_the_current_counter ... ok
+test message_box::tests::widget_data_advances_the_common_sequence ... ok
+test message_box::tests::widget_data_for_a_channel_is_rejected_without_advancing ... ok
+test message_box::tests::zero_counter_updates_preserve_siblings_on_socket_and_difference_paths ... ok
+test peer::cache_merge_tests::channel_refresh_keeps_missing_hash_and_replaces_kind ... ok
+test peer::cache_merge_tests::checked_peer_ids_reject_extremes_before_arithmetic ... ok
+test peer::cache_merge_tests::new_user_information_replaces_cached_values_without_erasing_missing_fields ... ok
+test storages::erased::tests::benchmark_memory_and_erased_cache_peers ... ignored, local session-storage microbenchmark; run explicitly in release mode
+test storages::erased::tests::erased_cache_peers_forwards_empty_input_and_original_error ... ok
+test storages::erased::tests::erased_cache_peers_preserves_bulk_override_and_input_order ... ok
+test storages::erased::tests::memory_cache_peers_matches_ordered_individual_updates ... ok
+test storages::erased::tests::sqlite_cache_peers_matches_ordered_individual_updates ... ok
+test storages::memory::tests::cache_peers_empty_input_succeeds_with_poisoned_storage ... ok
+test storages::memory::tests::compact_dc_options_round_trip_session_data ... ok
+test storages::memory::tests::self_user_lookup_recognizes_bulk_cached_identity ... ok
+test storages::memory::tests::self_user_lookup_uses_cached_identity_and_tracks_flag_changes ... ok
+test storages::sqlite::tests::benchmark_sqlite_cache_peers_transaction ... ignored, local in-memory SQLite microbenchmark; run explicitly in release mode
+test storages::sqlite::tests::cache_peers_duplicate_after_row_error_retains_only_committed_metadata ... ok
+test storages::sqlite::tests::cache_peers_empty_input_does_not_require_database_transaction ... ok
+test storages::sqlite::tests::cache_peers_reports_row_error_and_commits_other_peers ... ok
+test storages::sqlite::tests::cache_peers_returns_prepare_error_without_panicking ... ok
+test storages::sqlite::tests::cache_peers_returns_transaction_error_without_panicking ... ok
+test storages::sqlite::tests::exercise_sqlite_session ... ok
+test storages::sqlite::tests::native_open_accepts_existing_empty_database ... ok
+test storages::sqlite::tests::native_open_creates_and_reopens_native_storage ... ok
+test storages::sqlite::tests::native_open_preserves_literal_backslash_in_unix_path ... ok
+test storages::sqlite::tests::native_open_rejects_foreign_database_without_mutation ... ok
+test storages::sqlite::tests::native_open_rejects_sidecars_without_recovery ... ok
+test storages::sqlite::tests::native_open_rejects_wrong_version_schema_and_corruption_unchanged ... ok
+test types::tests::debug_output_never_contains_the_auth_key ... ok
+
+test result: ok. 111 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 0.86s
+
+     Running tests/deps.rs (target/release/deps/deps-79a60c2e0bbf3168)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/import.rs (target/release/deps/import-536fe3063665990f)
+
+running 22 tests
+test auto_detection_handles_supported_formats ... ok
+test diagnostics_never_include_input_or_auth_key ... ok
+test explicit_parsers_select_only_the_named_format_and_address_family ... ok
+test gotd_allows_missing_optional_key_id_and_preserves_ipv6_address ... ok
+test gotd_imports_version_one_loader_json_and_verifies_key_id ... ok
+test gotd_preserves_explicit_production_endpoint_and_session_data_conversion ... ok
+test gotd_rejects_invalid_versions_keys_key_ids_addresses_and_environment ... ok
+test gotd_rejects_known_endpoint_environment_mismatch ... ok
+test gotd_rejects_missing_and_duplicate_relevant_fields ... ok
+test oversized_inputs_are_rejected_before_decoding ... ok
+test pyrogram_application_id_metadata_respects_signed_range ... ok
+test pyrogram_imports_current_and_both_legacy_formats_with_optional_padding ... ok
+test pyrogram_rejects_invalid_fields_and_lengths ... ok
+test pyrogram_rejects_production_only_dc_in_test_mode ... ok
+test pyrogram_supports_dc_203_without_copying_its_key_to_other_dcs ... ok
+test pyrogram_test_sessions_have_only_test_routes ... ok
+test pyrogram_zero_application_id_is_missing_metadata ... ok
+test telethon_ipv6_test_endpoint_is_classified_and_preserved ... ok
+test telethon_preserves_ipv4_endpoint_and_does_not_invent_metadata ... ok
+test telethon_preserves_ipv6_endpoint_and_requires_ipv6_preference ... ok
+test telethon_recognizes_test_endpoints_without_production_fallbacks ... ok
+test telethon_rejects_versions_truncation_trailing_bytes_and_invalid_fields ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/native.rs (target/release/deps/native-e76d2ce56e4a6885)
+
+running 7 tests
+test diagnostics_never_expose_input_keys_or_encoded_credentials ... ok
+test export_rejects_missing_inconsistent_and_failing_storage ... ok
+test native_preserves_ipv6_import_placeholder_without_making_it_routable ... ok
+test native_preserves_test_routes_and_missing_unused_endpoint ... ok
+test native_roundtrip_preserves_only_home_route_and_exact_endpoints ... ok
+test parser_rejects_malformed_headers_routes_and_keys_even_with_valid_checksum ... ok
+test parser_rejects_noncanonical_encoding_corruption_and_unbounded_input ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests grammers_session
+
+running 3 tests
+test grammers-session/src/peer.rs - peer::PeerId (line 17) ... ok
+test grammers-session/src/peer.rs - peer::PeerId::to_ambient_ref (line 289) ... ok
+test grammers-session/src/types.rs - types::DcOption::id (line 27) ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.24s; merged doctests compilation took 0.23s

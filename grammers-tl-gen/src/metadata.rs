@@ -18,6 +18,8 @@ use grammers_tl_parser::tl::{Category, Definition, Parameter, ParameterType, Typ
 /// `Update` 1,264 B, and boxed it only allocates when an update carries a card.
 /// Rare, large update variants are boxed so ordinary updates stay small without
 /// allocating. Their payload structs and generated conversions keep their shape.
+/// That is every update over 128 B: the ten that were over 240 B, then the thirteen
+/// between, which took `Update` from 240 to 136 B.
 /// Full webpages and games are boxed at the leaf, shrinking their media wrappers
 /// too. The webpage update wrappers then stay inline without a second allocation.
 /// Rich input leaves otherwise reserve their largest body in every send request,
@@ -25,7 +27,7 @@ use grammers_tl_parser::tl::{Category, Definition, Parameter, ParameterType, Typ
 /// A collectible emoji status and a collectible peer colour are rare, and inline they
 /// made every `user` and `channel` a third larger: each has one of the first and two of
 /// the second. The ordinary status and colour stay inline and allocate nothing.
-const BOXED_FOR_SIZE: [&str; 21] = [
+const BOXED_FOR_SIZE: [&str; 34] = [
     "message",
     "messageService",
     "ephemeralMessage",
@@ -47,6 +49,19 @@ const BOXED_FOR_SIZE: [&str; 21] = [
     "updatePeerWallpaper",
     "updateTheme",
     "updateChatParticipant",
+    "updateInlineBotWidgetQuery",
+    "updateWalletTonConnectSession",
+    "updateBotWidgetQuery",
+    "updateNewStickerSet",
+    "updateBotChatInviteRequester",
+    "updateMessagePoll",
+    "updatePeerSettings",
+    "updateBotShippingQuery",
+    "updateGroupCall",
+    "updateDialogFilter",
+    "updatePhoneCall",
+    "updateBotWidgetCopyQuery",
+    "updateBotChatBoost",
 ];
 
 /// Optional fields held as `Option<Box<T>>`, by definition full name and field name.
