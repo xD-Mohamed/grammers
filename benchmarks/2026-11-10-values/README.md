@@ -34,13 +34,15 @@ Part 2, the decisions the owner delegated:
 
 - [x] 2.1 The coarse clock: kept, on `libc`; its `unsafe` block reviewed, its failure path tested
 - [x] 2.2 Large TL values moved by value (`Update`, `Updates`, `types::Message`), on `main`:
-      steps 1, 2, 3 and 5 kept; step 4 measured and reverted; a message behind an `Arc`
-      measured as nothing and not landed (step 6)
+      steps 1, 2, 3, 5, 7, 8 and 9 kept (9 for memory, with no CPU change); step 4 measured
+      and reverted; a message behind an `Arc` measured as nothing and not landed (step 6).
+      `Update` 760 to 136 B, `Updates` 1,272 to 144 B, `Message` 2,608 to 1,608 B
 - [-] 2.3 A send's reply decoded once for its caller and for the update stream: built a
       third time, on shared messages, and measured as a loss of 2.10% [+0.33, +3.08] (step 6)
 - [x] 2.4 A fresh profile at the head (`5165ee5`), and what it shows, largest first
 - [x] 2.5 The allocator's share and the values it serves: the short updates and the request of
-      a short-sent message are boxed (step 8, kept: CPU -3.44% [-4.55, -1.29], heap -14.6%);
+      a short-sent message are boxed (step 8, kept: CPU -3.44% [-4.55, -1.29], heap -12.5%,
+      -14.6% with tcache off);
       a cap in bytes for the recycled batch measured as nothing and is not landed
 - [x] 2.6 The peers of a batch: users and channels are a third smaller (step 7, kept:
       CPU -2.21% [-3.21, -1.41]); the cache's early return was not built (nothing to measure)
@@ -100,7 +102,8 @@ and a reply decoded once), the write clock, a cap in bytes for the recycled batc
 
 The first session committed the checklist as `59069f3`. The source at that point is
 identical to `4cc655d`. Its scratch logs survived under `/tmp/claude-0/de27`.
-All 36 cross-target `cargo check` commands passed with `-D warnings`, for Windows
+All 36 cross-target `cargo check` commands of the first plan passed with `-D warnings`
+(the final matrix, 102 cases, is under "Windows and macOS, on the real targets"), for Windows
 MSVC, Intel macOS and Apple Silicon macOS. This compiles the actual fallback rather
 than an inverted `cfg`; it does not execute code on those operating systems.
 The matrix and final-head rechecks are recorded below as they complete.
@@ -828,7 +831,8 @@ If that trade is not wanted, this step is one commit and reverts cleanly.
 
 ## Validation at the final source
 
-Step 9 is the last change to source in this round, and its tree is what was validated.
+Step 9 is the last change to generated code in this round, and its tree is what was
+validated; two warning fixes followed (see "After the two fixes").
 One crate at a time, release tests with one test thread:
 
 | Crate | Tests passed (ignored) | Strict Clippy, all targets | Rustdoc, warnings denied |

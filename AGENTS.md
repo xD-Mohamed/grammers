@@ -138,11 +138,13 @@
 
 [Measured sizes, the `pts` evidence and every handwritten site](UPSTREAM.md).
 
-- `Update` is 760 B (752 B at layer 230; 1,264 B with this schema and no new rule).
+- `Update` was 760 B when this was written, and is 136 B since 2026-11-11 (752 B at
+  layer 230; 1,264 B with this schema and no new rule).
   `tl-gen` boxes `wallet.card` as a definition and `wallet.nftItem`'s `gift` as a field:
   `BOXED_FOR_SIZE` matches full names, and `BOXED_FIELDS_FOR_SIZE` holds optional fields
   in a `Box`. Box what a layer adds, as a field when its definition already existed, so
-  that generated types callers already use keep their shape. The guard stays at 1,024 B.
+  that generated types callers already use keep their shape. The guard was 1,024 B
+  then and is 144 B since 2026-11-11.
 - For a new layer, build `grammers-tl-types` alone and read the sizes first: the guard in
   `depth_tests.rs` prints them.
 - `updateMessageWidgetData` is on the common `pts` sequence and rejected for a channel
