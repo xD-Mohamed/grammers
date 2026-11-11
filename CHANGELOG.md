@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased: smaller users and channels
+
+- `tl::enums::EmojiStatus::Collectible` and `tl::enums::PeerColor::Collectible` now
+  hold their payload structs in `Box`. `tl::types::User` shrinks from 648 to 448 B and
+  `tl::types::Channel` from 656 to 456 B. A user or channel without a collectible
+  status or colour allocates nothing more; one with a collectible allocates once for
+  each. Wire and session formats are unchanged.
+- Payload struct literals, `.into()`, field access and matches by reference keep
+  compiling. Direct enum construction must box the payload or use `.into()`; moving
+  the payload out of a match requires `*value`.
+
+  ```rust
+  // before
+  let status = tl::enums::EmojiStatus::Collectible(raw);
+  if let tl::enums::PeerColor::Collectible(color) = color { consume(color); }
+  // after
+  let status: tl::enums::EmojiStatus = raw.into();
+  if let tl::enums::PeerColor::Collectible(color) = color { consume(*color); }
+  ```
+
 ## Unreleased: smaller rich-message inputs
 
 - `tl::enums::InputRichMessage::{Message, Html, Markdown}` now hold their existing

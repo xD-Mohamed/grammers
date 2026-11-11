@@ -673,3 +673,147 @@ fn boxed_input_rich_messages_keep_their_wire_format() {
     assert!(size_of::<enums::InputRichMessage>() <= 16);
     assert!(size_of::<crate::functions::messages::SendMessage>() <= 512);
 }
+
+fn collectible_emoji_status(with_until: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    id::<types::EmojiStatusCollectible>(&mut bytes);
+    u32::from(with_until).serialize(&mut bytes);
+    11i64.serialize(&mut bytes);
+    12i64.serialize(&mut bytes);
+    b"title".as_slice().serialize(&mut bytes);
+    b"slug".as_slice().serialize(&mut bytes);
+    13i64.serialize(&mut bytes);
+    for color in 1i32..=4 {
+        color.serialize(&mut bytes);
+    }
+    if with_until {
+        99i32.serialize(&mut bytes);
+    }
+    bytes
+}
+
+fn collectible_peer_color(with_dark: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    id::<types::PeerColorCollectible>(&mut bytes);
+    (if with_dark { 3u32 } else { 0 }).serialize(&mut bytes);
+    21i64.serialize(&mut bytes);
+    22i64.serialize(&mut bytes);
+    23i64.serialize(&mut bytes);
+    5i32.serialize(&mut bytes);
+    one_item_vector(&mut bytes);
+    7i32.serialize(&mut bytes);
+    if with_dark {
+        6i32.serialize(&mut bytes);
+        one_item_vector(&mut bytes);
+        8i32.serialize(&mut bytes);
+    }
+    bytes
+}
+
+#[test]
+fn boxed_collectible_leaves_keep_their_wire_format() {
+    for with_optional in [false, true] {
+        let bytes = collectible_emoji_status(with_optional);
+        round_trip::<enums::EmojiStatus>(&bytes);
+        let value = enums::EmojiStatus::from_bytes(&bytes).unwrap();
+        let enums::EmojiStatus::Collectible(status) = &value else {
+            panic!("{value:?}");
+        };
+        assert_eq!(
+            (
+                status.collectible_id,
+                status.document_id,
+                status.pattern_document_id
+            ),
+            (11, 12, 13)
+        );
+        assert_eq!(
+            (status.title.as_str(), status.slug.as_str()),
+            ("title", "slug")
+        );
+        assert_eq!(
+            (
+                status.center_color,
+                status.edge_color,
+                status.pattern_color,
+                status.text_color
+            ),
+            (1, 2, 3, 4)
+        );
+        assert_eq!(status.until, with_optional.then_some(99));
+        let rebuilt: enums::EmojiStatus = types::EmojiStatusCollectible::try_from(value)
+            .unwrap()
+            .into();
+        assert_eq!(rebuilt.to_bytes(), bytes);
+        for end in 0..bytes.len() {
+            assert_error::<enums::EmojiStatus>(&bytes[..end], Error::UnexpectedEof);
+        }
+
+        let bytes = collectible_peer_color(with_optional);
+        round_trip::<enums::PeerColor>(&bytes);
+        let value = enums::PeerColor::from_bytes(&bytes).unwrap();
+        let enums::PeerColor::Collectible(color) = &value else {
+            panic!("{value:?}");
+        };
+        assert_eq!(
+            (
+                color.collectible_id,
+                color.gift_emoji_id,
+                color.background_emoji_id
+            ),
+            (21, 22, 23)
+        );
+        assert_eq!((color.accent_color, color.colors.as_slice()), (5, &[7][..]));
+        assert_eq!(color.dark_accent_color, with_optional.then_some(6));
+        assert_eq!(color.dark_colors, with_optional.then(|| vec![8]));
+        let rebuilt: enums::PeerColor =
+            types::PeerColorCollectible::try_from(value).unwrap().into();
+        assert_eq!(rebuilt.to_bytes(), bytes);
+        // Every prefix, including one that ends after the owned vector has decoded.
+        for end in 0..bytes.len() {
+            assert_error::<enums::PeerColor>(&bytes[..end], Error::UnexpectedEof);
+        }
+    }
+
+    // What nearly every user and channel carries stays inline: no allocation.
+    let mut plain = Vec::new();
+    id::<types::EmojiStatus>(&mut plain);
+    1u32.serialize(&mut plain);
+    5i64.serialize(&mut plain);
+    9i32.serialize(&mut plain);
+    round_trip::<enums::EmojiStatus>(&plain);
+    assert_eq!(
+        enums::EmojiStatus::from_bytes(&plain).unwrap(),
+        enums::EmojiStatus::Status(types::EmojiStatus {
+            document_id: 5,
+            until: Some(9),
+        })
+    );
+    let mut plain = Vec::new();
+    id::<types::PeerColor>(&mut plain);
+    3u32.serialize(&mut plain);
+    4i32.serialize(&mut plain);
+    6i64.serialize(&mut plain);
+    round_trip::<enums::PeerColor>(&plain);
+    assert_eq!(
+        enums::PeerColor::from_bytes(&plain).unwrap(),
+        enums::PeerColor::Color(types::PeerColor {
+            color: Some(4),
+            background_emoji_id: Some(6),
+        })
+    );
+
+    eprintln!(
+        "EmojiStatus={} PeerColor={} User={} Channel={} enums::User={} enums::Chat={}",
+        size_of::<enums::EmojiStatus>(),
+        size_of::<enums::PeerColor>(),
+        size_of::<types::User>(),
+        size_of::<types::Channel>(),
+        size_of::<enums::User>(),
+        size_of::<enums::Chat>()
+    );
+    assert!(size_of::<enums::EmojiStatus>() <= 24);
+    assert!(size_of::<enums::PeerColor>() <= 32);
+    assert!(size_of::<enums::User>() <= 480);
+    assert!(size_of::<enums::Chat>() <= 480);
+}

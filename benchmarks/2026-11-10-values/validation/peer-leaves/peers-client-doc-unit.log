@@ -1,0 +1,31 @@
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Checking grammers-session v0.10.0 (/root/grammers/grammers-session)
+    Checking grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+    Checking grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+ Documenting grammers-client v0.10.0 (/root/grammers/grammers-client)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 15.19s
+   Generated /root/grammers/target/doc/grammers_client/index.html
+	Command being timed: "cargo doc --locked -j 1 -p grammers-client --all-features --no-deps"
+	User time (seconds): 10.55
+	System time (seconds): 3.76
+	Percent of CPU this job got: 94%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:15.22
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1898016
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 5528
+	Minor (reclaiming a frame) page faults: 1403327
+	Voluntary context switches: 7073
+	Involuntary context switches: 58
+	Swaps: 0
+	File system inputs: 909184
+	File system outputs: 708552
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

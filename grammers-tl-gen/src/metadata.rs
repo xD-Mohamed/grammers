@@ -22,7 +22,10 @@ use grammers_tl_parser::tl::{Category, Definition, Parameter, ParameterType, Typ
 /// too. The webpage update wrappers then stay inline without a second allocation.
 /// Rich input leaves otherwise reserve their largest body in every send request,
 /// even when its optional rich message is absent.
-const BOXED_FOR_SIZE: [&str; 19] = [
+/// A collectible emoji status and a collectible peer colour are rare, and inline they
+/// made every `user` and `channel` a third larger: each has one of the first and two of
+/// the second. The ordinary status and colour stay inline and allocate nothing.
+const BOXED_FOR_SIZE: [&str; 21] = [
     "message",
     "messageService",
     "ephemeralMessage",
@@ -32,6 +35,8 @@ const BOXED_FOR_SIZE: [&str; 19] = [
     "inputRichMessage",
     "inputRichMessageHTML",
     "inputRichMessageMarkdown",
+    "emojiStatusCollectible",
+    "peerColorCollectible",
     "updateSentWalletTransaction",
     "updateServiceNotification",
     "updateSentPhoneCode",

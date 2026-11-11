@@ -1,0 +1,52 @@
+{
+ "base": "5165ee5",
+ "binaries": {
+  "head-bot": "35e9ac994cf852693c99cbab832599dcf5ac078e2c9203ed63aa254d89aa50fa",
+  "peer-leaves-bot": "e07efcf3f9f754d649b2bd12d34bf720716af7a2bda482c038c9f5b5983609dd",
+  "input-rich-loopback": "45b295f7619ede342e05e7e71a30f91489cb2ebae043c2b1dca3891bde4e6553",
+  "peer-leaves-loopback": "9f09ebafe3dde66d272361d81a9902d95924812f1e96814887d80ce6511da9e5"
+ },
+ "notes": [
+  "the raw baseline is the loopback binary of 3f6dbd8: 5165ee5 changed tests and documentation only",
+  "logs over 400 lines are trimmed to their first and last 200; trailing whitespace is normalized"
+ ],
+ "source_sha256": {
+  "grammers-tl-gen/src/metadata.rs": "a79f7073cc030f671723e684905809da80b4f5058fd0717443c92ec30743504e",
+  "grammers-tl-gen/tests/lib.rs": "6c8e5ef907f505be985253ab8b2c166735e63068989c08cd5b4208aae52365ad",
+  "grammers-tl-types/src/depth_tests.rs": "933c06f44954d31b2ed3ded74668edaf9d8f48b8b5bd31c09459e13c40dc6623"
+ },
+ "files": {
+  "benchmarks/2026-11-10-values/validation/peer-leaves/heavy-plan.json": "03617b7a723463bbade605c573afa9d6d1ba1b5d0dd934bbe076777e26812180",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-build-bot.log": "e53e20c0764f74796335d33d10b2796c126bce8518ee2b342d4201acb7102def",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-build-loop.log": "cd66d1ad6e13a327611dc927308cd1748be6e238d7bd03642075239f358b19d1",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-client-doc-unit.log": "69b01ef9543e7cf6c32ac31bdbbb2486a2807cc5e044c183b782a5d845d28b2e",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-client-doc-unit.sum": "a94f0b52419e1ca4bdf66b96cddbd2829d67bb4a755bd0ec594606f65cd4d36b",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-client-tests.log": "8ae188efa3c3ec31d29ce2ac1b8e15d9a8a4d9b1a83fcc89a11eeccfaa5223ea",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-clippy-grammers-client.log": "15f1ec5912884c25fd01b4b53a3155dfd6db0cb55ce393f6a3deab1c26bf83b5",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-clippy-grammers-mtproto.log": "59030eb1f388091bbdc0d51c902ed575d8ae281458ead6ad3750a0daa6791e7d",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-clippy-grammers-mtsender.log": "bf15e2a04855cafeff19668b8809a334fdc80dcf3ef04fae99c21c4665b3223e",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-clippy-grammers-session.log": "f6ccc1187ff26179a41a0ae56306403093a07e3a343fb608147ddcd717b256d1",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-clippy-grammers-tl-gen.log": "8788a57fab1f8678cc88ce70fa8ebf7064daee5d0bf089d6cce53ab7a2d6ef69",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-clippy-grammers-tl-types.log": "f345c79f421eca4a25c09ced63843862d04561710dd47a3d1a7ea813fd76dfa0",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-gen-doc-own-dir.log": "f67136ff177e9464329e8b93510976cc50d9a8affd252a52f774cf541caf1aee",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-gen-doc-own-dir.sum": "efe931b841a596b8949fdbfb80229906bae451e69eefbc3133480f515ab4585a",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-gen-tests.log": "28dfcad4c43e8a5d578fc6aa62ca2998f442105529f9043a769f60743952ac55",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-meas-closed64.log": "6fd2443a3dc473555ad076b6c0f4fe41461b08dad801b61ce7aef36d102329ca",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-meas-footprint.log": "799079fd34edc3899502df16204aec38e5e44c2d00a46cecf055d7c53ca8c405",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-meas-open500.log": "0a003804d076ee35f0d3e7c9a325f4650c3e4ab93c4323b470577008e80febbd",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-meas-open5000.log": "b6dd8b8ab2dfe75390fec91b702f0303e89f32519675da6d594f7f4a9dcd1378",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-meas-raw.log": "fdca8707db318d24251f6c113e3c2b165fb6c3c95807d153fc4d7c4e0d2ed690",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-meas-tcache0.log": "076fde50242f05ec618020b5e654b8e71bf99f88185e61d11c604f1568d6d2e7",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-rss-long-tcache0.log": "674a18eb635bbf3a7f487bc7a5ef19248c0718e2cee448151665d65b4b805b12",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-rss-long-tcache0.sum": "6aafe2cb74bae37250a90b54fe84c2f42976ce17552325cc2ed16744cbd88b82",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-rss-long.log": "8e37745268f8990bc4ba00b7dd37deeece9648af8c53af7890344cb323494882",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-rss-long.sum": "cfac0c5f894f10603f4f67e9acbb8697b09b8b9ab609a9af538b5565f213909e",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-serde-api-check.log": "ef6e5c847e028bdb7974fc80628b008d8fa1855c4339dd14fda497cd68719b82",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-serde-api-check.sum": "8dfbab2c260fa5e38f3e848b3abf95fe9062ee8faa1ae83ec8d09ef0d19417fb",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-serde-api-clippy.log": "60a6908d9513ac208eef7a7c3ac5167168b4b24805db55107b6cd5ddb6184e6d",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-serde-api-clippy.sum": "bf46a21d61cbda0c96aab08cac083ec2c789bbf4f3de93ab0535c1947e842436",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-types-doc-unit.log": "3f6fef3356554c46db273e04e7e1e9e681fd7aa0283e04aa100045e35dfb5d22",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-types-doc-unit.sum": "c481a90fd742792cfce566a007d8ad88a458ae55eae30ab1b115a792fc8d401c",
+  "benchmarks/2026-11-10-values/validation/peer-leaves/peers-types-tests.log": "f36cb753ac50339f6022dace694e9108d0212e5ae68c190a5ecafa5514b2c9bf"
+ }
+}

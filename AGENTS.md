@@ -13,6 +13,16 @@
   is what keeps the session's `UpdatesLike` under Clippy's `large_enum_variant`
   without boxing the request of every short-sent message. `depth_tests.rs` guards
   `SendMessage` at 512 B: a new optional body in that request needs the same rule.
+- `emojiStatusCollectible` and `peerColorCollectible` are boxed, which takes `User`
+  from 648 to 448 B and `Channel` from 656 to 456 B: each holds one status and two
+  colours, and the rare collectible set the size of all three. Their ordinary
+  constructors stay inline. `depth_tests.rs` guards `User` and `Chat` at 480 B: a new
+  large constructor in a type every user or channel carries needs the same rule.
+- A message behind an `Arc` and a send's reply decoded once were built on 2026-11-11
+  and are not on `main`: the reply decoded once is a loss of 2.1% even with shared
+  messages, and `Arc` alone is nothing. The patches and numbers are under
+  `benchmarks/2026-11-10-values/shared-reply`. This replaces "do not build it a third
+  time without shared ownership" in the typed section below: it was built with it.
 - Rustdoc for a workspace crate merges the shared search index in `target/doc` and
   aborts there under the 4,000,000 KiB address-space cap. Document `grammers-tl-gen`
   into its own target directory; `grammers-client` and `grammers-tl-types` run as

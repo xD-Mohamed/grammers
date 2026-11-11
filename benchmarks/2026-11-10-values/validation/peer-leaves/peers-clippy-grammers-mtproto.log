@@ -1,0 +1,4 @@
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Checking grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.75s

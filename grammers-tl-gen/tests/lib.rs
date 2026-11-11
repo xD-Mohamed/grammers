@@ -312,3 +312,34 @@ fn input_rich_message_leaves_are_boxed_with_owned_conversions() -> io::Result<()
     assert!(enums.contains("Message(crate::types::sample::InputRichMessage),"));
     Ok(())
 }
+
+#[test]
+fn collectible_leaves_are_boxed_and_ordinary_ones_stay_inline() -> io::Result<()> {
+    let definitions = get_definitions(
+        "
+        emojiStatus#e7ff068a flags:# document_id:long until:flags.0?int = EmojiStatus;
+        emojiStatusCollectible#7184603b flags:# collectible_id:long title:string until:flags.0?int = EmojiStatus;
+        peerColor#b54b5acf flags:# color:flags.0?int = PeerColor;
+        peerColorCollectible#b9c0639a flags:# collectible_id:long colors:Vector<int> = PeerColor;
+        sample.peerColorCollectible#70000002 colors:Vector<int> = sample.PeerColor;
+    ",
+    );
+    let (_, types, _, enums) = gen_rust_code(&definitions)?;
+    for (ty, payload) in [
+        ("EmojiStatus", "EmojiStatusCollectible"),
+        ("PeerColor", "PeerColorCollectible"),
+    ] {
+        assert!(enums.contains(&format!("Collectible(Box<crate::types::{payload}>),")));
+        assert!(enums.contains(&format!(
+            "Self::Collectible(Box::new(crate::types::{payload}::deserialize(buf)?)),"
+        )));
+        assert!(enums.contains(&format!("{ty}::Collectible(Box::new(x))")));
+        assert!(types.contains(&format!("crate::enums::{ty}::Collectible(x) => Ok(*x),")));
+    }
+    // What nearly every user and channel has stays inline, and so does a namesake
+    // in another namespace.
+    assert!(enums.contains("Status(crate::types::EmojiStatus),"));
+    assert!(enums.contains("Color(crate::types::PeerColor),"));
+    assert!(enums.contains("Collectible(crate::types::sample::PeerColorCollectible),"));
+    Ok(())
+}
