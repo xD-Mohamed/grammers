@@ -40,6 +40,10 @@
   single units under the watchdog. The TL types' all-feature Rustdoc reached 3.9 GiB
   resident with 39 MiB left on 2026-11-11, and the serde unit left 12 MiB once: run
   neither while the host's bots are busy, and never two of them close together.
+- `benchmarks/2026-11-10-values/tools/cross-matrix.py` checks every crate on Windows
+  and macOS with warnings denied: no features, each C-free feature alone, all together
+  (102 cases, resumable by source hash). A feature built alone is where a dead-code
+  warning hides: it found two. Run it after adding a feature or an item one feature uses.
 - Enum deserializers charge TL constructor depth independently of Rust heap
   boxing. A storage change must preserve the cursor's RAII depth scope.
 - `messageReplyHeader.reply_media` is an optional boxed field, using the existing

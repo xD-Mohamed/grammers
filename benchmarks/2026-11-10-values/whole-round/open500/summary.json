@@ -1,0 +1,139 @@
+{
+  "open500": {
+    "medians": {
+      "base": {
+        "rate": 500.0,
+        "updates_per_s": 625.0,
+        "updates_lost": 0.0,
+        "cpu_us": 108.5,
+        "user_us": 60.765,
+        "sys_us": 52.59,
+        "core_share": 0.0545,
+        "allocs_per_rpc": 18.51,
+        "bytes_per_rpc": 11673.0,
+        "p50_us": 1064.95,
+        "p95_us": 1523.7,
+        "p99_us": 1679.35,
+        "rss_steady_kib": 8426.0,
+        "rss_peak_kib": 3438.0,
+        "live_heap_b": 260320.0
+      },
+      "final": {
+        "rate": 500.0,
+        "updates_per_s": 625.0,
+        "updates_lost": 0.0,
+        "cpu_us": 109.32,
+        "user_us": 51.475,
+        "sys_us": 57.269999999999996,
+        "core_share": 0.0545,
+        "allocs_per_rpc": 18.79,
+        "bytes_per_rpc": 7549.0,
+        "p50_us": 1220.65,
+        "p95_us": 1687.5500000000002,
+        "p99_us": 1998.85,
+        "rss_steady_kib": 8292.0,
+        "rss_peak_kib": 3440.0,
+        "live_heap_b": 179416.0
+      }
+    },
+    "timeouts": {
+      "base": 0,
+      "final": 0
+    },
+    "against": {
+      "base": {
+        "rate": {
+          "paired_delta_percent": 0.0,
+          "bootstrap_95_percent": [
+            0.0,
+            0.0
+          ]
+        },
+        "updates_per_s": {
+          "paired_delta_percent": 0.0,
+          "bootstrap_95_percent": [
+            0.0,
+            0.0
+          ]
+        },
+        "cpu_us": {
+          "paired_delta_percent": 0.83,
+          "bootstrap_95_percent": [
+            -4.5,
+            5.47
+          ]
+        },
+        "sys_us": {
+          "paired_delta_percent": 7.91,
+          "bootstrap_95_percent": [
+            -5.72,
+            35.86
+          ]
+        },
+        "core_share": {
+          "paired_delta_percent": 0.0,
+          "bootstrap_95_percent": [
+            -4.58,
+            5.71
+          ]
+        },
+        "allocs_per_rpc": {
+          "paired_delta_percent": 1.35,
+          "bootstrap_95_percent": [
+            1.32,
+            1.54
+          ]
+        },
+        "bytes_per_rpc": {
+          "paired_delta_percent": -35.4,
+          "bootstrap_95_percent": [
+            -35.47,
+            -35.31
+          ]
+        },
+        "p50_us": {
+          "paired_delta_percent": 8.76,
+          "bootstrap_95_percent": [
+            -13.54,
+            51.83
+          ]
+        },
+        "p95_us": {
+          "paired_delta_percent": 4.69,
+          "bootstrap_95_percent": [
+            -10.01,
+            32.62
+          ]
+        },
+        "p99_us": {
+          "paired_delta_percent": 14.96,
+          "bootstrap_95_percent": [
+            -6.81,
+            35.79
+          ]
+        },
+        "rss_steady_kib": {
+          "paired_delta_percent": -1.13,
+          "bootstrap_95_percent": [
+            -3.39,
+            0.46
+          ]
+        },
+        "rss_peak_kib": {
+          "paired_delta_percent": 0.35,
+          "bootstrap_95_percent": [
+            -17.43,
+            6.21
+          ]
+        },
+        "live_heap_b": {
+          "paired_delta_percent": -30.99,
+          "bootstrap_95_percent": [
+            -31.98,
+            -30.29
+          ]
+        }
+      }
+    }
+  }
+}

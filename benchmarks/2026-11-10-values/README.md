@@ -16,15 +16,19 @@ Part 1, what the last report listed as not done or not verified:
 
 - [x] 1.1 `grammers-tl-types` with `impl-serde` as one API unit: check passes, 3.28 GiB peak; all-features stopped by watchdog
 - [x] 1.2 The same API unit under Clippy: clean, 3.30 GiB peak; all-target/all-features stopped by watchdog
-- [ ] 1.3 Windows and macOS: `cargo check --target` on the real targets, crate by crate
-      (36 representative checks passed on the round's first source; the matrix at the final head is open)
+- [x] 1.3 Windows and macOS: `cargo check --target` with warnings denied on the three real
+      targets, 34 crate and feature cases each, all 102 pass at the final source; two
+      warnings it found in rare feature sets are fixed, each in its own commit
 - [x] 1.4 Ignored tests: every one listed with what it needs, in [the inventory](ignored-tests.md)
 - [x] 1.5 Ignored tests that need no credentials: all 38 run and pass, the four network
       probes included (one of them new, against a production DC); one test needs
       test credentials from the owner
 - [x] 1.6 The coarse clock's open loops (5,000 and 500 RPC/s) measured again at the head:
       no resolved change in either, as before the review
-- [!] 1.7 The peers-step RSS rise persists in non-anonymous pages; exact mapping/function cause unresolved after the 20-minute time box (see peers-rss)
+- [!] 1.7 The RSS rise of the peers step: time-boxed at 20 minutes. It is not noise (+1.09%
+      [+0.31, +2.29] over longer runs) and not heap (anonymous memory is unchanged): it is
+      92 KiB of file-backed pages, and which mapping was not found. This round's steps
+      take 496 KiB off the same figure
 
 Part 2, the decisions the owner delegated:
 
@@ -45,13 +49,52 @@ Part 2, the decisions the owner delegated:
 
 Closing:
 
-- [ ] 3.1 CHANGELOG, AGENTS.md and PERFORMANCE.md follow what was kept
-- [ ] 3.2 Validation at the final head, per crate
-- [ ] 3.3 Scratch build directories removed
+- [x] 3.1 CHANGELOG (an entry with a snippet for every break, and one list of what a
+      consumer edits), AGENTS.md and PERFORMANCE.md follow what was kept
+- [x] 3.2 Validation at the final source, crate by crate, with what did not run
+- [x] 3.3 Scratch build directories removed
 
 Not on this list because the owner excluded them: any consumer of the fork (MONITOR
 included), `io_uring`, a kernel upgrade, the host's clock source, anything deployed, and
 any traffic to Telegram that needs an account.
+
+## The whole round, end to end
+
+`4cc655d` with the fixed RSS harness against the final source (`9c5fee7`; the two later
+commits change no code that is compiled in these builds). One bot connection with
+updates, local mocks, same release profile and features; both use the coarse clock on
+this host, where the precise clock is a system call. Paired median-ratio bootstrap.
+
+| Scenario | Metric | Before | After | Paired change, 95% interval |
+|---|---|---:|---:|---:|
+| Saturated, 64 callers, 30 pairs | RPC/s | 179,178 | 208,694 | **+18.20%** [+16.85, +20.16] |
+| | CPU us/RPC | 5.57 | 4.77 | **-15.48%** [-16.80, -14.48] |
+| | p50 / p99 us | 352.3 / 483.3 | 299.0 / 426.0 | **-15.91%** / **-14.15%** |
+| | allocations/RPC | 17.69 | 17.88 | +1.07% |
+| | allocated B/RPC | 12,185 | 5,815 | **-52.28%** [-52.34, -52.22] |
+| | steady RSS KiB | 8,582 | 8,086 | **-5.15%** [-6.31, -4.33] |
+| | live heap B | 498,008 | 365,496 | **-26.72%** [-27.06, -26.31] |
+| 5,000 RPC/s, 8 pairs | CPU us/RPC | 42.26 | 40.63 | -2.25% [-13.01, +0.23] |
+| | allocated B/RPC | 12,754.5 | 7,655.5 | **-39.90%** [-40.10, -39.83] |
+| | steady RSS KiB | 8,738 | 8,346 | -4.70% [-6.17, +0.61] |
+| | live heap B | 330,352 | 230,256 | **-30.91%** [-31.91, -28.96] |
+| 500 RPC/s, 12 pairs | CPU us/RPC | 108.50 | 109.32 | +0.83% [-4.50, +5.47] |
+| | allocated B/RPC | 11,673 | 7,549 | **-35.40%** [-35.47, -35.31] |
+| | steady RSS KiB | 8,426 | 8,292 | -1.13% [-3.39, +0.46] |
+| | live heap B | 260,320 | 179,416 | **-30.99%** [-31.98, -30.29] |
+
+The gain in CPU is at saturation; the open loops show none that resolves, as for every
+change to this path so far. Memory falls in all three. Allocations per request rise by
+0.14 to 0.28: the boxed request of a short-sent message (step 8), less what step 3
+removed. The idle-session census is unchanged at every step: 2,143 B before
+connecting, 5,959 B after one reply, 12,079 B with the replay history full.
+None of this is the coarse clock: both sides have it. [Logs](whole-round).
+
+Kept, in order: step 1 (reply previews), 2 (ten rare updates), 3 (webpage and game
+leaves), 5 (rich-message inputs), 7 (collectible status and colour), 8 (short updates
+and the short-sent request), 9 (thirteen more updates). Measured and not on `main`:
+step 4 (the forward header of a reply, reverted), step 6 (a message behind an `Arc`,
+and a reply decoded once), the write clock, a cap in bytes for the recycled batch.
 
 ## Resumed state and evidence
 
@@ -815,3 +858,64 @@ the watchdog stop a command, the host did not stall, and swap free never went un
 1.8 GiB. They were not repeated, and they should not be run on this host while its
 bots are busy. Not run: all-feature `impl-serde` as one unit (the watchdog stops it,
 as recorded at the top), and anything on a consumer of the fork.
+
+## Windows and macOS, on the real targets
+
+`cargo check --target` with `RUSTFLAGS=-D warnings`, offline, one compiler, each case
+under the 4,000,000 KiB cap and the watchdog, for `x86_64-pc-windows-msvc`,
+`x86_64-apple-darwin` and `aarch64-apple-darwin`. For each crate: no features, each
+C-free feature alone, and all of them together. That is 34 cases for each target:
+10 for the client, 9 for the TL types, 5 each for session and sender, and one each for
+the MTProto, crypto, generator, parser and umbrella crates.
+[The runner](tools/cross-matrix.py) keys each result to a hash of the crate's sources
+and of its dependencies', so an edit re-runs what it touches.
+
+**All 102 pass at the final source** ([results](cross-targets/results.json),
+[configuration](cross-targets/configuration.json); the results name each case's command,
+duration and the SHA-256 of its two logs, which stayed in the task's scratch directory:
+262 small files). This compiles the coarse clock's
+fallback module for real: on those targets `grammers_mtproto::coarse_clock` is the
+module with no `unsafe` that reads the precise clock, and that crate does not depend
+on `libc` there.
+
+It found two warnings, which `-D warnings` makes errors, neither specific to a target:
+
+- `grammers-client` with `markdown` and without `html`: a segment only the HTML parser
+  builds was never constructed. Fixed in `efb41a0`.
+- `grammers-tl-types` with neither schema: the depth budget only generated enums use
+  was unused. Fixed in `cb4f4ee`.
+
+What was not checked, and why:
+
+- **Nothing was run** on Windows or macOS: these are compile checks without linking.
+- **Features that need a C compiler for the target**: the client's `session-file`,
+  `session-import-files` and `proxy`, the session's `sqlite-storage` and
+  `session-import-files` (SQLite), the sender's `proxy` (its TLS library). No cross C
+  toolchain is installed and none was added. The sender's three C-free proxy
+  dependencies are checked as features of their own.
+- **`impl-serde` with the API schema**: checked on those targets alone, without the
+  schema. With it the unit needs 3.3 GiB, the generated code does not depend on the
+  target, and it passes on this host as recorded above.
+- **The power set of features** (405 cases for each target): the first plan. Its
+  64 serde units for each target are more than this host can afford.
+- Test, example and benchmark targets: library targets only (the umbrella's binary).
+
+## After the two fixes
+
+`efb41a0` and `cb4f4ee` are the last commits to source. What ran on them: formatting;
+the client's strict all-target Clippy, its all-feature tests (132 unit, 69 doctests),
+its parser tests with `markdown` alone, its Rustdoc (2,221 MiB), and a check with
+warnings denied for `markdown`, `html`, both and neither; the TL types' 20 unit tests,
+doctests and strict Clippy, and a check of all its targets with no features; and the
+whole cross-target matrix. What did not run again: the TL types' all-feature Rustdoc
+and the serde unit, whose last runs came too close to the host's limit. `cb4f4ee` adds
+an attribute that is inactive whenever a schema is compiled and a comment, and no
+documentation text.
+
+## Scratch
+
+The scratch build directories of this round (5.8 GiB under the task's temporary
+directory: the cross-target, documentation, serde and profiling targets, and the
+copies of the tree) are removed. The main `target/` was not cleaned. The benchmark
+binaries named in the manifests (310 MB) and the raw logs are left there for a
+follow-up measurement against the same base; they are not needed to reproduce.

@@ -1,0 +1,84 @@
+{
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1\n",
+  "cargo": "cargo 1.99.1 (5f94df478 2026-08-27)\nrelease: 1.99.1\ncommit-hash: 5f94df4789f005f9a352888e8355ffc645b7ed0e\ncommit-date: 2026-08-27\nhost: x86_64-unknown-linux-gnu\nlibgit2: 1.9.6 (sys:0.21.0 vendored)\nlibcurl: 8.21.0-DEV (sys:0.4.90+curl-8.21.0 vendored ssl:OpenSSL/3.6.3)\nssl: OpenSSL 3.6.3 9 Jun 2026\nos: Ubuntu 22.4.0 (jammy) [64-bit]\n",
+  "effective_build_env": {
+    "RUSTFLAGS": "-D warnings",
+    "RUSTC": "/root/.cargo/bin/rustc",
+    "RUSTC_WRAPPER": "",
+    "RUSTC_WORKSPACE_WRAPPER": "",
+    "CARGO_TARGET_DIR": "/tmp/claude-0/de27/target-cross",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0"
+  },
+  "runner_sha256": "821e932a193c14015fb360c3518deabdbcd76c99e63f9b783e52e0996d5b0066",
+  "guard_sha256": "a47012785ec643b1e2f312d75ddb446ce1606a1c69423d6dbb35f65890880483",
+  "code_sha256": {
+    "grammers": "b7e14e3ec7cbe838cb39996476800cd3b6f4d0881af6ce20d94c1abcaa743e05",
+    "grammers-crypto": "f2456c1fb34ff7f8ab93cd106f29e92bf7cd3915fe7a0caa36bd91028e585cf8",
+    "grammers-mtproto": "de8788f8adcaf843ac4d337d1335eb361cc19a0d501bd2e9aa4a5360d4c86fb0",
+    "grammers-tl-gen": "7f8b260cc35ff30c901088315c37e509a80f22a6e5197c829ed8bf51afe7332d",
+    "grammers-tl-parser": "0fa1ba1a9977011386dc83cec0409eecaa02ead6a8599f73b02749f8d1b9c69f",
+    "grammers-client": "86bc55c619a816e82049259e47d330d455ff507e6f187b54321b0ebe3bcb945a",
+    "grammers-session": "1cc8a3d8a54adae661f46e2c494abdc9dfbf95547062dc67cd86f486d2a413cc",
+    "grammers-mtsender": "802c4959302c8802bbae8c5d3ff14b0944b18bb45cae62401084467deeb33318",
+    "grammers-tl-types": "9d1286e5cf0831c8ed49a7295b0b4a5d72289feca2f844de544833c4550ae565"
+  },
+  "feature_axes": {
+    "grammers": [],
+    "grammers-crypto": [],
+    "grammers-mtproto": [],
+    "grammers-tl-gen": [],
+    "grammers-tl-parser": [],
+    "grammers-client": [
+      "dispatcher",
+      "fs",
+      "html",
+      "markdown",
+      "parse_invite_link",
+      "qr-login",
+      "session-import",
+      "session-string"
+    ],
+    "grammers-session": [
+      "serde",
+      "session-import",
+      "session-string"
+    ],
+    "grammers-mtsender": [
+      "hickory-resolver",
+      "tokio-socks",
+      "url"
+    ],
+    "grammers-tl-types": [
+      "deserializable-functions",
+      "impl-debug",
+      "impl-from-enum",
+      "impl-from-type",
+      "impl-serde",
+      "tl-api",
+      "tl-mtproto"
+    ]
+  },
+  "excluded_C_features": {
+    "grammers-client": [
+      "proxy",
+      "session-file",
+      "session-import-files"
+    ],
+    "grammers-session": [
+      "sqlite-storage",
+      "session-import-files"
+    ],
+    "grammers-mtsender": [
+      "proxy"
+    ]
+  },
+  "scope": "libraries (grammers binary); for each crate no features, each C-free feature alone and all together (TL types: all but impl-serde); default aliases represented by equivalent explicit features. No execution on foreign OS.",
+  "flags": [
+    "--locked",
+    "--offline",
+    "-j1",
+    "--no-default-features",
+    "RUSTFLAGS=-D warnings"
+  ]
+}

@@ -1,6 +1,16 @@
 # Library efficiency and fork changes
 
-The latest measurements are of [the request and reply path across many sessions](benchmarks/2026-11-09/README.md):
+The latest measurements are of [smaller generated values](benchmarks/2026-11-10-values/README.md)
+(2026-11-11): against `4cc655d`, one busy bot connection completes **+18.20%**
+[+16.85, +20.16] more requests for **-15.48%** [-16.80, -14.48] CPU each, allocates
+**-52%** of the bytes per request, and holds **-5.15%** RSS and **-26.72%** live heap. The
+open loops show no resolved CPU change and 35% to 40% fewer allocated bytes. It costs
+0.14 to 0.28 more allocations per request and breaks generated types: CHANGELOG lists
+what a consumer edits. A message behind an `Arc`, a reply decoded once and two smaller
+candidates were measured and are not in the code. All local mock traffic. Before it,
+[the typed client path and the coarse clock](benchmarks/2026-11-10-typed/README.md).
+
+Before those, [the request and reply path across many sessions](benchmarks/2026-11-09/README.md):
 against `aa1ac8a`, 64 sessions on one thread complete **+32.77%** [+29.15, +37.41] more
 requests for **-24.82%** [-27.40, -22.96] CPU each with 1.6 KiB replies, a connected session
 holds 5,959 B of heap instead of 7,951 B, and one busy bot connection gains **+11.54%**
