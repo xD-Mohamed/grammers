@@ -1,0 +1,431 @@
+
+running 1 test
+test bot_workload ... CPU samples: 747
+--- categories
+ 45.65% other
+ 31.86% inclusive: on_net_read
+ 30.52% inclusive: TL decoding
+ 15.93% clock
+ 11.78% allocator
+ 11.38% inclusive: decrypt
+  9.77% kernel
+  9.64% crypto
+  7.23% large copies
+  6.43% inclusive: friendly update
+  5.49% inclusive: peer map
+  3.35% inclusive: message box
+  2.81% inclusive: try_fill_write
+  2.14% inclusive: encrypt
+  2.01% inclusive: peer storage
+--- self by line
+ 15.93% clock_gettime @ :0
+  8.43% __libc_malloc @ :0
+  7.50% __send @ :0
+  5.49% _mm_aesdec_si128 @ x86/aes.rs:39
+  2.95% cfree @ :0
+  2.81% pop_request @ grammers-mtsender/src/sender.rs:1183
+  2.68% copy_nonoverlapping @ ptr/mod.rs:573
+  2.41% _mm_add_epi32 @ x86/sse2.rs:111
+  1.47% recv @ :0
+  1.47% dealloc @ alloc/unix.rs:65
+  1.34% collect @ grammers-client/src/peer/peer_map.rs:42
+  1.20% _mm_aesenc_si128 @ x86/aes.rs:61
+  1.20% branch @ src/result.rs:2178
+  1.07% {async_fn#0} @ grammers-client/tests/bot_workload.rs:1013
+  1.07% swap_bytes @ num/uint_macros.rs:743
+  1.07% map @ src/option.rs:1163
+  0.94% {async_fn#0} @ grammers-client/src/client/messages.rs:133
+  0.94% drop_glue @ ptr/mod.rs:847
+  0.80% {async_block#0} @ grammers-mtsender/src/sender_pool.rs:1561
+  0.80% atomic_load @ sync/atomic.rs:3995
+  0.80% adapt @ grammers-session/src/message_box/adaptor.rs:319
+  0.80% write @ ptr/mod.rs:1963
+  0.80% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:4552
+  0.80% {async_fn#0} @ grammers-client/src/client/updates.rs:53
+  0.80% {async_block#0} @ grammers-client/tests/bot_workload.rs:1139
+  0.80% wrapping_add @ num/uint_macros.rs:2652
+  0.67% epoll_wait @ :0
+  0.67% new @ src/boxed.rs:293
+  0.67% deserialize_own_update @ grammers-mtsender/src/sender.rs:161
+  0.67% {closure#0} @ mpsc/chan.rs:449
+  0.67% {closure#0} @ grammers-client/src/client/updates.rs:58
+  0.67% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:228
+  0.67% atomic_add @ sync/atomic.rs:4029
+  0.67% remember @ grammers-mtproto/src/mtp/replay.rs:66
+  0.54% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:362
+  0.54% process_updates_inner @ grammers-session/src/message_box/mod.rs:771
+  0.54% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:29957
+  0.54% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:66537
+  0.54% {async_fn#0} @ grammers-mtsender/src/sender_pool.rs:0
+  0.54% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:30063
+  0.40% atomic_or @ sync/atomic.rs:4235
+  0.40% branch @ src/result.rs:0
+  0.40% adapt @ grammers-session/src/message_box/adaptor.rs:254
+  0.40% next_task @ current_thread/mod.rs:336
+  0.40% extend_update_queue @ grammers-mtsender/src/updates_receiver.rs:767
+  0.40% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:755
+  0.40% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:749
+  0.40% get @ src/cell.rs:558
+  0.40% take @ grammers-crypto/src/lib.rs:163
+  0.40% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:66503
+  0.40% read_byte @ grammers-tl-types/src/deserialize.rs:493
+  0.40% {async_fn#0} @ grammers-mtsender/src/sender_pool.rs:666
+  0.40% _mm_sha256rnds2_epu32 @ x86/sha.rs:138
+  0.40% process_updates_inner @ grammers-session/src/message_box/mod.rs:940
+  0.40% sort_updates_by_key i32 @ grammers-session/src/message_box/mod.rs:90
+  0.40% new @ src/cell.rs:2069
+  0.40% compare @ slice/cmp.rs:339
+  0.27% handle_rpc_result @ grammers-mtproto/src/mtp/encrypted.rs:915
+  0.27% index @ slice/index.rs:413
+  0.27% <core::option::Option::copied @ src/option.rs:2138
+  0.27% {closure#3} @ grammers-session/src/message_box/mod.rs:863
+  0.27% checked_add @ num/uint_macros.rs:938
+  0.27% try_allocate_in @ raw_vec/mod.rs:0
+  0.27% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_enums.rs:24174
+  0.27% now @ time/source.rs:37
+  0.27% send @ grammers-mtsender/src/queue.rs:83
+  0.27% from @ grammers-session/src/peer.rs:866
+  0.27% {async_block#0} @ grammers-mtsender/src/sender_pool.rs:1650
+  0.27% current_memory @ raw_vec/mod.rs:631
+  0.27% read @ ptr/mod.rs:1755
+  0.27% replace @ mem/mod.rs:976
+  0.27% atomic_compare_exchange @ sync/atomic.rs:4083
+  0.27% try_fold grammers_session::peer::PeerInfo, (), core::iter::traits::iterator::Iterator::find::check::{closure_e @ adapters/map.rs:122
+  0.27% new @ adapters/filter.rs:28
+  0.27% {async_fn#0} @ grammers-client/src/client/updates.rs:35
+  0.27% realloc @ :0
+  0.27% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:4598
+  0.27% on_net_write @ grammers-mtsender/src/sender.rs:927
+  0.27% atomic_sub @ sync/atomic.rs:4049
+  0.27% as_ref @ ptr/non_null.rs:454
+  0.27% <grammers_mtsender::invocation_tracker::PendingInvocation as core::future::future::Future::poll @ grammers-mtsender/src/invocation_tracker.rs:150
+  0.27% <std::sys::pal::unix::time::Timespec as core::cmp::Ord::cmp @ unix/time.rs:25
+  0.13% from_message @ grammers-client/src/update/update.rs:0
+  0.13% into @ convert/mod.rs:781
+  0.13% poll_inner @ task/harness.rs:196
+  0.13% poll_recv @ sync/oneshot.rs:0
+  0.13% get_difference @ grammers-session/src/message_box/mod.rs:1026
+  0.13% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:60442
+  0.13% from @ grammers-session/src/peer.rs:764
+  0.13% start_invoke_shared @ grammers-mtsender/src/sender_pool.rs:586
+--- inclusive by grammers line
+100.00% {closure#0} @ grammers-client/tests/bot_workload.rs:1265
+100.00% bot_workload @ grammers-client/tests/bot_workload.rs:1296
+ 45.25% {async_block#0} @ grammers-mtsender/src/sender_pool.rs:1555
+ 31.86% {closure#4} @ grammers-mtsender/src/sender.rs:552
+ 31.86% {async_fn#0} @ grammers-mtsender/src/sender.rs:552
+ 29.05% {async_block#0} @ grammers-client/tests/bot_workload.rs:1139
+ 17.94% {async_block#0} @ grammers-client/tests/bot_workload.rs:1101
+ 17.40% {async_fn#0} @ grammers-client/src/client/updates.rs:33
+ 16.87% on_net_read @ grammers-mtsender/src/sender.rs:759
+ 14.86% on_net_read @ grammers-mtsender/src/sender.rs:757
+ 14.06% from_bytes @ grammers-tl-types/src/deserialize.rs:218
+ 12.85% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_enums.rs:25293
+ 12.85% deserialize @ grammers-tl-types/src/deserialize.rs:432
+ 12.32% {async_fn#0} @ grammers-client/tests/bot_workload.rs:1010
+ 11.38% deserialize @ grammers-mtproto/src/mtp/encrypted.rs:1894
+ 10.98% deserialize_updates_like @ grammers-mtsender/src/sender.rs:120
+ 10.04% {async_fn#0} @ grammers-client/src/client/updates.rs:53
+  9.37% deserialize_vector @ grammers-tl-types/src/deserialize.rs:397
+  9.24% {async_fn#0} @ grammers-mtsender/src/sender.rs:550
+  8.70% __rust_alloc @ grammers-client/tests/bot_workload.rs:170
+  8.57% alloc @ grammers-client/tests/bot_workload.rs:141
+  7.90% decrypt_data_v2 @ grammers-crypto/src/lib.rs:233
+  7.90% ige_decrypt_hashed @ grammers-crypto/src/aes.rs:373
+  7.76% {async_fn#0} @ grammers-client/tests/bot_workload.rs:1012
+  7.10% {async_fn#0} @ grammers-client/tests/bot_workload.rs:971
+  6.96% process_mtp_buffer @ grammers-mtsender/src/sender.rs:1010
+  6.69% process_own_update @ grammers-mtsender/src/sender.rs:1024
+  6.29% process_mtp_buffer @ grammers-mtsender/src/sender.rs:1006
+  6.16% process_update @ grammers-mtsender/src/sender.rs:1042
+  6.02% {async_fn#0} @ grammers-client/src/client/net.rs:120
+  6.02% {async_fn#0} @ grammers-client/src/client/net.rs:97
+  5.49% decrypt_blocks @ grammers-crypto/src/aes.rs:215
+  5.49% decrypt_hashed @ grammers-crypto/src/aes.rs:260
+  5.22% peer_map_from_raw @ grammers-client/src/client/chats.rs:1057
+  5.09% deserialize_own_update @ grammers-mtsender/src/sender.rs:157
+  4.95% deserialize @ grammers-tl-types/src/deserialize.rs:494
+  4.82% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:65901
+  4.69% {async_fn#0} @ grammers-client/src/client/updates.rs:54
+  4.28% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:362
+  4.15% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:65902
+  4.15% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_enums.rs:11764
+  4.15% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:60443
+  4.02% {async_fn#0} @ grammers-client/src/client/messages.rs:796
+  3.88% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:65903
+  3.75% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:755
+  3.75% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_enums.rs:25427
+  3.48% deserialize @ grammers-mtproto/src/mtp/encrypted.rs:1896
+  3.48% collect @ grammers-client/src/peer/peer_map.rs:42
+  3.48% decrypt_data_v2 @ grammers-crypto/src/lib.rs:228
+  3.48% calc_key @ grammers-crypto/src/sha.rs:32
+  3.48% process_mtp_buffer @ grammers-mtsender/src/sender.rs:1012
+  3.35% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_enums.rs:24201
+  3.21% <grammers_session::message_box::defs::MessageBoxes::process_updates_at @ grammers-session/src/message_box/mod.rs:670
+  3.08% process_plaintext @ grammers-mtproto/src/mtp/encrypted.rs:631
+  2.95% {async_fn#0} @ grammers-mtsender/src/sender_pool.rs:470
+  2.95% {closure#0} @ grammers-mtsender/src/sender_pool.rs:471
+  2.95% {async_fn#0} @ grammers-mtsender/src/sender_pool.rs:471
+  2.81% pop_request @ grammers-mtsender/src/sender.rs:1183
+  2.81% {async_fn#0} @ grammers-mtsender/src/sender.rs:523
+  2.81% process_result @ grammers-mtsender/src/sender.rs:1055
+  2.68% {async_fn#0} @ grammers-client/tests/bot_workload.rs:970
+  2.54% {async_fn#0} @ grammers-client/src/client/messages.rs:806
+  2.41% deserialize_vector @ grammers-tl-types/src/deserialize.rs:405
+  2.41% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_enums.rs:3115
+  2.28% {async_fn#0} @ grammers-mtsender/src/sender_pool.rs:674
+  2.28% {async_block#0} @ grammers-client/src/client/messages.rs:195
+  2.14% encrypt_data_v2 @ grammers-crypto/src/lib.rs:202
+  2.14% next @ grammers-client/src/client/chats.rs:1110
+  2.14% dealloc @ grammers-client/tests/bot_workload.rs:157
+  2.14% __rust_dealloc @ grammers-client/tests/bot_workload.rs:170
+  2.14% decrypt_hashed @ grammers-crypto/src/aes.rs:272
+  2.14% finalize @ grammers-mtproto/src/mtp/encrypted.rs:1882
+  2.14% try_fill_write @ grammers-mtsender/src/sender.rs:698
+  2.01% {async_fn#0} @ grammers-client/src/client/updates.rs:46
+  1.74% process_bounded @ grammers-mtproto/src/mtp/encrypted.rs:720
+  1.74% {async_fn#0} @ grammers-client/src/client/chats.rs:1082
+  1.74% {async_fn#0} @ grammers-mtsender/src/sender_pool.rs:500
+  1.74% {async_fn#0} @ grammers-mtsender/src/sender_pool.rs:520
+  1.74% {async_block#0} @ grammers-client/tests/bot_workload.rs:1105
+  1.61% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:66409
+  1.61% {async_fn#0} @ grammers-client/tests/bot_workload.rs:990
+  1.61% {closure#0} @ grammers-mtsender/src/sender.rs:278
+  1.47% process_updates_inner @ grammers-session/src/message_box/mod.rs:696
+  1.47% collect @ grammers-client/src/peer/peer_map.rs:41
+  1.34% {async_fn#0} @ grammers-client/src/client/messages.rs:799
+  1.34% {async_fn#0} @ grammers-client/src/client/messages.rs:120
+  1.34% {closure#1} @ grammers-mtsender/src/updates_receiver.rs:360
+  1.34% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:360
+  1.20% handle_rpc_result @ grammers-mtproto/src/mtp/encrypted.rs:1003
+  1.20% do_encrypt_data_v2 @ grammers-crypto/src/lib.rs:139
+  1.20% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:29957
+  1.20% encrypt @ grammers-crypto/src/aes.rs:176
+  1.07% contains @ grammers-client/src/client/chats.rs:104
+  1.07% {async_fn#0} @ grammers-mtsender/src/sender.rs:555
+  1.07% {closure#1} @ grammers-client/src/client/chats.rs:1081
+  1.07% {closure#5} @ grammers-mtsender/src/sender.rs:556
+  1.07% {async_fn#0} @ grammers-client/tests/bot_workload.rs:1013
+  1.07% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:4459
+  1.07% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_enums.rs:24175
+  0.94% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:66419
+  0.94% {async_fn#0} @ grammers-client/src/client/messages.rs:133
+  0.94% {async_block#0} @ grammers-mtsender/src/sender_pool.rs:1568
+  0.94% fingerprint @ grammers-client/src/client/chats.rs:65
+  0.94% deserialize_request @ grammers-mtsender/src/sender.rs:148
+  0.94% {async_fn#0} @ grammers-client/tests/bot_workload.rs:978
+  0.94% deserialize_own_update @ grammers-mtsender/src/sender.rs:160
+  0.80% {async_fn#0} @ grammers-client/src/client/chats.rs:1036
+  0.80% hash @ grammers-session/src/peer.rs:40
+  0.80% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:593
+  0.80% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:4552
+  0.80% on_net_write @ grammers-mtsender/src/sender.rs:919
+  0.80% {async_block#0} @ grammers-mtsender/src/sender_pool.rs:1561
+  0.80% hash @ grammers-session/src/peer.rs:81
+  0.80% adapt @ grammers-session/src/message_box/adaptor.rs:319
+  0.80% deserialize_vector @ grammers-tl-types/src/deserialize.rs:402
+  0.67% process_result @ grammers-mtsender/src/sender.rs:1068
+  0.67% deserialize_own_update @ grammers-mtsender/src/sender.rs:161
+  0.67% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_functions.rs:23829
+  0.67% turn_now @ grammers-mtsender/src/updates_receiver.rs:646
+  0.67% process_bounded @ grammers-mtproto/src/mtp/encrypted.rs:778
+  0.67% {async_fn#0} @ grammers-client/src/client/messages.rs:804
+  0.67% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:228
+  0.67% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:262
+  0.67% remember @ grammers-mtproto/src/mtp/replay.rs:66
+  0.67% {closure#0} @ grammers-client/src/client/updates.rs:58
+  0.67% remember_received @ grammers-mtproto/src/mtp/encrypted.rs:787
+  0.67% {async_fn#0} @ grammers-client/src/client/updates.rs:58
+  0.54% {async_fn#0} @ grammers-client/src/client/net.rs:96
+  0.54% start_invoke_shared @ grammers-mtsender/src/sender_pool.rs:585
+  0.54% {closure#0} @ grammers-crypto/src/lib.rs:189
+  0.54% {async_fn#0} @ grammers-client/src/client/chats.rs:1037
+  0.54% from @ grammers-tl-types-fc15eeb6dd977e33/out/generated_enums.rs:11777
+  0.54% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:30063
+  0.54% {async_fn#0} @ grammers-client/src/client/chats.rs:1063
+  0.54% start_invoke_shared @ grammers-mtsender/src/sender_pool.rs:587
+  0.54% {async_fn#0} @ grammers-mtsender/src/sender_pool.rs:0
+  0.54% process_updates_inner @ grammers-session/src/message_box/mod.rs:771
+  0.54% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:66537
+  0.54% random_padding @ grammers-crypto/src/lib.rs:189
+  0.40% instant @ grammers-mtproto/src/coarse_clock.rs:169
+  0.40% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:232
+  0.40% {closure#0} @ grammers-mtproto/src/mtp/replay.rs:59
+  0.40% take @ grammers-crypto/src/lib.rs:163
+  0.40% sort_updates_by_key i32 @ grammers-session/src/message_box/mod.rs:90
+  0.40% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:749
+  0.40% extend_update_queue @ grammers-mtsender/src/updates_receiver.rs:767
+  0.40% process_updates_inner @ grammers-session/src/message_box/mod.rs:760
+  0.40% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:66503
+  0.40% read_exact @ grammers-tl-types/src/deserialize.rs:165
+  0.40% contains @ grammers-mtproto/src/mtp/replay.rs:58
+  0.40% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:586
+  0.40% home_dc_id @ grammers-session/src/storages/erased.rs:41
+  0.40% from_raw_short_updates @ grammers-client/src/message/message.rs:137
+  0.40% try_route @ grammers-mtsender/src/sender_pool.rs:624
+  0.40% process_updates_inner @ grammers-session/src/message_box/mod.rs:940
+  0.40% process_bounded @ grammers-mtproto/src/mtp/encrypted.rs:667
+  0.40% read_bytes @ grammers-tl-types/src/deserialize.rs:142
+  0.40% adapt @ grammers-session/src/message_box/adaptor.rs:254
+  0.40% {async_fn#0} @ grammers-mtsender/src/updates_receiver.rs:756
+  0.40% read_byte @ grammers-tl-types/src/deserialize.rs:493
+  0.40% do_encrypt_data_v2 @ grammers-crypto/src/sha.rs:30
+  0.40% complete @ grammers-mtsender/src/sender.rs:330
+  0.40% {async_fn#0} @ grammers-mtsender/src/sender_pool.rs:666
+  0.27% data @ grammers-session/src/storages/memory.rs:112
+  0.27% instant @ grammers-mtproto/src/coarse_clock.rs:165
+  0.27% {closure#3} @ grammers-session/src/message_box/mod.rs:863
+  0.27% deserialize @ grammers-tl-types-fc15eeb6dd977e33/out/generated_types.rs:4598
+  0.27% force_update_entry @ grammers-session/src/message_box/mod.rs:333
+  0.27% {async_fn#0} @ grammers-client/src/client/updates.rs:35
+  0.27% from @ grammers-session/src/peer.rs:866
+BOT rate=193767 updates_per_s=242209 user_us=4.28 sys_us=1.40 cpu_us=5.69 core_share=1.102 voluntary_switches_per_rpc=0.000 involuntary_switches_per_rpc=0.000 allocs_per_rpc=268.38 bytes_per_rpc=34582 p50_us=319.5 p95_us=409.6 p99_us=495.6 rss_steady_kib=228792 rss_peak_kib=263748 live_heap_b=144071648 errors=0 dropped=0 completed=581360 updates_lost=0 update_errors=0
+ALLOC SITES by bytes (1265367 sampled-equivalent allocations over 26776 RPCs)
+ 30.71% bytes      6665 B/rpc   4.14 allocs/rpc
+    new<grammers_tl_types::generated::types::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    into<grammers_tl_types::generated::types::Message, grammers_tl_types::generated::enums::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/convert/mod.rs:781:9
+    <grammers_session::message_box::defs::MessageBoxes>::process_updates_at @ -session/src/message_box/mod.rs:670:14
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1101:37
+ 14.95% bytes      3244 B/rpc   2.02 allocs/rpc
+    new<grammers_tl_types::generated::types::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    deserialize_vector<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:397:17
+    deserialize<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+    process_update<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:1042:15
+    process_mtp_buffer<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:1006:57
+  7.31% bytes      1587 B/rpc   4.99 allocs/rpc
+    with_capacity_in<grammers_tl_types::generated::enums::Update, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:177:20
+    with_capacity_in<grammers_tl_types::generated::enums::Update, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:969:20
+    with_capacity<grammers_tl_types::generated::enums::Update> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:522:9
+    deserialize_vector<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:402:22
+    deserialize<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+  7.25% bytes      1574 B/rpc   0.24 allocs/rpc
+    grow_one<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:188:29
+    push_mut<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:1033:22
+    push<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:996:22
+    process_own_update<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::plain::Plain> @ -mtsender/src/sender.rs:1031:25
+    process_mtp_buffer<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:1010:30
+    on_net_read<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:759:26
+  7.12% bytes      1546 B/rpc   0.96 allocs/rpc
+    new<grammers_tl_types::generated::types::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    into<grammers_tl_types::generated::types::Message, grammers_tl_types::generated::enums::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/convert/mod.rs:781:9
+    {async_fn#0}<grammers_session::peer::PeerRef, &str> @ -client/src/client/messages.rs:804:17
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1139:84
+  5.88% bytes      1275 B/rpc   1.41 allocs/rpc
+    collect<grammers_client::client::chats::PeersIter<core::iter::adapters::chain::Chain<core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::User, alloc::alloc::Global>, grammers_client::client::chats::{impl#3}::peer_map_from_raw::{closure_env#0}>, core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::Cha ...
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1101:37
+  5.75% bytes      1247 B/rpc   3.65 allocs/rpc
+    <grammers_session::message_box::defs::MessageBoxes>::process_updates_at @ -session/src/message_box/mod.rs:670:14
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1101:37
+  4.59% bytes       997 B/rpc   0.73 allocs/rpc
+    collect<grammers_client::client::chats::PeersIter<core::iter::adapters::chain::Chain<core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::User, alloc::alloc::Global>, grammers_client::client::chats::{impl#3}::peer_map_from_raw::{closure_env#0}>, core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<grammers_tl_types::generated::enums::Cha ...
+    {async_fn#0}<grammers_session::peer::PeerRef, &str> @ -client/src/client/messages.rs:806:88
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1139:84
+  4.59% bytes       996 B/rpc   1.54 allocs/rpc
+    with_capacity_in<grammers_tl_types::generated::enums::User, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:177:20
+    with_capacity_in<grammers_tl_types::generated::enums::User, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:969:20
+    with_capacity<grammers_tl_types::generated::enums::User> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:522:9
+    deserialize_vector<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:402:22
+    deserialize<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+  2.69% bytes       583 B/rpc   0.36 allocs/rpc
+    new<grammers_tl_types::generated::types::Message> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    deserialize_vector<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:405:21
+    deserialize<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+    {closure#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -mtsender/src/sender_pool.rs:471:30
+    and_then<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError, grammers_tl_types::generated::enums::Updates, grammers_mtsender::sender_pool::{impl#9}::invoke_in_dc::{async_fn#0}::{closure_env#0}<grammers_tl_types::generated::functions::messages::SendMessage>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/result.rs:1492:22
+  1.55% bytes       337 B/rpc   3.48 allocs/rpc
+    on_net_read<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:757:26
+    {closure#4}<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:552:60
+    and_then<usize, grammers_mtsender::errors::ReadError, alloc::vec::Vec<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global>, grammers_mtsender::sender::{impl#2}::step::{async_fn#0}::{closure_env#4}<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/result.rs:1492:22
+    {async_fn#0}<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:552:42
+    poll<grammers_mtsender::sender_pool::run_sender::{async_block#0}::__tokio_select_util::Out<core::result::Result<alloc::vec::Vec<grammers_session::message_box::defs::UpdatesLike, alloc::alloc::Global>, grammers_mtsender::errors::ReadError>, core::option::Option<grammers_mtsender::sender_pool::Rpc>>, grammers_mtsender::sender_pool::run_sender::{async_block#0}::{closure_env#0}> @ /rustc/58cf8f9c3 ...
+    {closure#0}<grammers_mtsender::sender_pool::run_sender::{async_block_env#0}, alloc::sync::Arc<tokio::runtime::scheduler::current_thread::Handle, alloc::alloc::Global>> @ /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.54.0/src/runtime/task/core.rs:380:24
+  1.43% bytes       310 B/rpc   0.47 allocs/rpc
+    with_capacity_in<grammers_tl_types::generated::enums::Chat, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:177:20
+    with_capacity_in<grammers_tl_types::generated::enums::Chat, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:969:20
+    with_capacity<grammers_tl_types::generated::enums::Chat> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:522:9
+    deserialize_vector<grammers_tl_types::generated::enums::Chat> @ -tl-types/src/deserialize.rs:402:22
+    deserialize<grammers_tl_types::generated::enums::Chat> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+  1.38% bytes       299 B/rpc   1.17 allocs/rpc
+    {async_fn#0}<grammers_tl_types::generated::functions::users::GetUsers> @ -mtsender/src/sender_pool.rs:467:24
+    {async_fn#0}<grammers_tl_types::generated::functions::users::GetUsers> @ -client/src/client/net.rs:120:52
+    {async_fn#0}<grammers_tl_types::generated::functions::users::GetUsers> @ -client/src/client/net.rs:97:43
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1139:84
+  1.04% bytes       225 B/rpc   0.35 allocs/rpc
+    with_capacity_in<grammers_tl_types::generated::enums::User, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/raw_vec/mod.rs:177:20
+    with_capacity_in<grammers_tl_types::generated::enums::User, alloc::alloc::Global> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:969:20
+    with_capacity<grammers_tl_types::generated::enums::User> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/vec/mod.rs:522:9
+    deserialize_vector<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:402:22
+    deserialize<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<alloc::vec::Vec<grammers_tl_types::generated::enums::User, alloc::alloc::Global>> @ -tl-types/src/deserialize.rs:218:9
+  0.83% bytes       180 B/rpc   2.81 allocs/rpc
+    new<alloc::sync::ArcInner<grammers_client::peer::peer_map::Peers>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    new<grammers_client::peer::peer_map::Peers> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/sync.rs:440:25
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1101:37
+  0.77% bytes       167 B/rpc   1.31 allocs/rpc
+    new<alloc::sync::ArcInner<tokio::sync::oneshot::Inner<core::result::Result<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError>>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    new<tokio::sync::oneshot::Inner<core::result::Result<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/sync.rs:440:25
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -mtsender/src/sender_pool.rs:470:14
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -client/src/client/net.rs:120:52
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -client/src/client/net.rs:97:43
+    {async_fn#0}<grammers_session::peer::PeerRef, &str> @ -client/src/client/messages.rs:796:48
+  0.34% bytes        74 B/rpc   0.58 allocs/rpc
+    new<alloc::sync::ArcInner<tokio::sync::oneshot::Inner<core::result::Result<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError>>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    new<tokio::sync::oneshot::Inner<core::result::Result<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError>>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/sync.rs:440:25
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -mtsender/src/sender_pool.rs:470:14
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -client/src/client/net.rs:120:52
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -client/src/client/net.rs:97:43
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1139:84
+  0.28% bytes        61 B/rpc   0.95 allocs/rpc
+    new<alloc::sync::ArcInner<grammers_client::peer::peer_map::Peers>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    new<grammers_client::peer::peer_map::Peers> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/sync.rs:440:25
+    {async_fn#0}<grammers_session::peer::PeerRef, &str> @ -client/src/client/messages.rs:806:88
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1139:84
+  0.28% bytes        61 B/rpc   0.24 allocs/rpc
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -mtsender/src/sender_pool.rs:467:24
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -client/src/client/net.rs:120:52
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -client/src/client/net.rs:97:43
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1139:84
+  0.21% bytes        46 B/rpc   1.90 allocs/rpc
+    new<core::mem::maybe_uninit::MaybeUninit<bytes::bytes::Shared>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/alloc/src/boxed.rs:290:19
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -mtsender/src/sender_pool.rs:470:14
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -client/src/client/net.rs:120:52
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SetTyping> @ -client/src/client/net.rs:97:43
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1139:84
+  0.20% bytes        44 B/rpc   4.17 allocs/rpc
+    deserialize_vector<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:397:17
+    deserialize<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+    process_update<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:1042:15
+    process_mtp_buffer<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:1006:57
+    on_net_read<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:759:26
+  0.17% bytes        37 B/rpc   3.62 allocs/rpc
+    deserialize_vector<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:397:17
+    deserialize<grammers_tl_types::generated::enums::User> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+    deserialize_own_update<grammers_mtsender::sender::{impl#2}::process_own_update::{closure_env#0}<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::plain::Plain>> @ -mtsender/src/sender.rs:157:14
+    process_own_update<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::plain::Plain> @ -mtsender/src/sender.rs:1024:15
+    process_mtp_buffer<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:1010:30
+  0.15% bytes        32 B/rpc   0.81 allocs/rpc
+    {async_block#0}<grammers_session::storages::memory::MemorySession> @ -client/tests/bot_workload.rs:1139:84
+  0.15% bytes        32 B/rpc   0.72 allocs/rpc
+    deserialize_vector<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:405:21
+    deserialize<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+    {closure#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -mtsender/src/sender_pool.rs:471:30
+    and_then<alloc::vec::Vec<u8, alloc::alloc::Global>, grammers_mtsender::errors::InvocationError, grammers_tl_types::generated::enums::Updates, grammers_mtsender::sender_pool::{impl#9}::invoke_in_dc::{async_fn#0}::{closure_env#0}<grammers_tl_types::generated::functions::messages::SendMessage>> @ /rustc/58cf8f9c35b355199727627d07ae34a4e2846d67/library/core/src/result.rs:1492:22
+    {async_fn#0}<grammers_tl_types::generated::functions::messages::SendMessage> @ -mtsender/src/sender_pool.rs:471:14
+  0.09% bytes        20 B/rpc   0.46 allocs/rpc
+    deserialize_vector<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:397:17
+    deserialize<grammers_tl_types::generated::enums::Update> @ -tl-types/src/deserialize.rs:432:9
+    from_bytes<grammers_tl_types::generated::enums::Updates> @ -tl-types/src/deserialize.rs:218:9
+    process_update<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:1042:15
+    process_mtp_buffer<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:1006:57
+    on_net_read<grammers_mtproto::transport::abridged::Abridged, grammers_mtproto::mtp::encrypted::Encrypted> @ -mtsender/src/sender.rs:759:26
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 5.37s

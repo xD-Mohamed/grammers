@@ -1,0 +1,626 @@
+diff --git a/grammers-client/src/message/input_message.rs b/grammers-client/src/message/input_message.rs
+index 303253e..b171835 100644
+--- a/grammers-client/src/message/input_message.rs
++++ b/grammers-client/src/message/input_message.rs
+@@ -442,9 +442,14 @@ impl From<super::Message> for InputMessage {
+     fn from(message: super::Message) -> Self {
+         let (text, entities, media) = match message.raw {
+             tl::enums::Message::Empty(_) => (None, None, None),
+-            tl::enums::Message::Message(message) => {
+-                (Some(message.message), message.entities, message.media)
+-            }
++            tl::enums::Message::Message(message) => match std::sync::Arc::try_unwrap(message) {
++                Ok(message) => (Some(message.message), message.entities, message.media),
++                Err(message) => (
++                    Some(message.message.clone()),
++                    message.entities.clone(),
++                    message.media.clone(),
++                ),
++            },
+             tl::enums::Message::Service(_) => (None, None, None),
+         };
+ 
+diff --git a/grammers-client/src/update/update.rs b/grammers-client/src/update/update.rs
+index adc68af..eb6af86 100644
+--- a/grammers-client/src/update/update.rs
++++ b/grammers-client/src/update/update.rs
+@@ -347,7 +347,7 @@ mod tests {
+     /// Change the text of a wrapped message as a caller can: through its public field.
+     fn set_text(message: &mut crate::message::Message, text: &str) {
+         match &mut message.raw {
+-            tl::enums::Message::Message(raw) => raw.message = text.into(),
++            tl::enums::Message::Message(raw) => Arc::make_mut(raw).message = text.into(),
+             other => panic!("{other:?} has no text"),
+         }
+     }
+diff --git a/grammers-tl-gen/src/enums.rs b/grammers-tl-gen/src/enums.rs
+index f5c15a0..d88d1fb 100644
+--- a/grammers-tl-gen/src/enums.rs
++++ b/grammers-tl-gen/src/enums.rs
+@@ -75,11 +75,12 @@ fn write_enum<W: Write>(
+             write!(file, "(")?;
+         }
+ 
+-        if metadata.is_boxed_def(d) {
+-            write!(file, "Box<")?;
++        let storage = metadata.def_storage(d);
++        if let Some(storage) = storage {
++            write!(file, "{}<", storage.rust_type())?;
+         }
+         write!(file, "{}", rustifier::definitions::qual_name(d))?;
+-        if metadata.is_boxed_def(d) {
++        if storage.is_some() {
+             write!(file, ">")?;
+         }
+ 
+@@ -291,15 +292,16 @@ fn write_deserializable<W: Write>(
+             write!(file, "(")?;
+         }
+ 
+-        if metadata.is_boxed_def(d) {
+-            write!(file, "Box::new(")?;
++        let storage = metadata.def_storage(d);
++        if let Some(storage) = storage {
++            write!(file, "{}::new(", storage.rust_type())?;
+         }
+         write!(
+             file,
+             "{}::deserialize(buf)?",
+             rustifier::definitions::qual_name(d)
+         )?;
+-        if metadata.is_boxed_def(d) {
++        if storage.is_some() {
+             write!(file, ")")?;
+         }
+         writeln!(file, "),")?;
+@@ -352,8 +354,8 @@ fn write_impl_from<W: Write>(
+ 
+         if def.params.is_empty() {
+             writeln!(file)?;
+-        } else if metadata.is_boxed_def(def) {
+-            writeln!(file, "(Box::new(x))")?;
++        } else if let Some(storage) = metadata.def_storage(def) {
++            writeln!(file, "({}::new(x))", storage.rust_type())?;
+         } else {
+             writeln!(file, "(x)")?;
+         }
+diff --git a/grammers-tl-gen/src/metadata.rs b/grammers-tl-gen/src/metadata.rs
+index 3295e30..65fbf67 100644
+--- a/grammers-tl-gen/src/metadata.rs
++++ b/grammers-tl-gen/src/metadata.rs
+@@ -57,12 +57,34 @@ const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 2] = [
+     ("messageReplyHeader", "reply_media"),
+ ];
+ 
++/// How an enum variant holds a definition that is not held inline.
++#[derive(Clone, Copy)]
++pub(crate) enum DefStorage {
++    /// In a `Box`, owned by that one value.
++    Box,
++    /// In an `Arc`, shared by the clones of that value. For `message` and
++    /// `messageService`: a reply handed to its caller and the update delivered from
++    /// it then hold one message, where a copy would cost what decoding it again does.
++    Arc,
++}
++
++impl DefStorage {
++    /// The path of the pointer type, as written in generated code.
++    pub fn rust_type(self) -> &'static str {
++        match self {
++            Self::Box => "Box",
++            Self::Arc => "std::sync::Arc",
++        }
++    }
++}
++
+ /// Additional metadata required by several parts of the generation.
+ pub(crate) struct Metadata<'a> {
+     boxed_defs: HashSet<u32>,
+     boxed_fields: HashSet<(u32, &'a str)>,
+     defs_with_type: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Definition>>,
+     unused_flags: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Parameter>>,
++    updates_constructor: Option<u32>,
+ }
+ 
+ impl<'a> Metadata<'a> {
+@@ -72,6 +94,7 @@ impl<'a> Metadata<'a> {
+             boxed_fields: HashSet::new(),
+             defs_with_type: HashMap::new(),
+             unused_flags: HashMap::new(),
++            updates_constructor: None,
+         };
+ 
+         definitions.iter().for_each(|d| {
+@@ -107,6 +130,16 @@ impl<'a> Metadata<'a> {
+                 .push(d);
+         });
+ 
++        metadata.updates_constructor = type_definitions
++            .iter()
++            .find(|d| {
++                d.namespace.is_empty()
++                    && d.name == "updates"
++                    && d.ty.namespace.is_empty()
++                    && d.ty.name == "Updates"
++            })
++            .map(|d| d.id);
++
+         type_definitions.iter().for_each(|d| {
+             if def_self_references(d, d, &metadata.defs_with_type, &mut HashSet::new()) {
+                 metadata.boxed_defs.insert(d.id);
+@@ -146,7 +179,19 @@ impl<'a> Metadata<'a> {
+             .unwrap_or(false)
+     }
+ 
+-    /// Returns `true` if the enum variant of this `Definition` holds it in a `Box`:
++    /// How the enum variant of this `Definition` holds it, or `None` when that is
++    /// inline: see [`Self::is_boxed_def`]. Matched by full name, as [`BOXED_FOR_SIZE`] is.
++    pub fn def_storage(&self, def: &Definition) -> Option<DefStorage> {
++        if !self.is_boxed_def(def) {
++            return None;
++        }
++        Some(match def.full_name().as_str() {
++            "message" | "messageService" => DefStorage::Arc,
++            _ => DefStorage::Box,
++        })
++    }
++
++    /// Returns `true` if the enum variant of this `Definition` holds it on the heap:
+     /// any of its parameters eventually contains the same type as the `Definition`
+     /// itself (meaning it recurses), or it is one of [`BOXED_FOR_SIZE`].
+     pub fn is_boxed_def(&self, def: &Definition) -> bool {
+@@ -159,6 +204,14 @@ impl<'a> Metadata<'a> {
+         self.boxed_fields.contains(&(def.id, param.name.as_str()))
+     }
+ 
++    /// Whether the enum variant of the `updates` constructor of type `Updates` holds it
++    /// in a `Box`, or `None` if the schema has no such constructor. It is the value
++    /// `RemoteCall::return_from_updates` takes.
++    pub fn updates_constructor_is_boxed(&self) -> Option<bool> {
++        self.updates_constructor
++            .map(|id| self.boxed_defs.contains(&id))
++    }
++
+     pub fn defs_with_type(&self, ty: &'a Type) -> &Vec<&Definition> {
+         &self.defs_with_type[&(&ty.namespace, &ty.name)]
+     }
+diff --git a/grammers-tl-gen/src/structs.rs b/grammers-tl-gen/src/structs.rs
+index e41a55f..c936aa1 100644
+--- a/grammers-tl-gen/src/structs.rs
++++ b/grammers-tl-gen/src/structs.rs
+@@ -13,7 +13,7 @@ use std::io::{self, Write};
+ use grammers_tl_parser::tl::{Category, Definition, ParameterType};
+ 
+ use crate::grouper;
+-use crate::metadata::Metadata;
++use crate::metadata::{DefStorage, Metadata};
+ use crate::rustifier;
+ use crate::{Config, ignore_type};
+ 
+@@ -389,11 +389,25 @@ fn write_deserializable<W: Write>(
+ ///     type Return = Name;
+ /// }
+ /// ```
++///
++/// When the schema has the `updates` constructor of an `Updates` type, a call returning
++/// that type also takes a reply that was already decoded as one, and a call wrapping
++/// another passes it on:
++///
++/// ```ignore
++/// impl crate::RemoteCall for Name {
++///     type Return = crate::enums::Updates;
++///     fn returns_updates() -> bool { true }
++///     fn return_from_updates(updates: Box<crate::types::Updates>) -> ... {
++///         Ok(crate::enums::Updates::Updates(*updates))
++///     }
++/// }
++/// ```
+ fn write_rpc<W: Write>(
+     file: &mut W,
+     indent: &str,
+     def: &Definition,
+-    _metadata: &Metadata,
++    metadata: &Metadata,
+ ) -> io::Result<()> {
+     writeln!(
+         file,
+@@ -410,6 +424,44 @@ fn write_rpc<W: Write>(
+         rustifier::types::qual_name(&def.ty),
+         if def.ty.generic_ref { "::Return" } else { "" },
+     )?;
++    if let Some(boxed) = metadata.updates_constructor_is_boxed() {
++        let returns_updates = !def.ty.generic_ref
++            && def.ty.generic_arg.is_none()
++            && def.ty.namespace.is_empty()
++            && def.ty.name == "Updates";
++        let body = if def.ty.generic_ref {
++            Some(format!(
++                "{}::return_from_updates(updates)",
++                rustifier::types::qual_name(&def.ty)
++            ))
++        } else if returns_updates {
++            let value = if boxed { "updates" } else { "*updates" };
++            Some(format!("Ok(crate::enums::Updates::Updates({value}))"))
++        } else {
++            None
++        };
++        if let Some(body) = body {
++            let accepts = if def.ty.generic_ref {
++                format!(
++                    "{}::returns_updates()",
++                    rustifier::types::qual_name(&def.ty)
++                )
++            } else {
++                "true".to_owned()
++            };
++            writeln!(
++                file,
++                "{indent}    fn returns_updates() -> bool {{ {accepts} }}"
++            )?;
++            writeln!(
++                file,
++                "{indent}    fn return_from_updates(updates: Box<crate::types::Updates>) \
++                 -> ::core::result::Result<Self::Return, Box<crate::types::Updates>> {{"
++            )?;
++            writeln!(file, "{indent}        {body}")?;
++            writeln!(file, "{indent}    }}")?;
++        }
++    }
+     writeln!(file, "{indent}}}")?;
+     Ok(())
+ }
+@@ -454,21 +506,23 @@ fn write_impl_from<W: Write>(
+         error = if infallible { "" } else { ", Self::Error>" },
+     )?;
+     writeln!(file, "{indent}        match x {{")?;
++    let value = if def.params.is_empty() {
++        format!("{type_name} {{}}")
++    } else {
++        match metadata.def_storage(def) {
++            Some(DefStorage::Box) => "*x".to_owned(),
++            Some(DefStorage::Arc) => "std::sync::Arc::unwrap_or_clone(x)".to_owned(),
++            None => "x".to_owned(),
++        }
++    };
+     writeln!(
+         file,
+-        "{}            {cls}::{name}{data} => {ok}{deref}{value}{body}{paren},",
++        "{}            {cls}::{name}{data} => {ok}{value}{paren},",
+         indent,
+         cls = rustifier::types::qual_name(&def.ty),
+         name = rustifier::definitions::variant_name(def),
+         data = if def.params.is_empty() { "" } else { "(x)" },
+         ok = if infallible { "" } else { "Ok(" },
+-        deref = if metadata.is_boxed_def(def) { "*" } else { "" },
+-        value = if def.params.is_empty() {
+-            type_name.as_ref()
+-        } else {
+-            "x"
+-        },
+-        body = if def.params.is_empty() { " {}" } else { "" },
+         paren = if infallible { "" } else { ")" },
+     )?;
+     if !infallible {
+diff --git a/grammers-tl-gen/tests/lib.rs b/grammers-tl-gen/tests/lib.rs
+index 90b863e..09b1c52 100644
+--- a/grammers-tl-gen/tests/lib.rs
++++ b/grammers-tl-gen/tests/lib.rs
+@@ -312,3 +312,108 @@ fn input_rich_message_leaves_are_boxed_with_owned_conversions() -> io::Result<()
+     assert!(enums.contains("Message(crate::types::sample::InputRichMessage),"));
+     Ok(())
+ }
++
++fn compact_rust(source: &str) -> String {
++    source.chars().filter(|c| !c.is_whitespace()).collect()
++}
++
++fn remote_call_impl<'a>(functions: &'a str, declaration: &str) -> &'a str {
++    let start = functions.find(declaration).unwrap();
++    let implementation = &functions[start..];
++    let end = implementation.find("\n}\n").unwrap();
++    &implementation[..end + 2]
++}
++
++#[test]
++fn message_payloads_are_shared_but_other_storage_is_preserved() -> io::Result<()> {
++    let definitions = get_definitions(
++        "
++        message#7600b9d3 text:string = Message;
++        messageService#7a800e0a text:string = Message;
++        messageEmpty#90a6ca84 id:int = Message;
++        ephemeralMessage#dd27bee9 text:string = EphemeralMessage;
++        sample.message#70000001 text:string = sample.Message;
++    ",
++    );
++    let (_, types, _, enums) = gen_rust_code(&definitions)?;
++    let types = compact_rust(&types);
++    let enums = compact_rust(&enums);
++    for (variant, payload) in [("Message", "Message"), ("Service", "MessageService")] {
++        let payload = format!("crate::types::{payload}");
++        assert!(enums.contains(&format!("{variant}(std::sync::Arc<{payload}>),")));
++        assert!(enums.contains(&format!(
++            "Self::{variant}(std::sync::Arc::new({payload}::deserialize(buf)?)),"
++        )));
++        assert!(enums.contains(&format!("Message::{variant}(std::sync::Arc::new(x))")));
++        assert!(types.contains(&format!(
++            "crate::enums::Message::{variant}(x)=>Ok(std::sync::Arc::unwrap_or_clone(x)),"
++        )));
++    }
++    // Only those two: the other variant, the other boxed definition and the same name
++    // in a namespace are held as before.
++    assert!(enums.contains("Empty(crate::types::MessageEmpty),"));
++    assert!(enums.contains("Message(Box<crate::types::EphemeralMessage>),"));
++    assert!(enums.contains("Message(crate::types::sample::Message),"));
++    Ok(())
++}
++
++#[test]
++fn updates_return_hooks_follow_root_types_and_generics() -> io::Result<()> {
++    let definitions = get_definitions(
++        "
++        updates#74ae4240 value:int = Updates;
++        other#70000001 value:int = Other;
++        sample.updates#70000002 value:int = sample.Updates;
++        ---functions---
++        fetchUpdates#70000003 = Updates;
++        fetchOther#70000004 = Other;
++        fetchNamespaced#70000005 = sample.Updates;
++        invokeWithLayer#da9b0d0d {X:Type} layer:int query:!X = X;
++    ",
++    );
++    let (_, _, functions, _) = gen_rust_code(&definitions)?;
++    let direct = compact_rust(remote_call_impl(
++        &functions,
++        "impl crate::RemoteCall for FetchUpdates",
++    ));
++    assert!(direct.contains("fnreturns_updates()->bool{true}"));
++    assert!(direct.contains("Ok(crate::enums::Updates::Updates(*updates))"));
++    for name in ["FetchOther", "FetchNamespaced"] {
++        let implementation =
++            remote_call_impl(&functions, &format!("impl crate::RemoteCall for {name}"));
++        assert!(!implementation.contains("returns_updates"));
++        assert!(!implementation.contains("return_from_updates"));
++    }
++    let generic = compact_rust(remote_call_impl(
++        &functions,
++        "impl<X: crate::RemoteCall> crate::RemoteCall for InvokeWithLayer<X>",
++    ));
++    assert!(generic.contains("fnreturns_updates()->bool{X::returns_updates()}"));
++    assert!(generic.contains("X::return_from_updates(updates)"));
++    Ok(())
++}
++
++#[test]
++fn no_decoded_hooks_without_a_full_updates_constructor() -> io::Result<()> {
++    for schema in [
++        "
++        other#70000001 value:int = Other;
++        ---functions---
++        fetchOther#70000002 = Other;
++        invokeWithLayer#da9b0d0d {X:Type} layer:int query:!X = X;
++    ",
++        "
++        updatesTooLong#e317af7e = Updates;
++        ---functions---
++        fetchUpdates#70000003 = Updates;
++        invokeWithLayer#da9b0d0d {X:Type} layer:int query:!X = X;
++    ",
++    ] {
++        let definitions = get_definitions(schema);
++        let (_, _, functions, _) = gen_rust_code(&definitions)?;
++        assert!(!functions.contains("returns_updates"));
++        assert!(!functions.contains("return_from_updates"));
++        assert!(!functions.contains("crate::types::Updates"));
++    }
++    Ok(())
++}
+diff --git a/grammers-tl-types/Cargo.toml b/grammers-tl-types/Cargo.toml
+index cbc64f2..8251ec7 100644
+--- a/grammers-tl-types/Cargo.toml
++++ b/grammers-tl-types/Cargo.toml
+@@ -15,7 +15,7 @@ edition = "2024"
+ include = ["build.rs", "src/*.rs", "tl/*.tl"]
+ 
+ [dependencies]
+-serde = { version = "~1.0", optional = true }
++serde = { version = "~1.0", optional = true, features = ["rc"] }
+ serde_derive = { version = "~1.0", optional = true }
+ serde_bytes = { version = "0.11.19", optional = true }
+ 
+diff --git a/grammers-tl-types/src/depth_tests.rs b/grammers-tl-types/src/depth_tests.rs
+index e75ea17..b77041c 100644
+--- a/grammers-tl-types/src/depth_tests.rs
++++ b/grammers-tl-types/src/depth_tests.rs
+@@ -673,3 +673,157 @@ fn boxed_input_rich_messages_keep_their_wire_format() {
+     assert!(size_of::<enums::InputRichMessage>() <= 16);
+     assert!(size_of::<crate::functions::messages::SendMessage>() <= 512);
+ }
++
++// A minimal `message` or `messageService`, ending in the string a test changes.
++fn shared_message_bytes(service: bool) -> Vec<u8> {
++    let mut bytes = Vec::new();
++    if service {
++        id::<types::MessageService>(&mut bytes);
++    } else {
++        id::<types::Message>(&mut bytes);
++    }
++    0u32.serialize(&mut bytes);
++    if !service {
++        0u32.serialize(&mut bytes);
++    }
++    41i32.serialize(&mut bytes);
++    id::<types::PeerUser>(&mut bytes);
++    7i64.serialize(&mut bytes);
++    123i32.serialize(&mut bytes);
++    if service {
++        id::<types::MessageActionChatEditTitle>(&mut bytes);
++    }
++    b"owned text".as_slice().serialize(&mut bytes);
++    bytes
++}
++
++// Sharing changes who owns a message, never its bytes. A clone is the same message
++// until one of the two is changed, and a message taken out of its enum is moved when
++// nothing else holds it and copied when something does.
++#[test]
++fn shared_messages_preserve_wire_ownership_and_snapshots() {
++    use std::sync::Arc;
++    let bytes = shared_message_bytes(false);
++    round_trip::<enums::Message>(&bytes);
++    let original = enums::Message::from_bytes(&bytes).unwrap();
++    let snapshot = original.clone();
++    let (enums::Message::Message(original), enums::Message::Message(mut snapshot)) =
++        (original, snapshot)
++    else {
++        panic!("expected ordinary messages");
++    };
++    assert!(Arc::ptr_eq(&original, &snapshot));
++    Arc::make_mut(&mut snapshot).message.push_str(" changed");
++    assert!(!Arc::ptr_eq(&original, &snapshot));
++    assert_eq!(original.message, "owned text");
++    assert_eq!(snapshot.message, "owned text changed");
++    assert_eq!(enums::Message::Message(original).to_bytes(), bytes);
++
++    for shared in [false, true] {
++        let value = enums::Message::from_bytes(&bytes).unwrap();
++        let retained = shared.then(|| value.clone());
++        let enums::Message::Message(raw) = &value else {
++            panic!("expected message");
++        };
++        let pointer = raw.message.as_ptr();
++        let mut owned = types::Message::try_from(value).unwrap();
++        assert_eq!(owned.message.as_ptr() == pointer, !shared);
++        owned.message.push_str(" changed");
++        if let Some(retained) = retained {
++            assert_eq!(retained.to_bytes(), bytes);
++        }
++    }
++    for end in 0..bytes.len() {
++        assert_error::<enums::Message>(&bytes[..end], Error::UnexpectedEof);
++    }
++}
++
++fn service_text(message: &types::MessageService) -> &str {
++    let enums::MessageAction::ChatEditTitle(action) = &message.action else {
++        panic!("expected title action");
++    };
++    &action.title
++}
++
++fn service_text_mut(message: &mut types::MessageService) -> &mut String {
++    let enums::MessageAction::ChatEditTitle(action) = &mut message.action else {
++        panic!("expected title action");
++    };
++    &mut action.title
++}
++
++#[test]
++fn shared_service_messages_preserve_wire_ownership_and_snapshots() {
++    use std::sync::Arc;
++    let bytes = shared_message_bytes(true);
++    round_trip::<enums::Message>(&bytes);
++    let original = enums::Message::from_bytes(&bytes).unwrap();
++    let snapshot = original.clone();
++    let (enums::Message::Service(original), enums::Message::Service(mut snapshot)) =
++        (original, snapshot)
++    else {
++        panic!("expected service messages");
++    };
++    assert!(Arc::ptr_eq(&original, &snapshot));
++    service_text_mut(Arc::make_mut(&mut snapshot)).push_str(" changed");
++    assert!(!Arc::ptr_eq(&original, &snapshot));
++    assert_eq!(service_text(&original), "owned text");
++    assert_eq!(service_text(&snapshot), "owned text changed");
++    assert_eq!(enums::Message::Service(original).to_bytes(), bytes);
++
++    for shared in [false, true] {
++        let value = enums::Message::from_bytes(&bytes).unwrap();
++        let retained = shared.then(|| value.clone());
++        let enums::Message::Service(raw) = &value else {
++            panic!("expected service");
++        };
++        let pointer = service_text(raw).as_ptr();
++        let mut owned = types::MessageService::try_from(value).unwrap();
++        assert_eq!(service_text(&owned).as_ptr() == pointer, !shared);
++        service_text_mut(&mut owned).push_str(" changed");
++        if let Some(retained) = retained {
++            assert_eq!(retained.to_bytes(), bytes);
++        }
++    }
++    for end in 0..bytes.len() {
++        assert_error::<enums::Message>(&bytes[..end], Error::UnexpectedEof);
++    }
++}
++
++// A call returning `Updates`, and a call wrapping one, takes a reply that was already
++// decoded as the value it was given. Any other call gives that same value back.
++#[test]
++fn decoded_return_hooks_forward_ownership() {
++    use crate::RemoteCall;
++    use crate::functions::InvokeWithLayer;
++    use crate::functions::messages::{GetHistory, SendMessage};
++
++    fn updates() -> Box<types::Updates> {
++        Box::new(types::Updates {
++            updates: vec![types::UpdateChannel { channel_id: 7 }.into()],
++            users: Vec::new(),
++            chats: Vec::new(),
++            date: 123,
++            seq: 9,
++        })
++    }
++    fn check<F: RemoteCall<Return = enums::Updates>>() {
++        assert!(F::returns_updates());
++        let full = updates();
++        let pointer = full.updates.as_ptr();
++        let enums::Updates::Updates(full) = F::return_from_updates(full).unwrap() else {
++            panic!("expected full updates");
++        };
++        assert_eq!(full.updates.as_ptr(), pointer);
++        assert_eq!(full.date, 123);
++    }
++    check::<SendMessage>();
++    check::<InvokeWithLayer<InvokeWithLayer<SendMessage>>>();
++
++    type Other = InvokeWithLayer<GetHistory>;
++    assert!(!Other::returns_updates());
++    let original = updates();
++    let pointer = std::ptr::from_ref(&*original);
++    let rejected = Other::return_from_updates(original).unwrap_err();
++    assert_eq!(std::ptr::from_ref(&*rejected), pointer);
++}
+diff --git a/grammers-tl-types/src/lib.rs b/grammers-tl-types/src/lib.rs
+index 3fc868d..c8c71d7 100644
+--- a/grammers-tl-types/src/lib.rs
++++ b/grammers-tl-types/src/lib.rs
+@@ -118,4 +118,30 @@ pub trait RemoteCall: Serializable {
+     /// The type of the "return" value coming from the other end of the
+     /// connection.
+     type Return: Deserializable;
++
++    /// Whether [`RemoteCall::return_from_updates`] takes a reply for this call: its
++    /// [`RemoteCall::Return`] is [`enums::Updates`], or it wraps such a call.
++    ///
++    /// A caller asks its connection for a decoded reply only when this is `true`. It is
++    /// `false` unless overridden, and such a caller is given bytes to decode, as ever.
++    #[cfg(feature = "tl-api")]
++    fn returns_updates() -> bool {
++        false
++    }
++
++    /// Take a reply that was already decoded as [`types::Updates`], the `updates`
++    /// constructor of [`enums::Updates`], as this call's return value when that is its
++    /// type.
++    ///
++    /// A connection that decodes such a reply for the stream of updates can hand its
++    /// caller a copy of the value, in place of the bytes to decode a second time. The
++    /// default gives the value back, for its caller to decode those bytes instead:
++    /// only a call whose [`RemoteCall::Return`] is [`enums::Updates`], or one wrapping
++    /// such a call, takes it.
++    #[cfg(feature = "tl-api")]
++    fn return_from_updates(
++        updates: Box<types::Updates>,
++    ) -> core::result::Result<Self::Return, Box<types::Updates>> {
++        Err(updates)
++    }
+ }

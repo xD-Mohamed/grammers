@@ -1,0 +1,1715 @@
+diff --git a/grammers-client/src/message/input_message.rs b/grammers-client/src/message/input_message.rs
+index 303253e..b171835 100644
+--- a/grammers-client/src/message/input_message.rs
++++ b/grammers-client/src/message/input_message.rs
+@@ -442,9 +442,14 @@ impl From<super::Message> for InputMessage {
+     fn from(message: super::Message) -> Self {
+         let (text, entities, media) = match message.raw {
+             tl::enums::Message::Empty(_) => (None, None, None),
+-            tl::enums::Message::Message(message) => {
+-                (Some(message.message), message.entities, message.media)
+-            }
++            tl::enums::Message::Message(message) => match std::sync::Arc::try_unwrap(message) {
++                Ok(message) => (Some(message.message), message.entities, message.media),
++                Err(message) => (
++                    Some(message.message.clone()),
++                    message.entities.clone(),
++                    message.media.clone(),
++                ),
++            },
+             tl::enums::Message::Service(_) => (None, None, None),
+         };
+ 
+diff --git a/grammers-client/src/update/update.rs b/grammers-client/src/update/update.rs
+index adc68af..eb6af86 100644
+--- a/grammers-client/src/update/update.rs
++++ b/grammers-client/src/update/update.rs
+@@ -347,7 +347,7 @@ mod tests {
+     /// Change the text of a wrapped message as a caller can: through its public field.
+     fn set_text(message: &mut crate::message::Message, text: &str) {
+         match &mut message.raw {
+-            tl::enums::Message::Message(raw) => raw.message = text.into(),
++            tl::enums::Message::Message(raw) => Arc::make_mut(raw).message = text.into(),
+             other => panic!("{other:?} has no text"),
+         }
+     }
+diff --git a/grammers-mtsender/src/sender.rs b/grammers-mtsender/src/sender.rs
+index ce1d9c6..d44b845 100644
+--- a/grammers-mtsender/src/sender.rs
++++ b/grammers-mtsender/src/sender.rs
+@@ -309,6 +309,84 @@ pub struct Sender<T: Transport, M: Mtp> {
+     read_pooled: bool,
+ }
+ 
++/// What the caller of a request is sent when it succeeds.
++pub(crate) enum Reply {
++    /// The reply's bytes, for the caller to decode.
++    Bytes(Vec<u8>),
++    /// The reply as its connection decoded it for the stream of updates: a copy of that
++    /// value, holding the same messages. Only the `updates` constructor: a short reply
++    /// is small to decode and the other constructors are rare.
++    Updates {
++        updates: Box<tl::types::Updates>,
++        /// The bytes it was decoded from, for a caller whose return type it is not.
++        original: Vec<u8>,
++    },
++}
++
++/// Where the outcome of a request goes.
++///
++/// A caller that will decode its reply as a known type asks for [`Reply`]: when the
++/// connection decodes that reply for the stream of updates anyway, the caller is sent a
++/// copy of the value and the reply is decoded once, not twice. Every other caller is
++/// sent the bytes, as before.
++pub(crate) enum ReplySender {
++    Bytes(oneshot::Sender<Result<Vec<u8>, InvocationError>>),
++    Decoded(oneshot::Sender<Result<Reply, InvocationError>>),
++}
++
++impl ReplySender {
++    /// Send the outcome of a request whose reply is given as bytes. `Err` means the
++    /// caller is gone.
++    pub(crate) fn send(self, outcome: Result<Vec<u8>, InvocationError>) -> Result<(), ()> {
++        match self {
++            Self::Bytes(tx) => tx.send(outcome).map_err(drop),
++            Self::Decoded(tx) => tx.send(outcome.map(Reply::Bytes)).map_err(drop),
++        }
++    }
++
++    /// Send a reply this connection already decoded, with the bytes it was decoded
++    /// from. A caller that takes bytes is sent those.
++    pub(crate) fn send_updates(self, updates: Box<tl::types::Updates>, original: Vec<u8>) {
++        match self {
++            Self::Bytes(tx) => {
++                let _ = tx.send(Ok(original));
++            }
++            Self::Decoded(tx) => {
++                let _ = tx.send(Ok(Reply::Updates { updates, original }));
++            }
++        }
++    }
++
++    /// Whether the caller takes a decoded reply.
++    fn takes_decoded(&self) -> bool {
++        matches!(self, Self::Decoded(_))
++    }
++
++    pub(crate) fn is_closed(&self) -> bool {
++        match self {
++            Self::Bytes(tx) => tx.is_closed(),
++            Self::Decoded(tx) => tx.is_closed(),
++        }
++    }
++
++    pub(crate) fn poll_closed(&mut self, cx: &mut std::task::Context<'_>) -> Poll<()> {
++        match self {
++            Self::Bytes(tx) => tx.poll_closed(cx),
++            Self::Decoded(tx) => tx.poll_closed(cx),
++        }
++    }
++}
++
++impl std::fmt::Debug for ReplySender {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        let (name, closed) = match self {
++            Self::Bytes(tx) => ("Bytes", tx.is_closed()),
++            Self::Decoded(tx) => ("Decoded", tx.is_closed()),
++        };
++        f.debug_struct(name).field("closed", &closed).finish()
++    }
++}
++
+ struct Request {
+     protocol_retries: u8,
+     body: Bytes,
+@@ -317,7 +395,7 @@ struct Request {
+     // Release admission before dropping the response sender wakes its receiver.
+     permit: Option<crate::InvocationPermit>,
+     // None is a protocol-owned keepalive, which must survive caller cancellation.
+-    result: Option<oneshot::Sender<Result<Vec<u8>, InvocationError>>>,
++    result: Option<ReplySender>,
+ }
+ 
+ impl Request {
+@@ -330,6 +408,22 @@ impl Request {
+             let _ = tx.send(outcome);
+         }
+     }
++
++    /// As [`Self::complete`], for a reply this connection already decoded.
++    fn complete_decoded(self, updates: Box<tl::types::Updates>, original: Vec<u8>) {
++        let Self { result, permit, .. } = self;
++        drop(permit);
++        if let Some(tx) = result {
++            tx.send_updates(updates, original);
++        }
++    }
++
++    /// Whether a caller is still waiting that takes its reply decoded.
++    fn takes_decoded(&self) -> bool {
++        self.result
++            .as_ref()
++            .is_some_and(|tx| tx.takes_decoded() && !tx.is_closed())
++    }
+ }
+ 
+ #[derive(Clone, Debug)]
+@@ -448,6 +542,16 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         body: Bytes,
+         tx: oneshot::Sender<Result<Vec<u8>, InvocationError>>,
+         permit: Option<crate::InvocationPermit>,
++    ) {
++        self.enqueue_tracked_reply(body, ReplySender::Bytes(tx), permit);
++    }
++
++    /// As [`Self::enqueue_tracked_body`], for either kind of caller.
++    pub(crate) fn enqueue_tracked_reply(
++        &mut self,
++        body: Bytes,
++        tx: ReplySender,
++        permit: Option<crate::InvocationPermit>,
+     ) {
+         if tx.is_closed() {
+             return;
+@@ -458,7 +562,7 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+     fn enqueue_request(
+         &mut self,
+         body: Bytes,
+-        result: Option<oneshot::Sender<Result<Vec<u8>, InvocationError>>>,
++        result: Option<ReplySender>,
+         permit: Option<crate::InvocationPermit>,
+     ) {
+         if !self.mtp.request_is_valid(&body) {
+@@ -995,21 +1099,32 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         // The protocol was asked not to copy a reply that holds updates: it reports one
+         // empty, and the update is the body of the result that follows.
+         let mut own_result = None;
++        // Otherwise the copy is what was decoded. Its caller is handed that value only
++        // with the result for the same message and of the same bytes.
++        let mut copied = None;
+         for result in results.drain(..) {
+             match result {
+                 Deserialization::OwnUpdate { msg_id, update } if update.is_empty() => {
+                     own_result = Some(msg_id);
+                 }
+                 Deserialization::OwnUpdate { msg_id, update } => {
+-                    self.process_own_update(updates, msg_id, &update)
++                    copied = self
++                        .process_own_update(updates, msg_id, &update)
++                        .map(|decoded| (msg_id, update, decoded));
+                 }
+                 Deserialization::Update(update) => self.process_update(updates, update),
+                 Deserialization::RpcResult(result) => {
+                     // Before the request is retired: a short reply is completed from it.
+-                    if own_result.take() == Some(result.msg_id) {
+-                        self.process_own_update(updates, result.msg_id, &result.body);
+-                    }
+-                    self.process_result(result)?
++                    let decoded = if own_result.take() == Some(result.msg_id) {
++                        self.process_own_update(updates, result.msg_id, &result.body)
++                    } else {
++                        copied
++                            .take_if(|(msg_id, copy, _)| {
++                                *msg_id == result.msg_id && *copy == result.body
++                            })
++                            .map(|(_, _, decoded)| decoded)
++                    };
++                    self.process_result(result, decoded)?
+                 }
+                 Deserialization::RpcError(error) => self.process_error(error)?,
+                 Deserialization::BadMessage(bad_msg) => self.process_bad_message(bad_msg)?,
+@@ -1020,20 +1135,45 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         Ok(())
+     }
+ 
+-    fn process_own_update(&mut self, updates: &mut Vec<UpdatesLike>, msg_id: MsgId, update: &[u8]) {
++    /// Give the stream the update in `update`, the reply to the request sent as `msg_id`.
++    ///
++    /// Returns a copy for the caller of that request, to be sent with the result, when
++    /// that caller takes its reply decoded and the reply is the `updates` constructor.
++    /// The copy holds the same messages as the update the stream is given.
++    fn process_own_update(
++        &mut self,
++        updates: &mut Vec<UpdatesLike>,
++        msg_id: MsgId,
++        update: &[u8],
++    ) -> Option<Box<tl::types::Updates>> {
+         match deserialize_own_update(update, || {
+             self.peek_request(msg_id)
+                 .map(|request| request.body.as_ref())
+         }) {
+             Ok(u) => {
++                let decoded = match &u {
++                    UpdatesLike::Updates(tl::enums::Updates::Updates(full))
++                        if self
++                            .peek_request(msg_id)
++                            .is_some_and(Request::takes_decoded) =>
++                    {
++                        Some(Box::new(full.clone()))
++                    }
++                    // The caller decodes the rest from its bytes: a short reply is small,
++                    // the other constructors are rare, and the other variants are
++                    // replies of another type.
++                    _ => None,
++                };
+                 // In the future, we might want to flag "updates produced by the client" somehow.
+                 // This would be the starting place to do it.
+                 updates.push(u);
++                decoded
+             }
+             Err(e) => {
+                 // This shouldn't happen. We just made the request, so they shouldn't be stale.
+                 // If the request failed with a failed-to-deserialize error, callers will handle it.
+-                warn!("telegram responded with updates that failed to be deserialized: {e}")
++                warn!("telegram responded with updates that failed to be deserialized: {e}");
++                None
+             }
+         }
+     }
+@@ -1051,7 +1191,13 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         }
+     }
+ 
+-    fn process_result(&mut self, result: RpcResult) -> Result<(), ReadError> {
++    /// Complete the request `result` answers. `decoded` is that reply as this connection
++    /// decoded it for the stream of updates, for a caller that takes it in that form.
++    fn process_result(
++        &mut self,
++        result: RpcResult,
++        decoded: Option<Box<tl::types::Updates>>,
++    ) -> Result<(), ReadError> {
+         if let Some(request) = self.pop_request(result.msg_id)? {
+             let x = result.body;
+             if x.len() < 4 {
+@@ -1065,7 +1211,10 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+                 request = ?result.msg_id,
+                 "got result",
+             );
+-            request.complete(Ok(x));
++            match decoded {
++                Some(updates) => request.complete_decoded(updates, x),
++                None => request.complete(Ok(x)),
++            }
+         } else {
+             info!(
+                 result = ?result.msg_id,
+@@ -2791,10 +2940,13 @@ pub(crate) mod optimization_tests {
+         };
+         let msg_id = pair.msg_id;
+         sender
+-            .process_result(RpcResult {
+-                msg_id,
+-                body: vec![1; 4],
+-            })
++            .process_result(
++                RpcResult {
++                    msg_id,
++                    body: vec![1; 4],
++                },
++                None,
++            )
+             .unwrap();
+         assert_eq!(tracker.sent_at(), Some(sent));
+         let _next = tracker.try_acquire().expect("released");
+@@ -2830,10 +2982,13 @@ pub(crate) mod optimization_tests {
+                 drop(sender);
+             } else {
+                 sender
+-                    .process_result(RpcResult {
+-                        msg_id,
+-                        body: vec![1; 4],
+-                    })
++                    .process_result(
++                        RpcResult {
++                            msg_id,
++                            body: vec![1; 4],
++                        },
++                        None,
++                    )
+                     .unwrap();
+             }
+             assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
+@@ -2862,10 +3017,13 @@ pub(crate) mod optimization_tests {
+             (reply.is_ok(), observer.stage())
+         });
+         sender
+-            .process_result(RpcResult {
+-                msg_id,
+-                body: vec![1; 4],
+-            })
++            .process_result(
++                RpcResult {
++                    msg_id,
++                    body: vec![1; 4],
++                },
++                None,
++            )
+             .unwrap();
+         let (replied, stage) = waiter.join().unwrap();
+         assert!(replied);
+@@ -3145,10 +3303,13 @@ pub(crate) mod optimization_tests {
+             panic!("unsent ping");
+         };
+         sender
+-            .process_result(RpcResult {
+-                msg_id: pair.msg_id,
+-                body: true.to_bytes(),
+-            })
++            .process_result(
++                RpcResult {
++                    msg_id: pair.msg_id,
++                    body: true.to_bytes(),
++                },
++                None,
++            )
+             .unwrap();
+         assert!(sender.requests.is_empty());
+         sender.on_ping_timeout();
+@@ -3829,4 +3990,325 @@ pub(crate) mod optimization_tests {
+             );
+         }
+     }
++
++    /// A reply holding a whole message, as a send that is not answered in short form is.
++    fn full_message_updates_fixture() -> Vec<u8> {
++        let mut bytes = tl::types::Message::CONSTRUCTOR_ID.to_le_bytes().to_vec();
++        (1u32 << 1).serialize(&mut bytes);
++        0u32.serialize(&mut bytes);
++        73i32.serialize(&mut bytes);
++        tl::types::PeerUser::CONSTRUCTOR_ID.serialize(&mut bytes);
++        7i64.serialize(&mut bytes);
++        1234i32.serialize(&mut bytes);
++        b"decoded once".as_slice().serialize(&mut bytes);
++        let message = tl::enums::Message::from_bytes(&bytes).unwrap();
++        tl::enums::Updates::Updates(tl::types::Updates {
++            updates: vec![
++                tl::types::UpdateMessageId {
++                    id: 73,
++                    random_id: 987654321,
++                }
++                .into(),
++                tl::types::UpdateNewMessage {
++                    message,
++                    pts: 81,
++                    pts_count: 1,
++                }
++                .into(),
++            ],
++            users: Vec::new(),
++            chats: Vec::new(),
++            date: 1234,
++            seq: 19,
++        })
++        .to_bytes()
++    }
++
++    fn full_message_payload(updates: &tl::types::Updates) -> &std::sync::Arc<tl::types::Message> {
++        updates
++            .updates
++            .iter()
++            .find_map(|update| match update {
++                tl::enums::Update::NewMessage(update) => match &update.message {
++                    tl::enums::Message::Message(message) => Some(message),
++                    _ => None,
++                },
++                _ => None,
++            })
++            .expect("full message fixture")
++    }
++
++    /// As `sent`, for a caller that takes its reply decoded.
++    fn sent_decoded<M: Mtp>(
++        sender: &mut Sender<transport::Full, M>,
++        body: Vec<u8>,
++        tx: oneshot::Sender<Result<Reply, InvocationError>>,
++        permit: Option<crate::InvocationPermit>,
++    ) -> MsgId {
++        sender.enqueue_tracked_reply(body.into(), ReplySender::Decoded(tx), permit);
++        sender.try_fill_write();
++        sender.on_net_write(sender.write_buffer.len()).unwrap();
++        match &sender.requests.last().unwrap().state {
++            RequestState::Sent(pair) => pair.msg_id,
++            _ => panic!("unsent"),
++        }
++    }
++
++    /// A full reply is decoded once: its caller is sent that value, holding the very
++    /// message the stream is given, and the bytes it came from without a copy of them.
++    #[tokio::test]
++    async fn decoded_full_reply_shares_messages_with_the_stream() {
++        for copied in [false, true] {
++            let (mut sender, _peer) = pair().await;
++            let (tx, mut rx) = oneshot::channel();
++            let id = sent_decoded(&mut sender, send_message_fixture("decoded once"), tx, None);
++            let bytes = full_message_updates_fixture();
++            let results = own_reply(id, &bytes, copied);
++            let pointer = match &results[1] {
++                Deserialization::RpcResult(result) => result.body.as_ptr(),
++                _ => panic!("result"),
++            };
++            let mut stream = Vec::new();
++            sender.process_mtp_buffer(results, &mut stream).unwrap();
++
++            let Reply::Updates { updates, original } = rx.try_recv().unwrap().unwrap() else {
++                panic!("expected decoded reply");
++            };
++            let [UpdatesLike::Updates(tl::enums::Updates::Updates(streamed))] = stream.as_slice()
++            else {
++                panic!("expected full stream update");
++            };
++            assert_eq!(&*updates, streamed);
++            assert!(std::sync::Arc::ptr_eq(
++                full_message_payload(&updates),
++                full_message_payload(streamed)
++            ));
++            assert_eq!(original, bytes);
++            assert_eq!(original.as_ptr(), pointer);
++            assert!(sender.requests.is_empty());
++        }
++    }
++
++    /// A short reply is completed from its request for the stream and is not the value
++    /// its caller returns: that caller is sent bytes, as before.
++    #[tokio::test]
++    async fn decoded_waiter_keeps_short_replies_on_the_byte_path() {
++        for copied in [false, true] {
++            let (mut sender, _peer) = pair().await;
++            let (tx, mut rx) = oneshot::channel();
++            let id = sent_decoded(&mut sender, send_message_fixture("short text"), tx, None);
++            let bytes = short_sent_fixture();
++            let mut stream = Vec::new();
++            sender
++                .process_mtp_buffer(own_reply(id, &bytes, copied), &mut stream)
++                .unwrap();
++
++            let Reply::Bytes(original) = rx.try_recv().unwrap().unwrap() else {
++                panic!("expected bytes");
++            };
++            assert_eq!(original, bytes);
++            assert!(matches!(
++                stream.as_slice(),
++                [UpdatesLike::ShortSentMessage { request, update }]
++                    if request.message == "short text" && update.id == 73
++            ));
++        }
++    }
++
++    /// A decoded reply goes to the caller of the request it answers and to no other:
++    /// an empty marker names only the result right after it, and a copy only the result
++    /// for its own message.
++    #[tokio::test]
++    async fn decoded_reply_correlation_preserves_marker_lifetime() {
++        for copied in [false, true] {
++            let (mut sender, _peer) = encrypted_pair().await;
++            let (first_tx, mut first_rx) = oneshot::channel();
++            let (second_tx, mut second_rx) = oneshot::channel();
++            let first = sent_decoded(&mut sender, send_message_fixture("first"), first_tx, None);
++            let second = sent_decoded(&mut sender, send_message_fixture("second"), second_tx, None);
++            assert_ne!(first, second);
++            let full = full_message_updates_fixture();
++            let short = short_sent_fixture();
++
++            // The second request's result comes between the first one's own update and
++            // its result.
++            let mut results = own_reply(first, &full, copied);
++            let first_result = results.pop().unwrap();
++            results.push(Deserialization::RpcResult(RpcResult {
++                msg_id: second,
++                body: short.clone(),
++            }));
++            results.push(first_result);
++            let mut stream = Vec::new();
++            sender.process_mtp_buffer(results, &mut stream).unwrap();
++
++            let Reply::Bytes(second_body) = second_rx.try_recv().unwrap().unwrap() else {
++                panic!("the second caller was sent another request's reply");
++            };
++            assert_eq!(second_body, short);
++            match first_rx.try_recv().unwrap().unwrap() {
++                // The copy was decoded, and is kept for the result of its message.
++                Reply::Updates { original, .. } if copied => {
++                    assert_eq!(original, full);
++                    assert_eq!(stream.len(), 1);
++                }
++                // The marker did not outlive the result after it: nothing was decoded.
++                Reply::Bytes(original) if !copied => {
++                    assert_eq!(original, full);
++                    assert!(stream.is_empty());
++                }
++                _ => panic!("marker/copy correlation changed"),
++            }
++            assert!(sender.requests.is_empty());
++        }
++    }
++
++    /// A copy that is not the bytes of the result for its message is not what that
++    /// result's caller is sent.
++    #[tokio::test]
++    async fn a_copy_that_differs_from_its_result_is_not_handed_to_the_caller() {
++        let (mut sender, _peer) = pair().await;
++        let (tx, mut rx) = oneshot::channel();
++        let id = sent_decoded(&mut sender, send_message_fixture("differs"), tx, None);
++        let copy = full_message_updates_fixture();
++        let body = full_updates_fixture();
++        assert_ne!(copy, body);
++        let mut stream = Vec::new();
++        sender
++            .process_mtp_buffer(
++                vec![
++                    Deserialization::OwnUpdate {
++                        msg_id: id,
++                        update: copy,
++                    },
++                    Deserialization::RpcResult(RpcResult {
++                        msg_id: id,
++                        body: body.clone(),
++                    }),
++                ],
++                &mut stream,
++            )
++            .unwrap();
++
++        let Reply::Bytes(original) = rx.try_recv().unwrap().unwrap() else {
++            panic!("the caller was sent a value its bytes do not decode to");
++        };
++        assert_eq!(original, body);
++        assert_eq!(stream.len(), 1);
++    }
++
++    /// The stream is given the update of a caller that left, and nothing is copied for it.
++    #[tokio::test]
++    async fn cancelled_decoded_caller_still_delivers_its_update() {
++        let (mut sender, _peer) = pair().await;
++        let tracker = crate::InvocationTracker::default();
++        let (tx, rx) = oneshot::channel();
++        let id = sent_decoded(
++            &mut sender,
++            send_message_fixture("cancelled"),
++            tx,
++            tracker.try_acquire(),
++        );
++        drop(rx);
++        assert!(!sender.requests[0].takes_decoded());
++        assert_eq!(tracker.stage(), crate::InvocationStage::Sent);
++        let mut stream = Vec::new();
++        sender
++            .process_mtp_buffer(
++                own_reply(id, &full_message_updates_fixture(), false),
++                &mut stream,
++            )
++            .unwrap();
++
++        let [UpdatesLike::Updates(tl::enums::Updates::Updates(full))] = stream.as_slice() else {
++            panic!("expected full stream update");
++        };
++        assert_eq!(std::sync::Arc::strong_count(full_message_payload(full)), 1);
++        assert_eq!(tracker.stage(), crate::InvocationStage::Idle);
++        assert!(sender.requests.is_empty());
++    }
++
++    /// A caller that takes bytes is sent the reply's own bytes, whole and not copied,
++    /// also when its connection decoded them for the stream.
++    #[tokio::test]
++    async fn raw_full_reply_retains_exact_bytes_and_allocation() {
++        for copied in [false, true] {
++            let (mut sender, _peer) = pair().await;
++            let (tx, mut rx) = oneshot::channel();
++            let id = sent(&mut sender, send_message_fixture("raw"), tx);
++            // A trailing word that decoding ignores and encoding again would lose.
++            let mut bytes = full_message_updates_fixture();
++            bytes.extend_from_slice(&0xaabbccddu32.to_le_bytes());
++            let results = own_reply(id, &bytes, copied);
++            let pointer = match &results[1] {
++                Deserialization::RpcResult(result) => result.body.as_ptr(),
++                _ => panic!("result"),
++            };
++            let mut stream = Vec::new();
++            sender.process_mtp_buffer(results, &mut stream).unwrap();
++
++            let original = rx.try_recv().unwrap().unwrap();
++            assert_eq!(original, bytes);
++            assert_eq!(original.as_ptr(), pointer);
++            assert_eq!(stream.len(), 1);
++            assert!(sender.requests.is_empty());
++        }
++    }
++
++    /// The caller of a decoded reply is woken after its reservation and its share of
++    /// the pool's capacity are released, as the caller of any other reply is.
++    #[tokio::test]
++    async fn decoded_reply_releases_admission_before_waking_the_caller() {
++        use std::sync::Arc;
++        use std::sync::atomic::AtomicU8;
++        use std::task::{Context, Wake, Waker};
++
++        struct Observe {
++            tracker: crate::InvocationTracker,
++            capacity: Arc<tokio::sync::Semaphore>,
++            seen: AtomicU8,
++        }
++        impl Wake for Observe {
++            fn wake(self: Arc<Self>) {
++                self.wake_by_ref();
++            }
++            fn wake_by_ref(self: &Arc<Self>) {
++                let mut seen = 1;
++                if self.tracker.stage() == crate::InvocationStage::Idle {
++                    seen |= 2;
++                }
++                if self.capacity.available_permits() == 1 {
++                    seen |= 4;
++                }
++                self.seen.store(seen, Ordering::SeqCst);
++            }
++        }
++
++        let (mut sender, _peer) = pair().await;
++        let tracker = crate::InvocationTracker::default();
++        let capacity = Arc::new(tokio::sync::Semaphore::new(1));
++        let permit = crate::InvocationPermit::with_capacity(
++            tracker.try_acquire(),
++            Arc::clone(&capacity).try_acquire_owned().unwrap(),
++        );
++        let (tx, rx) = oneshot::channel();
++        let id = sent_decoded(&mut sender, send_message_fixture("wake"), tx, Some(permit));
++        let observation = Arc::new(Observe {
++            tracker: tracker.clone(),
++            capacity,
++            seen: AtomicU8::new(0),
++        });
++        let waker = Waker::from(Arc::clone(&observation));
++        let mut cx = Context::from_waker(&waker);
++        let mut rx = Box::pin(rx);
++        assert!(rx.as_mut().poll(&mut cx).is_pending());
++        sender
++            .process_mtp_buffer(
++                own_reply(id, &full_message_updates_fixture(), false),
++                &mut Vec::new(),
++            )
++            .unwrap();
++        assert_eq!(observation.seen.load(Ordering::SeqCst), 7);
++        assert!(matches!(rx.await.unwrap().unwrap(), Reply::Updates { .. }));
++    }
+ }
+diff --git a/grammers-mtsender/src/sender_pool.rs b/grammers-mtsender/src/sender_pool.rs
+index 2e97b8e..34cc9e6 100644
+--- a/grammers-mtsender/src/sender_pool.rs
++++ b/grammers-mtsender/src/sender_pool.rs
+@@ -35,6 +35,7 @@ use tracing::{debug, info, warn};
+ use crate::configuration::{ConnectionParams, RetryContext};
+ use crate::errors::{InvocationError, InvocationErrorCategory, ReadError};
+ use crate::queue;
++use crate::sender::{Reply, ReplySender};
+ use crate::{Sender, ServerAddr, connect, connect_with_auth};
+ 
+ /// Serialized size reserved for a typed request before it is known.
+@@ -84,7 +85,7 @@ enum Request {
+         body: Bytes,
+         // Retire before a queued request's dropped response sender can wake it.
+         permit: Option<crate::InvocationPermit>,
+-        tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
++        tx: ReplySender,
+     },
+     CheckRetry {
+         // Boxed so this rare variant does not widen every queue slot; each
+@@ -104,7 +105,7 @@ struct Rpc {
+     body: Bytes,
+     // Preserve this field order for requests discarded with a closed queue.
+     permit: Option<crate::InvocationPermit>,
+-    tx: oneshot::Sender<Result<InvokeResponse, InvocationError>>,
++    tx: ReplySender,
+ }
+ 
+ struct ConnectionInfo {
+@@ -466,9 +467,23 @@ impl SenderPoolHandle {
+         // Most requests fit, which avoids several reallocations per call.
+         let mut body = Vec::with_capacity(INITIAL_REQUEST_CAPACITY);
+         tl::Serializable::serialize(request, &mut body);
+-        self.do_invoke_in_dc(dc_id, body)
+-            .await
+-            .and_then(|body| R::Return::from_bytes(&body).map_err(|e| e.into()))
++        if !self.2 || !R::returns_updates() {
++            // Only a reply holding updates is decoded by its connection, and only when
++            // updates are received: any other caller has no decoded reply to be handed.
++            return self
++                .do_invoke_in_dc(dc_id, body)
++                .await
++                .and_then(|body| R::Return::from_bytes(&body).map_err(|e| e.into()));
++        }
++        match self.do_invoke_decoded_in_dc(dc_id, body).await? {
++            Reply::Bytes(body) => R::Return::from_bytes(&body).map_err(|e| e.into()),
++            // The connection decoded this reply for the stream of updates, from the same
++            // bytes and with the same decoder. A call that does not take the value
++            // decodes those bytes itself, as it would have.
++            Reply::Updates { updates, original } => R::return_from_updates(updates)
++                .or_else(|_| R::Return::from_bytes(&original))
++                .map_err(|e| e.into()),
++        }
+     }
+ 
+     /// Communicate with the running [`SenderPoolRunner`] instance
+@@ -520,6 +535,22 @@ impl SenderPoolHandle {
+         self.start_invoke_shared(dc_id, body, permit)?.await
+     }
+ 
++    /// As [`Self::invoke_shared`] without a permit, for a caller that takes a reply its
++    /// connection already decoded.
++    async fn invoke_shared_decoded(
++        &self,
++        dc_id: i32,
++        body: Bytes,
++    ) -> Result<Reply, InvocationError> {
++        let receiver = self.queue_invoke(dc_id, body, None, || {
++            let (tx, rx) = oneshot::channel();
++            (ReplySender::Decoded(tx), rx)
++        })?;
++        receiver.await.unwrap_or(Err(InvocationError::Dropped(
++            "request response channel was closed",
++        )))
++    }
++
+     /// Enqueue a tracked request immediately, returning a movable response waiter.
+     /// The caller supplies its own deadline; no task or timer is spawned here.
+     pub fn start_raw_invoke_shared_in_dc_tracked(
+@@ -537,6 +568,22 @@ impl SenderPoolHandle {
+         body: Bytes,
+         permit: Option<crate::InvocationPermit>,
+     ) -> Result<crate::PendingInvocation, InvocationError> {
++        let receiver = self.queue_invoke(dc_id, body, permit, || {
++            let (tx, rx) = oneshot::channel();
++            (ReplySender::Bytes(tx), rx)
++        })?;
++        Ok(crate::PendingInvocation { receiver })
++    }
++
++    /// Validate, admit and queue one request. `channel` makes the two ends of its reply
++    /// channel once it is admitted, and so chooses what its caller is sent.
++    fn queue_invoke<W>(
++        &self,
++        dc_id: i32,
++        body: Bytes,
++        permit: Option<crate::InvocationPermit>,
++        channel: impl FnOnce() -> (ReplySender, W),
++    ) -> Result<W, InvocationError> {
+         if body.len() < 4 {
+             return Err(tl::deserialize::Error::UnexpectedEof.into());
+         }
+@@ -582,10 +629,10 @@ impl SenderPoolHandle {
+         } else {
+             permit
+         };
+-        let (tx, rx) = oneshot::channel();
++        let (tx, rx) = channel();
+         let rpc = Rpc { body, tx, permit };
+         let rpc = match self.try_route(dc_id, rpc)? {
+-            None => return Ok(crate::PendingInvocation { receiver: rx }),
++            None => return Ok(rx),
+             Some(rpc) => rpc,
+         };
+         self.0
+@@ -596,7 +643,7 @@ impl SenderPoolHandle {
+                 permit: rpc.permit,
+             })
+             .map_err(|_| InvocationError::Dropped("SenderPoolRunner was dropped at send"))?;
+-        Ok(crate::PendingInvocation { receiver: rx })
++        Ok(rx)
+     }
+ 
+     fn try_route(&self, dc_id: i32, rpc: Rpc) -> Result<Option<Rpc>, InvocationError> {
+@@ -687,6 +734,36 @@ impl SenderPoolHandle {
+         }
+     }
+ 
++    /// As [`Self::do_invoke_in_dc`], for a caller that takes a reply its connection
++    /// already decoded. The retry policy is the same.
++    async fn do_invoke_decoded_in_dc(
++        &self,
++        dc_id: i32,
++        request_body: Vec<u8>,
++    ) -> Result<Reply, InvocationError> {
++        let request_body = Bytes::from(request_body);
++        let mut fail_count = NonZeroU32::new(1).unwrap();
++        let mut slept_so_far = Duration::default();
++
++        loop {
++            match self
++                .invoke_shared_decoded(dc_id, request_body.clone())
++                .await
++            {
++                Ok(response) => break Ok(response),
++                Err(e) => match self.check_retry(e, fail_count, slept_so_far).await {
++                    ControlFlow::Continue(delay) => {
++                        sleep(delay).await;
++                        fail_count = fail_count.saturating_add(1);
++                        slept_so_far += delay;
++                        continue;
++                    }
++                    ControlFlow::Break(final_error) => break Err(final_error),
++                },
++            }
++        }
++    }
++
+     /// Communicate with the running [`SenderPoolRunner`] instance
+     /// to check whether the request needs to retry.
+     async fn check_retry(
+@@ -1642,7 +1719,7 @@ fn run_sender(
+                 },
+                 rpc = rpc_rx.recv() => match rpc {
+                     Some(rpc) => {
+-                        sender.enqueue_tracked_body(rpc.body, rpc.tx, rpc.permit);
++                        sender.enqueue_tracked_reply(rpc.body, rpc.tx, rpc.permit);
+                         // Pack what is already queued into the next write instead of
+                         // one write per request. Each request is still charged, so a
+                         // ready queue yields as often as it would one at a time.
+@@ -1650,7 +1727,7 @@ fn run_sender(
+                             let Ok(rpc) = rpc_rx.try_recv() else {
+                                 break;
+                             };
+-                            sender.enqueue_tracked_body(rpc.body, rpc.tx, rpc.permit);
++                            sender.enqueue_tracked_reply(rpc.body, rpc.tx, rpc.permit);
+                             tokio::task::consume_budget().await;
+                         }
+                     }
+@@ -1730,7 +1807,7 @@ mod optimization_tests {
+             tx.send(Rpc {
+                 body: Bytes::from_static(&[0; 3]),
+                 permit: None,
+-                tx: tx_result,
++                tx: ReplySender::Bytes(tx_result),
+             })
+             .unwrap();
+             responses.push(rx_result);
+@@ -1788,7 +1865,7 @@ mod optimization_tests {
+             tx.send(Rpc {
+                 body: tl::functions::Ping { ping_id }.to_bytes().into(),
+                 permit: (ping_id == 0).then(|| tracker.try_acquire().unwrap()),
+-                tx: tx_result,
++                tx: ReplySender::Bytes(tx_result),
+             })
+             .unwrap();
+             responses.push(rx_result);
+@@ -2084,7 +2161,7 @@ mod optimization_tests {
+         tx.send(Rpc {
+             body: tl::functions::Ping { ping_id: 1 }.to_bytes().into(),
+             permit: None,
+-            tx: tx_result,
++            tx: ReplySender::Bytes(tx_result),
+         })
+         .unwrap();
+         let session = erase(Arc::new(
+@@ -2161,7 +2238,7 @@ mod optimization_tests {
+         tx.send(Rpc {
+             body: tl::functions::Ping { ping_id: 1 }.to_bytes().into(),
+             permit: None,
+-            tx: tx_result,
++            tx: ReplySender::Bytes(tx_result),
+         })
+         .unwrap();
+         let session = erase(Arc::new(
+@@ -2314,7 +2391,7 @@ mod optimization_tests {
+             tx.send(Rpc {
+                 body: tl::functions::Ping { ping_id }.to_bytes().into(),
+                 permit: None,
+-                tx: tx_result,
++                tx: ReplySender::Bytes(tx_result),
+             })
+             .unwrap();
+             responses.push(rx_result);
+@@ -2379,7 +2456,7 @@ mod optimization_tests {
+             tx.send(Rpc {
+                 body: Bytes::from(tl::functions::Ping { ping_id: 1 }.to_bytes()),
+                 permit: Some(permit),
+-                tx: response,
++                tx: ReplySender::Bytes(response),
+             })
+             .unwrap();
+             receivers.push(result);
+@@ -2434,7 +2511,7 @@ mod optimization_tests {
+             .send(Rpc {
+                 body: body.clone(),
+                 permit: None,
+-                tx: response,
++                tx: ReplySender::Bytes(response),
+             })
+             .err()
+             .unwrap()
+@@ -2472,7 +2549,7 @@ mod optimization_tests {
+                 999,
+                 Rpc {
+                     body: Bytes::from_static(&[1; 4]),
+-                    tx,
++                    tx: ReplySender::Bytes(tx),
+                     permit: None,
+                 },
+             );
+@@ -2505,7 +2582,7 @@ mod optimization_tests {
+                         for _ in 0..count {
+                             let (tx, rx) = oneshot::channel();
+                             receivers.push(rx);
+-                            pool.runner.start_setup(999, Rpc { body: Bytes::from_static(&[1; 4]), tx, permit: None });
++                            pool.runner.start_setup(999, Rpc { body: Bytes::from_static(&[1; 4]), tx: ReplySender::Bytes(tx), permit: None });
+                             let pending = &mut pool.runner.pending[0];
+                             if incremental {
+                                 assert!(!pending.poll_closed(&mut cx));
+@@ -2996,9 +3073,7 @@ mod optimization_tests {
+         }
+     }
+ 
+-    async fn expect_get_state(
+-        runner: &mut SenderPoolRunner,
+-    ) -> oneshot::Sender<Result<Vec<u8>, InvocationError>> {
++    async fn expect_get_state(runner: &mut SenderPoolRunner) -> ReplySender {
+         use tl::Identifiable;
+         let Request::Invoke { body, tx, .. } = runner.request_rx.recv().await.unwrap() else {
+             panic!("expected GetState")
+@@ -6681,13 +6756,13 @@ mod optimization_tests {
+                 drop(Request::Invoke {
+                     dc_id: 4,
+                     body: Bytes::from_static(&[1; 4]),
+-                    tx,
++                    tx: ReplySender::Bytes(tx),
+                     permit,
+                 });
+             } else {
+                 drop(Rpc {
+                     body: Bytes::from_static(&[1; 4]),
+-                    tx,
++                    tx: ReplySender::Bytes(tx),
+                     permit,
+                 });
+             }
+@@ -7316,6 +7391,142 @@ mod optimization_tests {
+             );
+         }
+     }
++
++    fn decoded_updates_fixture() -> tl::types::Updates {
++        tl::types::Updates {
++            updates: vec![
++                tl::types::UpdateMessageId {
++                    id: 73,
++                    random_id: 9,
++                }
++                .into(),
++            ],
++            users: Vec::new(),
++            chats: Vec::new(),
++            date: 1234,
++            seq: 0,
++        }
++    }
++
++    async fn next_routed_rpc(rx: &mut queue::UnboundedReceiver<Rpc>) -> Rpc {
++        tokio::time::timeout(Duration::from_secs(1), rx.recv())
++            .await
++            .expect("warm route timeout")
++            .expect("warm route closed")
++    }
++
++    /// A typed call asks its connection for a decoded reply only when its return type
++    /// is one a connection decodes and updates are received. It takes the value when it
++    /// is sent one, also through a wrapping call. Raw calls are always sent bytes.
++    #[tokio::test]
++    async fn typed_update_channels_follow_return_type_and_configuration() {
++        for enabled in [false, true] {
++            let (mut handle, _pool_rx) = fake_handle();
++            handle.2 = enabled;
++            let (tx, mut rx) = queue::unbounded_channel();
++            handle.1.write().unwrap().publish(4, &tx);
++            let full = decoded_updates_fixture();
++            let expected = tl::enums::Updates::Updates(full.clone());
++            let request = tl::functions::messages::EditChatTitle {
++                chat_id: 5,
++                title: "title".into(),
++            };
++            let wrapped = tl::functions::InvokeWithoutUpdates {
++                query: request.clone(),
++            };
++
++            let (reply, ()) = tokio::join!(handle.invoke_in_dc(4, &request), async {
++                let rpc = next_routed_rpc(&mut rx).await;
++                assert_eq!(matches!(&rpc.tx, ReplySender::Decoded(_)), enabled);
++                if enabled {
++                    rpc.tx
++                        .send_updates(Box::new(full.clone()), expected.to_bytes());
++                } else {
++                    rpc.tx.send(Ok(expected.to_bytes())).unwrap();
++                }
++            });
++            assert_eq!(reply.unwrap(), expected);
++            let (reply, ()) = tokio::join!(handle.invoke_in_dc(4, &wrapped), async {
++                let rpc = next_routed_rpc(&mut rx).await;
++                assert_eq!(matches!(&rpc.tx, ReplySender::Decoded(_)), enabled);
++                if enabled {
++                    rpc.tx
++                        .send_updates(Box::new(full.clone()), expected.to_bytes());
++                } else {
++                    rpc.tx.send(Ok(expected.to_bytes())).unwrap();
++                }
++            });
++            assert_eq!(reply.unwrap(), expected);
++            // Not decoded by its connection: the caller decodes the bytes, as before.
++            let (reply, ()) = tokio::join!(handle.invoke_in_dc(4, &request), async {
++                let rpc = next_routed_rpc(&mut rx).await;
++                rpc.tx.send(Ok(expected.to_bytes())).unwrap();
++            });
++            assert_eq!(reply.unwrap(), expected);
++
++            let ping = tl::functions::Ping { ping_id: 17 };
++            let pong = tl::enums::Pong::Pong(tl::types::Pong {
++                msg_id: 1,
++                ping_id: 17,
++            });
++            let (reply, ()) = tokio::join!(handle.invoke_in_dc(4, &ping), async {
++                let rpc = next_routed_rpc(&mut rx).await;
++                assert!(matches!(&rpc.tx, ReplySender::Bytes(_)));
++                rpc.tx.send(Ok(pong.to_bytes())).unwrap();
++            });
++            assert_eq!(reply.unwrap(), pong);
++            let raw = pong.to_bytes();
++            let (reply, ()) = tokio::join!(handle.raw_invoke_in_dc(4, ping.to_bytes()), async {
++                let rpc = next_routed_rpc(&mut rx).await;
++                assert!(matches!(&rpc.tx, ReplySender::Bytes(_)));
++                rpc.tx.send(Ok(raw.clone())).unwrap();
++            });
++            assert_eq!(reply.unwrap(), raw);
++        }
++    }
++
++    /// A call that asks for a decoded reply and does not take the value it is sent
++    /// decodes the reply's own bytes, which encoding that value again would not give.
++    #[tokio::test]
++    async fn a_custom_rejected_decoded_reply_uses_its_original_bytes() {
++        #[derive(Debug, PartialEq)]
++        struct OriginalBody(Vec<u8>);
++        impl tl::Deserializable for OriginalBody {
++            fn deserialize(buf: &mut tl::Cursor<'_>) -> tl::deserialize::Result<Self> {
++                let mut bytes = Vec::new();
++                buf.read_to_end(&mut bytes)?;
++                Ok(Self(bytes))
++            }
++        }
++        struct CaptureOriginal;
++        impl tl::Serializable for CaptureOriginal {
++            fn serialize(&self, buf: &mut impl Extend<u8>) {
++                tl::functions::Ping { ping_id: 1 }.serialize(buf);
++            }
++        }
++        impl tl::RemoteCall for CaptureOriginal {
++            type Return = OriginalBody;
++            // With the default `return_from_updates`, which gives the value back.
++            fn returns_updates() -> bool {
++                true
++            }
++        }
++
++        let (handle, _pool_rx) = fake_handle();
++        let (tx, mut rx) = queue::unbounded_channel();
++        handle.1.write().unwrap().publish(4, &tx);
++        let full = decoded_updates_fixture();
++        // Valid `Updates` and a trailing word, which decoding it ignores.
++        let mut original = tl::enums::Updates::Updates(full.clone()).to_bytes();
++        original.extend_from_slice(&0xaabbccddu32.to_le_bytes());
++        let expected = original.clone();
++        let (reply, ()) = tokio::join!(handle.invoke_in_dc(4, &CaptureOriginal), async {
++            let rpc = next_routed_rpc(&mut rx).await;
++            assert!(matches!(&rpc.tx, ReplySender::Decoded(_)));
++            rpc.tx.send_updates(Box::new(full), original);
++        });
++        assert_eq!(reply.unwrap().0, expected);
++    }
+ }
+ 
+ #[cfg(test)]
+diff --git a/grammers-tl-gen/src/enums.rs b/grammers-tl-gen/src/enums.rs
+index f5c15a0..d88d1fb 100644
+--- a/grammers-tl-gen/src/enums.rs
++++ b/grammers-tl-gen/src/enums.rs
+@@ -75,11 +75,12 @@ fn write_enum<W: Write>(
+             write!(file, "(")?;
+         }
+ 
+-        if metadata.is_boxed_def(d) {
+-            write!(file, "Box<")?;
++        let storage = metadata.def_storage(d);
++        if let Some(storage) = storage {
++            write!(file, "{}<", storage.rust_type())?;
+         }
+         write!(file, "{}", rustifier::definitions::qual_name(d))?;
+-        if metadata.is_boxed_def(d) {
++        if storage.is_some() {
+             write!(file, ">")?;
+         }
+ 
+@@ -291,15 +292,16 @@ fn write_deserializable<W: Write>(
+             write!(file, "(")?;
+         }
+ 
+-        if metadata.is_boxed_def(d) {
+-            write!(file, "Box::new(")?;
++        let storage = metadata.def_storage(d);
++        if let Some(storage) = storage {
++            write!(file, "{}::new(", storage.rust_type())?;
+         }
+         write!(
+             file,
+             "{}::deserialize(buf)?",
+             rustifier::definitions::qual_name(d)
+         )?;
+-        if metadata.is_boxed_def(d) {
++        if storage.is_some() {
+             write!(file, ")")?;
+         }
+         writeln!(file, "),")?;
+@@ -352,8 +354,8 @@ fn write_impl_from<W: Write>(
+ 
+         if def.params.is_empty() {
+             writeln!(file)?;
+-        } else if metadata.is_boxed_def(def) {
+-            writeln!(file, "(Box::new(x))")?;
++        } else if let Some(storage) = metadata.def_storage(def) {
++            writeln!(file, "({}::new(x))", storage.rust_type())?;
+         } else {
+             writeln!(file, "(x)")?;
+         }
+diff --git a/grammers-tl-gen/src/metadata.rs b/grammers-tl-gen/src/metadata.rs
+index 3295e30..65fbf67 100644
+--- a/grammers-tl-gen/src/metadata.rs
++++ b/grammers-tl-gen/src/metadata.rs
+@@ -57,12 +57,34 @@ const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 2] = [
+     ("messageReplyHeader", "reply_media"),
+ ];
+ 
++/// How an enum variant holds a definition that is not held inline.
++#[derive(Clone, Copy)]
++pub(crate) enum DefStorage {
++    /// In a `Box`, owned by that one value.
++    Box,
++    /// In an `Arc`, shared by the clones of that value. For `message` and
++    /// `messageService`: a reply handed to its caller and the update delivered from
++    /// it then hold one message, where a copy would cost what decoding it again does.
++    Arc,
++}
++
++impl DefStorage {
++    /// The path of the pointer type, as written in generated code.
++    pub fn rust_type(self) -> &'static str {
++        match self {
++            Self::Box => "Box",
++            Self::Arc => "std::sync::Arc",
++        }
++    }
++}
++
+ /// Additional metadata required by several parts of the generation.
+ pub(crate) struct Metadata<'a> {
+     boxed_defs: HashSet<u32>,
+     boxed_fields: HashSet<(u32, &'a str)>,
+     defs_with_type: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Definition>>,
+     unused_flags: HashMap<(&'a Vec<String>, &'a String), Vec<&'a Parameter>>,
++    updates_constructor: Option<u32>,
+ }
+ 
+ impl<'a> Metadata<'a> {
+@@ -72,6 +94,7 @@ impl<'a> Metadata<'a> {
+             boxed_fields: HashSet::new(),
+             defs_with_type: HashMap::new(),
+             unused_flags: HashMap::new(),
++            updates_constructor: None,
+         };
+ 
+         definitions.iter().for_each(|d| {
+@@ -107,6 +130,16 @@ impl<'a> Metadata<'a> {
+                 .push(d);
+         });
+ 
++        metadata.updates_constructor = type_definitions
++            .iter()
++            .find(|d| {
++                d.namespace.is_empty()
++                    && d.name == "updates"
++                    && d.ty.namespace.is_empty()
++                    && d.ty.name == "Updates"
++            })
++            .map(|d| d.id);
++
+         type_definitions.iter().for_each(|d| {
+             if def_self_references(d, d, &metadata.defs_with_type, &mut HashSet::new()) {
+                 metadata.boxed_defs.insert(d.id);
+@@ -146,7 +179,19 @@ impl<'a> Metadata<'a> {
+             .unwrap_or(false)
+     }
+ 
+-    /// Returns `true` if the enum variant of this `Definition` holds it in a `Box`:
++    /// How the enum variant of this `Definition` holds it, or `None` when that is
++    /// inline: see [`Self::is_boxed_def`]. Matched by full name, as [`BOXED_FOR_SIZE`] is.
++    pub fn def_storage(&self, def: &Definition) -> Option<DefStorage> {
++        if !self.is_boxed_def(def) {
++            return None;
++        }
++        Some(match def.full_name().as_str() {
++            "message" | "messageService" => DefStorage::Arc,
++            _ => DefStorage::Box,
++        })
++    }
++
++    /// Returns `true` if the enum variant of this `Definition` holds it on the heap:
+     /// any of its parameters eventually contains the same type as the `Definition`
+     /// itself (meaning it recurses), or it is one of [`BOXED_FOR_SIZE`].
+     pub fn is_boxed_def(&self, def: &Definition) -> bool {
+@@ -159,6 +204,14 @@ impl<'a> Metadata<'a> {
+         self.boxed_fields.contains(&(def.id, param.name.as_str()))
+     }
+ 
++    /// Whether the enum variant of the `updates` constructor of type `Updates` holds it
++    /// in a `Box`, or `None` if the schema has no such constructor. It is the value
++    /// `RemoteCall::return_from_updates` takes.
++    pub fn updates_constructor_is_boxed(&self) -> Option<bool> {
++        self.updates_constructor
++            .map(|id| self.boxed_defs.contains(&id))
++    }
++
+     pub fn defs_with_type(&self, ty: &'a Type) -> &Vec<&Definition> {
+         &self.defs_with_type[&(&ty.namespace, &ty.name)]
+     }
+diff --git a/grammers-tl-gen/src/structs.rs b/grammers-tl-gen/src/structs.rs
+index e41a55f..c936aa1 100644
+--- a/grammers-tl-gen/src/structs.rs
++++ b/grammers-tl-gen/src/structs.rs
+@@ -13,7 +13,7 @@ use std::io::{self, Write};
+ use grammers_tl_parser::tl::{Category, Definition, ParameterType};
+ 
+ use crate::grouper;
+-use crate::metadata::Metadata;
++use crate::metadata::{DefStorage, Metadata};
+ use crate::rustifier;
+ use crate::{Config, ignore_type};
+ 
+@@ -389,11 +389,25 @@ fn write_deserializable<W: Write>(
+ ///     type Return = Name;
+ /// }
+ /// ```
++///
++/// When the schema has the `updates` constructor of an `Updates` type, a call returning
++/// that type also takes a reply that was already decoded as one, and a call wrapping
++/// another passes it on:
++///
++/// ```ignore
++/// impl crate::RemoteCall for Name {
++///     type Return = crate::enums::Updates;
++///     fn returns_updates() -> bool { true }
++///     fn return_from_updates(updates: Box<crate::types::Updates>) -> ... {
++///         Ok(crate::enums::Updates::Updates(*updates))
++///     }
++/// }
++/// ```
+ fn write_rpc<W: Write>(
+     file: &mut W,
+     indent: &str,
+     def: &Definition,
+-    _metadata: &Metadata,
++    metadata: &Metadata,
+ ) -> io::Result<()> {
+     writeln!(
+         file,
+@@ -410,6 +424,44 @@ fn write_rpc<W: Write>(
+         rustifier::types::qual_name(&def.ty),
+         if def.ty.generic_ref { "::Return" } else { "" },
+     )?;
++    if let Some(boxed) = metadata.updates_constructor_is_boxed() {
++        let returns_updates = !def.ty.generic_ref
++            && def.ty.generic_arg.is_none()
++            && def.ty.namespace.is_empty()
++            && def.ty.name == "Updates";
++        let body = if def.ty.generic_ref {
++            Some(format!(
++                "{}::return_from_updates(updates)",
++                rustifier::types::qual_name(&def.ty)
++            ))
++        } else if returns_updates {
++            let value = if boxed { "updates" } else { "*updates" };
++            Some(format!("Ok(crate::enums::Updates::Updates({value}))"))
++        } else {
++            None
++        };
++        if let Some(body) = body {
++            let accepts = if def.ty.generic_ref {
++                format!(
++                    "{}::returns_updates()",
++                    rustifier::types::qual_name(&def.ty)
++                )
++            } else {
++                "true".to_owned()
++            };
++            writeln!(
++                file,
++                "{indent}    fn returns_updates() -> bool {{ {accepts} }}"
++            )?;
++            writeln!(
++                file,
++                "{indent}    fn return_from_updates(updates: Box<crate::types::Updates>) \
++                 -> ::core::result::Result<Self::Return, Box<crate::types::Updates>> {{"
++            )?;
++            writeln!(file, "{indent}        {body}")?;
++            writeln!(file, "{indent}    }}")?;
++        }
++    }
+     writeln!(file, "{indent}}}")?;
+     Ok(())
+ }
+@@ -454,21 +506,23 @@ fn write_impl_from<W: Write>(
+         error = if infallible { "" } else { ", Self::Error>" },
+     )?;
+     writeln!(file, "{indent}        match x {{")?;
++    let value = if def.params.is_empty() {
++        format!("{type_name} {{}}")
++    } else {
++        match metadata.def_storage(def) {
++            Some(DefStorage::Box) => "*x".to_owned(),
++            Some(DefStorage::Arc) => "std::sync::Arc::unwrap_or_clone(x)".to_owned(),
++            None => "x".to_owned(),
++        }
++    };
+     writeln!(
+         file,
+-        "{}            {cls}::{name}{data} => {ok}{deref}{value}{body}{paren},",
++        "{}            {cls}::{name}{data} => {ok}{value}{paren},",
+         indent,
+         cls = rustifier::types::qual_name(&def.ty),
+         name = rustifier::definitions::variant_name(def),
+         data = if def.params.is_empty() { "" } else { "(x)" },
+         ok = if infallible { "" } else { "Ok(" },
+-        deref = if metadata.is_boxed_def(def) { "*" } else { "" },
+-        value = if def.params.is_empty() {
+-            type_name.as_ref()
+-        } else {
+-            "x"
+-        },
+-        body = if def.params.is_empty() { " {}" } else { "" },
+         paren = if infallible { "" } else { ")" },
+     )?;
+     if !infallible {
+diff --git a/grammers-tl-gen/tests/lib.rs b/grammers-tl-gen/tests/lib.rs
+index 90b863e..09b1c52 100644
+--- a/grammers-tl-gen/tests/lib.rs
++++ b/grammers-tl-gen/tests/lib.rs
+@@ -312,3 +312,108 @@ fn input_rich_message_leaves_are_boxed_with_owned_conversions() -> io::Result<()
+     assert!(enums.contains("Message(crate::types::sample::InputRichMessage),"));
+     Ok(())
+ }
++
++fn compact_rust(source: &str) -> String {
++    source.chars().filter(|c| !c.is_whitespace()).collect()
++}
++
++fn remote_call_impl<'a>(functions: &'a str, declaration: &str) -> &'a str {
++    let start = functions.find(declaration).unwrap();
++    let implementation = &functions[start..];
++    let end = implementation.find("\n}\n").unwrap();
++    &implementation[..end + 2]
++}
++
++#[test]
++fn message_payloads_are_shared_but_other_storage_is_preserved() -> io::Result<()> {
++    let definitions = get_definitions(
++        "
++        message#7600b9d3 text:string = Message;
++        messageService#7a800e0a text:string = Message;
++        messageEmpty#90a6ca84 id:int = Message;
++        ephemeralMessage#dd27bee9 text:string = EphemeralMessage;
++        sample.message#70000001 text:string = sample.Message;
++    ",
++    );
++    let (_, types, _, enums) = gen_rust_code(&definitions)?;
++    let types = compact_rust(&types);
++    let enums = compact_rust(&enums);
++    for (variant, payload) in [("Message", "Message"), ("Service", "MessageService")] {
++        let payload = format!("crate::types::{payload}");
++        assert!(enums.contains(&format!("{variant}(std::sync::Arc<{payload}>),")));
++        assert!(enums.contains(&format!(
++            "Self::{variant}(std::sync::Arc::new({payload}::deserialize(buf)?)),"
++        )));
++        assert!(enums.contains(&format!("Message::{variant}(std::sync::Arc::new(x))")));
++        assert!(types.contains(&format!(
++            "crate::enums::Message::{variant}(x)=>Ok(std::sync::Arc::unwrap_or_clone(x)),"
++        )));
++    }
++    // Only those two: the other variant, the other boxed definition and the same name
++    // in a namespace are held as before.
++    assert!(enums.contains("Empty(crate::types::MessageEmpty),"));
++    assert!(enums.contains("Message(Box<crate::types::EphemeralMessage>),"));
++    assert!(enums.contains("Message(crate::types::sample::Message),"));
++    Ok(())
++}
++
++#[test]
++fn updates_return_hooks_follow_root_types_and_generics() -> io::Result<()> {
++    let definitions = get_definitions(
++        "
++        updates#74ae4240 value:int = Updates;
++        other#70000001 value:int = Other;
++        sample.updates#70000002 value:int = sample.Updates;
++        ---functions---
++        fetchUpdates#70000003 = Updates;
++        fetchOther#70000004 = Other;
++        fetchNamespaced#70000005 = sample.Updates;
++        invokeWithLayer#da9b0d0d {X:Type} layer:int query:!X = X;
++    ",
++    );
++    let (_, _, functions, _) = gen_rust_code(&definitions)?;
++    let direct = compact_rust(remote_call_impl(
++        &functions,
++        "impl crate::RemoteCall for FetchUpdates",
++    ));
++    assert!(direct.contains("fnreturns_updates()->bool{true}"));
++    assert!(direct.contains("Ok(crate::enums::Updates::Updates(*updates))"));
++    for name in ["FetchOther", "FetchNamespaced"] {
++        let implementation =
++            remote_call_impl(&functions, &format!("impl crate::RemoteCall for {name}"));
++        assert!(!implementation.contains("returns_updates"));
++        assert!(!implementation.contains("return_from_updates"));
++    }
++    let generic = compact_rust(remote_call_impl(
++        &functions,
++        "impl<X: crate::RemoteCall> crate::RemoteCall for InvokeWithLayer<X>",
++    ));
++    assert!(generic.contains("fnreturns_updates()->bool{X::returns_updates()}"));
++    assert!(generic.contains("X::return_from_updates(updates)"));
++    Ok(())
++}
++
++#[test]
++fn no_decoded_hooks_without_a_full_updates_constructor() -> io::Result<()> {
++    for schema in [
++        "
++        other#70000001 value:int = Other;
++        ---functions---
++        fetchOther#70000002 = Other;
++        invokeWithLayer#da9b0d0d {X:Type} layer:int query:!X = X;
++    ",
++        "
++        updatesTooLong#e317af7e = Updates;
++        ---functions---
++        fetchUpdates#70000003 = Updates;
++        invokeWithLayer#da9b0d0d {X:Type} layer:int query:!X = X;
++    ",
++    ] {
++        let definitions = get_definitions(schema);
++        let (_, _, functions, _) = gen_rust_code(&definitions)?;
++        assert!(!functions.contains("returns_updates"));
++        assert!(!functions.contains("return_from_updates"));
++        assert!(!functions.contains("crate::types::Updates"));
++    }
++    Ok(())
++}
+diff --git a/grammers-tl-types/Cargo.toml b/grammers-tl-types/Cargo.toml
+index cbc64f2..8251ec7 100644
+--- a/grammers-tl-types/Cargo.toml
++++ b/grammers-tl-types/Cargo.toml
+@@ -15,7 +15,7 @@ edition = "2024"
+ include = ["build.rs", "src/*.rs", "tl/*.tl"]
+ 
+ [dependencies]
+-serde = { version = "~1.0", optional = true }
++serde = { version = "~1.0", optional = true, features = ["rc"] }
+ serde_derive = { version = "~1.0", optional = true }
+ serde_bytes = { version = "0.11.19", optional = true }
+ 
+diff --git a/grammers-tl-types/src/depth_tests.rs b/grammers-tl-types/src/depth_tests.rs
+index e75ea17..b77041c 100644
+--- a/grammers-tl-types/src/depth_tests.rs
++++ b/grammers-tl-types/src/depth_tests.rs
+@@ -673,3 +673,157 @@ fn boxed_input_rich_messages_keep_their_wire_format() {
+     assert!(size_of::<enums::InputRichMessage>() <= 16);
+     assert!(size_of::<crate::functions::messages::SendMessage>() <= 512);
+ }
++
++// A minimal `message` or `messageService`, ending in the string a test changes.
++fn shared_message_bytes(service: bool) -> Vec<u8> {
++    let mut bytes = Vec::new();
++    if service {
++        id::<types::MessageService>(&mut bytes);
++    } else {
++        id::<types::Message>(&mut bytes);
++    }
++    0u32.serialize(&mut bytes);
++    if !service {
++        0u32.serialize(&mut bytes);
++    }
++    41i32.serialize(&mut bytes);
++    id::<types::PeerUser>(&mut bytes);
++    7i64.serialize(&mut bytes);
++    123i32.serialize(&mut bytes);
++    if service {
++        id::<types::MessageActionChatEditTitle>(&mut bytes);
++    }
++    b"owned text".as_slice().serialize(&mut bytes);
++    bytes
++}
++
++// Sharing changes who owns a message, never its bytes. A clone is the same message
++// until one of the two is changed, and a message taken out of its enum is moved when
++// nothing else holds it and copied when something does.
++#[test]
++fn shared_messages_preserve_wire_ownership_and_snapshots() {
++    use std::sync::Arc;
++    let bytes = shared_message_bytes(false);
++    round_trip::<enums::Message>(&bytes);
++    let original = enums::Message::from_bytes(&bytes).unwrap();
++    let snapshot = original.clone();
++    let (enums::Message::Message(original), enums::Message::Message(mut snapshot)) =
++        (original, snapshot)
++    else {
++        panic!("expected ordinary messages");
++    };
++    assert!(Arc::ptr_eq(&original, &snapshot));
++    Arc::make_mut(&mut snapshot).message.push_str(" changed");
++    assert!(!Arc::ptr_eq(&original, &snapshot));
++    assert_eq!(original.message, "owned text");
++    assert_eq!(snapshot.message, "owned text changed");
++    assert_eq!(enums::Message::Message(original).to_bytes(), bytes);
++
++    for shared in [false, true] {
++        let value = enums::Message::from_bytes(&bytes).unwrap();
++        let retained = shared.then(|| value.clone());
++        let enums::Message::Message(raw) = &value else {
++            panic!("expected message");
++        };
++        let pointer = raw.message.as_ptr();
++        let mut owned = types::Message::try_from(value).unwrap();
++        assert_eq!(owned.message.as_ptr() == pointer, !shared);
++        owned.message.push_str(" changed");
++        if let Some(retained) = retained {
++            assert_eq!(retained.to_bytes(), bytes);
++        }
++    }
++    for end in 0..bytes.len() {
++        assert_error::<enums::Message>(&bytes[..end], Error::UnexpectedEof);
++    }
++}
++
++fn service_text(message: &types::MessageService) -> &str {
++    let enums::MessageAction::ChatEditTitle(action) = &message.action else {
++        panic!("expected title action");
++    };
++    &action.title
++}
++
++fn service_text_mut(message: &mut types::MessageService) -> &mut String {
++    let enums::MessageAction::ChatEditTitle(action) = &mut message.action else {
++        panic!("expected title action");
++    };
++    &mut action.title
++}
++
++#[test]
++fn shared_service_messages_preserve_wire_ownership_and_snapshots() {
++    use std::sync::Arc;
++    let bytes = shared_message_bytes(true);
++    round_trip::<enums::Message>(&bytes);
++    let original = enums::Message::from_bytes(&bytes).unwrap();
++    let snapshot = original.clone();
++    let (enums::Message::Service(original), enums::Message::Service(mut snapshot)) =
++        (original, snapshot)
++    else {
++        panic!("expected service messages");
++    };
++    assert!(Arc::ptr_eq(&original, &snapshot));
++    service_text_mut(Arc::make_mut(&mut snapshot)).push_str(" changed");
++    assert!(!Arc::ptr_eq(&original, &snapshot));
++    assert_eq!(service_text(&original), "owned text");
++    assert_eq!(service_text(&snapshot), "owned text changed");
++    assert_eq!(enums::Message::Service(original).to_bytes(), bytes);
++
++    for shared in [false, true] {
++        let value = enums::Message::from_bytes(&bytes).unwrap();
++        let retained = shared.then(|| value.clone());
++        let enums::Message::Service(raw) = &value else {
++            panic!("expected service");
++        };
++        let pointer = service_text(raw).as_ptr();
++        let mut owned = types::MessageService::try_from(value).unwrap();
++        assert_eq!(service_text(&owned).as_ptr() == pointer, !shared);
++        service_text_mut(&mut owned).push_str(" changed");
++        if let Some(retained) = retained {
++            assert_eq!(retained.to_bytes(), bytes);
++        }
++    }
++    for end in 0..bytes.len() {
++        assert_error::<enums::Message>(&bytes[..end], Error::UnexpectedEof);
++    }
++}
++
++// A call returning `Updates`, and a call wrapping one, takes a reply that was already
++// decoded as the value it was given. Any other call gives that same value back.
++#[test]
++fn decoded_return_hooks_forward_ownership() {
++    use crate::RemoteCall;
++    use crate::functions::InvokeWithLayer;
++    use crate::functions::messages::{GetHistory, SendMessage};
++
++    fn updates() -> Box<types::Updates> {
++        Box::new(types::Updates {
++            updates: vec![types::UpdateChannel { channel_id: 7 }.into()],
++            users: Vec::new(),
++            chats: Vec::new(),
++            date: 123,
++            seq: 9,
++        })
++    }
++    fn check<F: RemoteCall<Return = enums::Updates>>() {
++        assert!(F::returns_updates());
++        let full = updates();
++        let pointer = full.updates.as_ptr();
++        let enums::Updates::Updates(full) = F::return_from_updates(full).unwrap() else {
++            panic!("expected full updates");
++        };
++        assert_eq!(full.updates.as_ptr(), pointer);
++        assert_eq!(full.date, 123);
++    }
++    check::<SendMessage>();
++    check::<InvokeWithLayer<InvokeWithLayer<SendMessage>>>();
++
++    type Other = InvokeWithLayer<GetHistory>;
++    assert!(!Other::returns_updates());
++    let original = updates();
++    let pointer = std::ptr::from_ref(&*original);
++    let rejected = Other::return_from_updates(original).unwrap_err();
++    assert_eq!(std::ptr::from_ref(&*rejected), pointer);
++}
+diff --git a/grammers-tl-types/src/lib.rs b/grammers-tl-types/src/lib.rs
+index 3fc868d..c8c71d7 100644
+--- a/grammers-tl-types/src/lib.rs
++++ b/grammers-tl-types/src/lib.rs
+@@ -118,4 +118,30 @@ pub trait RemoteCall: Serializable {
+     /// The type of the "return" value coming from the other end of the
+     /// connection.
+     type Return: Deserializable;
++
++    /// Whether [`RemoteCall::return_from_updates`] takes a reply for this call: its
++    /// [`RemoteCall::Return`] is [`enums::Updates`], or it wraps such a call.
++    ///
++    /// A caller asks its connection for a decoded reply only when this is `true`. It is
++    /// `false` unless overridden, and such a caller is given bytes to decode, as ever.
++    #[cfg(feature = "tl-api")]
++    fn returns_updates() -> bool {
++        false
++    }
++
++    /// Take a reply that was already decoded as [`types::Updates`], the `updates`
++    /// constructor of [`enums::Updates`], as this call's return value when that is its
++    /// type.
++    ///
++    /// A connection that decodes such a reply for the stream of updates can hand its
++    /// caller a copy of the value, in place of the bytes to decode a second time. The
++    /// default gives the value back, for its caller to decode those bytes instead:
++    /// only a call whose [`RemoteCall::Return`] is [`enums::Updates`], or one wrapping
++    /// such a call, takes it.
++    #[cfg(feature = "tl-api")]
++    fn return_from_updates(
++        updates: Box<types::Updates>,
++    ) -> core::result::Result<Self::Return, Box<types::Updates>> {
++        Err(updates)
++    }
+ }

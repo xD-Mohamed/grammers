@@ -1,0 +1,362 @@
+diff --git a/grammers-mtproto/src/mtp/encrypted.rs b/grammers-mtproto/src/mtp/encrypted.rs
+index d7f1b27..9784227 100644
+--- a/grammers-mtproto/src/mtp/encrypted.rs
++++ b/grammers-mtproto/src/mtp/encrypted.rs
+@@ -1774,6 +1774,15 @@ impl Mtp for Encrypted {
+     fn on_packet_sent(&mut self, at: std::time::Instant) {
+         self.last_sent = Some(at);
+     }
++
++    fn on_packet_sent_now(&mut self) {
++        // The write is only where an acknowledgement's ten seconds start. The kernel's
++        // last tick is never later than the write, so an acknowledgement leaves a tick
++        // or so sooner and never later. The reading is added to and compared, and
++        // subtracted only from a precise one taken after it, which is never earlier.
++        self.on_packet_sent(crate::coarse_clock::instant());
++    }
++
+     /// Pushes a request into the internal buffer.
+     ///
+     /// Multiple requests will be buffered and sent as a single container to reduce roundtrips.
+@@ -2829,6 +2838,29 @@ mod tests {
+         assert!(mtp.pending_ack.is_empty());
+     }
+ 
++    #[test]
++    fn a_write_reported_without_a_time_is_timed_by_the_coarse_clock() {
++        let mut mtp = Encrypted::build().finish(auth_key());
++        let before = crate::coarse_clock::instant();
++        mtp.on_packet_sent_now();
++        let after = crate::coarse_clock::instant();
++        let written = mtp.last_sent.unwrap();
++        // Readings of that clock do not go backwards, and this is one of them. A
++        // reading of the precise clock would be later than `after`, the last tick,
++        // unless a tick fell between the two.
++        assert!(before <= written && written <= after);
++        // Never later than the truth, so that neither is the acknowledgement.
++        assert!(written <= Instant::now());
++        mtp.queue_ack(5).unwrap();
++        assert_eq!(mtp.pending_ack_since, Some(written));
++        assert_eq!(mtp.service_deadline(), Some(written + ACK_MAX_DELAY));
++
++        // A driver that has a reading of its own still reports that one.
++        let precise = Instant::now();
++        mtp.on_packet_sent(precise);
++        assert_eq!(mtp.last_sent, Some(precise));
++    }
++
+     #[test]
+     fn explicit_service_deadline_flushes_small_batch_and_backlog_is_bounded() {
+         let mut mtp = Encrypted::build().ack_batch(100).finish(auth_key());
+diff --git a/grammers-mtproto/src/mtp/mod.rs b/grammers-mtproto/src/mtp/mod.rs
+index 4c5bf40..1c9070c 100644
+--- a/grammers-mtproto/src/mtp/mod.rs
++++ b/grammers-mtproto/src/mtp/mod.rs
+@@ -262,12 +262,28 @@ pub trait Mtp {
+ 
+     /// Tell the protocol when the packet it last finalized was completely written.
+     ///
+-    /// Optional. A driver reads the clock then anyway, and a protocol told the time
+-    /// can count what it queues next from it (an acknowledgement's delay, for one)
+-    /// instead of reading the clock again for every message received. The time is
+-    /// never later than the true one, so nothing waits longer than it would have.
++    /// Optional. A driver that read the clock for that write reports its reading here
++    /// (one with no reading calls [`Self::on_packet_sent_now`]), and a protocol told
++    /// the time can count what it queues next from it (an acknowledgement's delay,
++    /// for one) instead of reading the clock again for every message received. The
++    /// time is never later than the true one, so nothing waits longer than it would
++    /// have.
+     fn on_packet_sent(&mut self, _at: std::time::Instant) {}
+ 
++    /// Tell the protocol that the packet it last finalized has just been completely
++    /// written, by a driver that did not read the clock for that write.
++    ///
++    /// By default the precise clock is read here and reported to
++    /// [`Self::on_packet_sent`], so a protocol that implements only that method is
++    /// told of every write, as before. A protocol that compares the time only with
++    /// deadlines far coarser than a kernel tick can read [`crate::coarse_clock`]
++    /// instead, as [`Encrypted`] does: where the precise clock is a system call, that
++    /// is one call fewer for each packet. The time it takes must not be later than
++    /// the true one.
++    fn on_packet_sent_now(&mut self) {
++        self.on_packet_sent(std::time::Instant::now());
++    }
++
+     /// Serializes one request to the input buffer.
+     /// The same buffer should be used until `finalize` is called.
+     ///
+diff --git a/grammers-mtsender/src/invocation_tracker.rs b/grammers-mtsender/src/invocation_tracker.rs
+index c3fb027..5d948f0 100644
+--- a/grammers-mtsender/src/invocation_tracker.rs
++++ b/grammers-mtsender/src/invocation_tracker.rs
+@@ -109,8 +109,14 @@ impl InvocationPermit {
+         permit
+     }
+ 
++    /// Whether a caller can read when this request was written. A permit held for
++    /// admission alone records no time, and a write need not read the clock for it.
++    pub(crate) fn is_tracked(&self) -> bool {
++        self.tracker.is_some()
++    }
++
+     /// Record that the packet carrying this request was written at `at`: the one
+-    /// clock read of that write, shared by every request the packet carried.
++    /// precise clock read of that write, shared by every tracked request it carried.
+     pub(crate) fn mark_sent(&self, at: Instant) {
+         let Some(tracker) = &self.tracker else {
+             return;
+diff --git a/grammers-mtsender/src/sender.rs b/grammers-mtsender/src/sender.rs
+index ce1d9c6..c4f3595 100644
+--- a/grammers-mtsender/src/sender.rs
++++ b/grammers-mtsender/src/sender.rs
+@@ -916,20 +916,28 @@ impl<T: Transport, M: Mtp> Sender<T, M> {
+         self.release_write_buffer();
+         // One packet reached the network at one time, whatever it carried: tracked
+         // requests record it, and the protocol times what it queues next from it.
+-        let sent_at = std::time::Instant::now();
+-        self.mtp.on_packet_sent(sent_at);
++        // Only the former is read by callers as a time, so the precise clock is read
++        // for the first tracked request, once. Most packets carry none: the protocol
++        // then reads the clock it needs, which may be the kernel's last tick.
++        let mut sent_at: Option<std::time::Instant> = None;
+         for req in self.requests.iter_mut() {
+             match &req.state {
+                 RequestState::NotSerialized | RequestState::Sent(_) => {}
+                 RequestState::Serialized(pair) => {
+                     debug!(?pair, "sent request with");
+                     req.state = RequestState::Sent(pair.clone());
+-                    if let Some(permit) = &req.permit {
+-                        permit.mark_sent(sent_at);
++                    if let Some(permit) = &req.permit
++                        && permit.is_tracked()
++                    {
++                        permit.mark_sent(*sent_at.get_or_insert_with(std::time::Instant::now));
+                     }
+                 }
+             }
+         }
++        match sent_at {
++            Some(at) => self.mtp.on_packet_sent(at),
++            None => self.mtp.on_packet_sent_now(),
++        }
+         Ok(())
+     }
+ 
+@@ -2024,6 +2032,34 @@ pub(crate) mod optimization_tests {
+         assert!(deadline <= std::time::Instant::now() + Duration::from_secs(10));
+     }
+ 
++    /// A request nobody tracks is written without reading the precise clock, and
++    /// `Encrypted` counts from the kernel's last tick instead. That is never later
++    /// than the write: the acknowledgement is due a tick or so sooner, never later.
++    #[tokio::test]
++    async fn a_reply_to_an_untracked_request_is_acknowledged_no_later() {
++        let (mut sender, _peer) = encrypted_pair().await;
++        let (tx, _rx) = oneshot::channel();
++        sender.enqueue_body(tl::functions::Ping { ping_id: 1 }.to_bytes().into(), tx);
++        sender.try_fill_write();
++        let plain = client_frame_plaintext(&sender.write_buffer[..]);
++        let session = i64::from_le_bytes(plain[8..16].try_into().unwrap());
++        let msg_id = i64::from_le_bytes(plain[16..24].try_into().unwrap());
++        let before = std::time::Instant::now();
++        sender.on_net_write(sender.write_buffer.len()).unwrap();
++        let after = std::time::Instant::now();
++
++        let pong = tl::enums::Pong::Pong(tl::types::Pong { msg_id, ping_id: 1 }).to_bytes();
++        let reply = server_frame(&mut transport::Full::new(), session, 13, 1, &pong);
++        sender.read_buffer[..reply.len()].copy_from_slice(&reply);
++        sender.on_net_read(reply.len()).unwrap();
++        let delay = Duration::from_secs(10);
++        let deadline = sender.mtp.service_deadline().unwrap();
++        assert!(deadline <= after + delay);
++        // Far longer than a tick, and than that clock is trusted to lag.
++        let sooner = (before + delay).saturating_duration_since(deadline);
++        assert!(sooner < Duration::from_millis(500), "{sooner:?}");
++    }
++
+     #[tokio::test]
+     async fn the_keepalive_timer_ages_idle_buffers() {
+         let (mut sender, _peer) = encrypted_pair().await;
+@@ -2801,6 +2837,182 @@ pub(crate) mod optimization_tests {
+         assert!(tracker.sent_at().is_none());
+     }
+ 
++    /// A protocol that notes how each written packet was reported to it.
++    struct Reports {
++        inner: mtp::Encrypted,
++        timed: Vec<std::time::Instant>,
++        untimed: usize,
++    }
++
++    impl Mtp for Reports {
++        fn push(&mut self, buffer: &mut DequeBuffer<u8>, request: &[u8]) -> Option<MsgId> {
++            self.inner.push(buffer, request)
++        }
++        fn finalize(&mut self, buffer: &mut DequeBuffer<u8>) -> Option<MsgId> {
++            self.inner.finalize(buffer)
++        }
++        fn deserialize(
++            &mut self,
++            payload: &mut [u8],
++        ) -> Result<Vec<Deserialization>, mtp::DeserializeError> {
++            self.inner.deserialize(payload)
++        }
++        fn on_packet_sent(&mut self, at: std::time::Instant) {
++            self.timed.push(at);
++        }
++        fn on_packet_sent_now(&mut self) {
++            self.untimed += 1;
++        }
++    }
++
++    async fn reporting_pair() -> (Sender<transport::Full, Reports>, tokio::net::TcpStream) {
++        pair_with(Reports {
++            inner: mtp::Encrypted::build().finish([0; 256]),
++            timed: Vec::new(),
++            untimed: 0,
++        })
++        .await
++    }
++
++    /// Queue a ping under each permit and frame them all, with whatever was queued
++    /// before, into one packet. Their callers are returned, still waiting.
++    fn frame_pings(
++        sender: &mut Sender<transport::Full, Reports>,
++        permits: Vec<Option<crate::InvocationPermit>>,
++    ) -> Vec<crate::PendingInvocation> {
++        let mut waiting = Vec::new();
++        for permit in permits {
++            let (tx, receiver) = oneshot::channel();
++            let ping = tl::functions::Ping { ping_id: 1 }.to_bytes();
++            sender.enqueue_tracked_body(ping.into(), tx, permit);
++            waiting.push(crate::PendingInvocation { receiver });
++        }
++        sender.try_fill_write();
++        waiting
++    }
++
++    /// How many of its requests the sender holds as written.
++    fn written(sender: &Sender<transport::Full, Reports>) -> usize {
++        let requests = sender.requests.iter();
++        requests
++            .filter(|request| matches!(request.state, RequestState::Sent(_)))
++            .count()
++    }
++
++    /// The requests of one packet reached the network together. Those with a tracker
++    /// share one reading of the precise clock, taken for the first of them, and the
++    /// protocol is told that reading instead of another being taken for it.
++    #[tokio::test]
++    async fn tracked_requests_of_one_packet_share_one_precise_clock_read() {
++        use std::sync::Arc;
++        let (mut sender, _peer) = reporting_pair().await;
++        let admission = Arc::new(tokio::sync::Semaphore::new(2));
++        let admitted = || Arc::clone(&admission).try_acquire_owned().unwrap();
++        let trackers = [
++            crate::InvocationTracker::default(),
++            crate::InvocationTracker::default(),
++        ];
++        // Untracked, tracked, admitted only, tracked and admitted.
++        let permits = vec![
++            None,
++            trackers[0].try_acquire(),
++            Some(crate::InvocationPermit::with_capacity(None, admitted())),
++            Some(crate::InvocationPermit::with_capacity(
++                trackers[1].try_acquire(),
++                admitted(),
++            )),
++        ];
++        let _waiting = frame_pings(&mut sender, permits);
++        assert_eq!(sender.requests.len(), 4);
++
++        // A packet partly written has not been sent: no clock is read for it yet.
++        sender.on_net_write(1).unwrap();
++        assert_eq!((sender.mtp.timed.len(), sender.mtp.untimed), (0, 0));
++        assert_eq!(written(&sender), 0);
++        for tracker in &trackers {
++            assert_eq!(tracker.stage(), crate::InvocationStage::Pending);
++            assert!(tracker.sent_at().is_none());
++        }
++
++        let before = std::time::Instant::now();
++        sender.on_net_write(sender.write_buffer.len() - 1).unwrap();
++        let after = std::time::Instant::now();
++        let sent = trackers[0].sent_at().expect("written");
++        assert_eq!(trackers[1].sent_at(), Some(sent));
++        // The precise clock: the kernel's last tick is before `before`, unless a tick
++        // fell in these few nanoseconds.
++        assert!(before <= sent && sent <= after);
++        // The protocol was told once, of that reading.
++        assert_eq!(sender.mtp.timed, [sent]);
++        assert_eq!(sender.mtp.untimed, 0);
++        // All four were in that packet.
++        assert_eq!(written(&sender), 4);
++        for tracker in &trackers {
++            assert_eq!(tracker.stage(), crate::InvocationStage::Sent);
++        }
++    }
++
++    /// Most packets carry no request whose write time anyone reads: requests without
++    /// a permit, with one held for admission alone, and keepalives. Their write does
++    /// not read the precise clock, and leaves the protocol to read the one it needs.
++    #[tokio::test]
++    async fn a_packet_without_tracked_requests_leaves_the_clock_to_the_protocol() {
++        use std::sync::Arc;
++        let (mut sender, _peer) = reporting_pair().await;
++        let admission = Arc::new(tokio::sync::Semaphore::new(2));
++        let admitted = || Arc::clone(&admission).try_acquire_owned().unwrap();
++        sender.on_ping_timeout();
++        let permits = vec![
++            None,
++            Some(crate::InvocationPermit::with_capacity(None, admitted())),
++            Some(crate::InvocationPermit::with_bytes(None, admitted())),
++        ];
++        let _waiting = frame_pings(&mut sender, permits);
++        assert_eq!(sender.requests.len(), 4);
++        assert!(sender.requests[0].result.is_none(), "the keepalive");
++
++        sender.on_net_write(1).unwrap();
++        assert_eq!((sender.mtp.timed.len(), sender.mtp.untimed), (0, 0));
++        assert_eq!(written(&sender), 0);
++        sender.on_net_write(sender.write_buffer.len() - 1).unwrap();
++        assert_eq!((sender.mtp.timed.len(), sender.mtp.untimed), (0, 1));
++        // The keepalive and the three requests were in that packet.
++        assert_eq!(written(&sender), 4);
++    }
++
++    /// A protocol written to be told a time implements `on_packet_sent` alone. It is
++    /// told of every write as before, with a reading of the precise clock.
++    #[tokio::test]
++    async fn a_protocol_that_only_takes_a_time_is_told_the_precise_one() {
++        struct Timed(mtp::Plain, Vec<std::time::Instant>);
++        impl Mtp for Timed {
++            fn push(&mut self, buffer: &mut DequeBuffer<u8>, request: &[u8]) -> Option<MsgId> {
++                self.0.push(buffer, request)
++            }
++            fn finalize(&mut self, buffer: &mut DequeBuffer<u8>) -> Option<MsgId> {
++                self.0.finalize(buffer)
++            }
++            fn deserialize(
++                &mut self,
++                payload: &mut [u8],
++            ) -> Result<Vec<Deserialization>, mtp::DeserializeError> {
++                self.0.deserialize(payload)
++            }
++            fn on_packet_sent(&mut self, at: std::time::Instant) {
++                self.1.push(at);
++            }
++        }
++        let (mut sender, _peer) = pair_with(Timed(mtp::Plain::new(), Vec::new())).await;
++        let (tx, _rx) = oneshot::channel();
++        sender.enqueue_body(Bytes::from_static(&[1; 4]), tx);
++        sender.try_fill_write();
++        let before = std::time::Instant::now();
++        sender.on_net_write(sender.write_buffer.len()).unwrap();
++        let after = std::time::Instant::now();
++        assert_eq!(sender.mtp.1.len(), 1);
++        assert!(before <= sender.mtp.1[0] && sender.mtp.1[0] <= after);
++    }
++
+     #[tokio::test]
+     async fn cancelled_sent_request_keeps_reservation_until_reply_or_disconnect() {
+         use std::sync::Arc;
