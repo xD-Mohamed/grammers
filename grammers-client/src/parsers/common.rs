@@ -11,6 +11,7 @@
 use std::cmp::Ordering;
 use std::fmt::{self, Write as _};
 
+#[cfg(feature = "html")]
 use jiff::Timestamp;
 
 pub const MENTION_URL_PREFIX: &str = "tg://user?id=";
@@ -96,6 +97,8 @@ pub enum Segment<'a> {
     Fixed(&'static str),
     String(&'a str),
     Number(i64),
+    /// A date, which only the HTML parser inserts.
+    #[cfg(feature = "html")]
     Timestamp(Timestamp),
 }
 
@@ -109,6 +112,7 @@ impl<'a> Segment<'a> {
                 let digits = n.abs().ilog10() as usize + 1;
                 minus_sign + digits
             }
+            #[cfg(feature = "html")]
             Self::Timestamp(_) => 25, // "2000-01-01T00:00:00+00:00".len()
         }
     }
@@ -120,6 +124,7 @@ impl<'a> fmt::Display for Segment<'a> {
             Self::Fixed(s) => f.write_str(s),
             Self::String(s) => f.write_str(s),
             Self::Number(s) => write!(f, "{}", s),
+            #[cfg(feature = "html")]
             Self::Timestamp(t) => write!(f, "{}", t),
         }
     }

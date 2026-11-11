@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased: `markdown` without `html` builds without a warning
+
+- `grammers-client` built with `markdown` and without `html` warned that
+  `parsers::common::Segment::Timestamp` is never constructed, which is an error under
+  `-D warnings`. Only the HTML parser inserts a date: the variant exists with `html`
+  now. No behaviour changes in any feature set.
+
 ## Unreleased: every update over 128 B is boxed
 
 - Thirteen more `tl::enums::Update` variants hold their payload structs in `Box`:
