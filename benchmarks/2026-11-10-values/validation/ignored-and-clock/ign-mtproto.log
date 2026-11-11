@@ -1,0 +1,28 @@
+    Finished `release` profile [optimized] target(s) in 0.05s
+     Running unittests src/lib.rs (target/release/deps/grammers_mtproto-fa4f9e5e837b4722)
+
+running 7 tests
+test coarse_clock::tests::benchmark_coarse_clock_cost ... ns per reading: Instant::now 275.1, coarse instant 13.9, SystemTime::now 277.8, coarse unix time 5.6
+ok
+test manual_tl::optimization_tests::benchmark_borrowed_response_envelope ... 512-byte reply median: owned envelope 32.5 ns, borrowed 25.0 ns
+2048-byte reply median: owned envelope 80.6 ns, borrowed 57.1 ns
+8192-byte reply median: owned envelope 167.9 ns, borrowed 99.1 ns
+ok
+test manual_tl::optimization_tests::benchmark_gzip_resource_limit ... gzip limit: 65250 compressed bytes -> 67108864 bytes in 40.754014ms; measure process peak RSS externally
+ok
+test manual_tl::optimization_tests::benchmark_reused_gzip_decoder ... gzip plain=512 packed=289 random=false: fresh 1418.7 ns; reused 675.5 ns
+gzip plain=2048 packed=302 random=false: fresh 1567.7 ns; reused 827.0 ns
+gzip plain=8192 packed=359 random=false: fresh 2260.6 ns; reused 1511.0 ns
+gzip plain=65536 packed=591 random=false: fresh 12297.9 ns; reused 10361.0 ns
+gzip plain=2048 packed=2071 random=true: fresh 1034.8 ns; reused 331.1 ns
+ok
+test manual_tl::optimization_tests::benchmark_rpc_result_reuse ... 512-byte RPC envelope median: allocate 38.7 ns, reuse 22.1 ns
+2048-byte RPC envelope median: allocate 108.8 ns, reuse 66.6 ns
+8192-byte RPC envelope median: allocate 315.0 ns, reuse 175.1 ns
+ok
+test mtp::encrypted::tests::benchmark_ack_serialization ... ACK median: allocate 72.1 ns, reuse 11.6 ns
+ok
+test transport::obfuscated::tests::benchmark_obfuscated_handshake_setup ... Obfuscated handshake setup median: heap scratch 665.7 ns, current 677.4 ns; baseline adds one transient 64-byte Vec allocation; both use current cipher initialization
+ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 129 filtered out; finished in 4.07s

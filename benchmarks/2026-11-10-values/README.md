@@ -19,14 +19,15 @@ Part 1, what the last report listed as not done or not verified:
 - [ ] 1.3 Windows and macOS: `cargo check --target` on the real targets, crate by crate
       (36 representative checks passed on the round's first source; the matrix at the final head is open)
 - [x] 1.4 Ignored tests: every one listed with what it needs, in [the inventory](ignored-tests.md)
-- [ ] 1.5 Ignored tests that need no credentials: run (benchmarks, and probes of Telegram's
-      servers without an account)
+- [x] 1.5 Ignored tests that need no credentials: all 38 run and pass, the four network
+      probes included (one of them new, against a production DC); one test needs
+      test credentials from the owner
 - [ ] 1.6 The coarse clock's open loops (5,000 and 500 RPC/s) measured again at the head
 - [!] 1.7 The peers-step RSS rise persists in non-anonymous pages; exact mapping/function cause unresolved after the 20-minute time box (see peers-rss)
 
 Part 2, the decisions the owner delegated:
 
-- [ ] 2.1 The coarse clock: decision recorded, its `unsafe` block reviewed once more
+- [x] 2.1 The coarse clock: kept, on `libc`; its `unsafe` block reviewed, its failure path tested
 - [ ] 2.2 Large TL values moved by value (`Update`, `Updates`, `types::Message`), on `main`
       (steps 1, 2, 3 and 5 kept; step 4 measured and reverted; shared ownership of a message is open)
 - [ ] 2.3 A send's reply decoded once for its caller and for the update stream
@@ -381,3 +382,53 @@ types' Rustdoc left 179 MiB available at its lowest sample, for less than the
 watchdog's four seconds: it is now the heaviest command of the round. The whole-API
 serde unit passes check and Clippy again at 3,357 / 3,378 MiB peak, 447 / 453 MiB
 available at the lowest, swap moving 67 / 42 MiB.
+
+## Ignored tests
+
+[The inventory](ignored-tests.md) lists 39 ignored tests with what each needs and how
+it ended. 38 need no credentials and all were run once and pass: 32 local benchmarks
+and loopback tests, the bot workload and its mock, and four probes of Telegram's
+servers. The probes are a key exchange and an encrypted `ping` with production DC 2
+(new: `test_production_key_exchange_and_ping`, no `api_id`, no API method), two
+read-only queries on the public test DC, and the first key-exchange step through a
+SOCKS5 server the test starts itself. Four connections, once each, never retried.
+`read_only_bot_session_against_telegram` needs test credentials from the owner and
+was not run. Nothing on this server was searched for credentials or sessions.
+
+## The coarse clock: kept, and its `unsafe` block
+
+**Decision: keep `grammers_mtproto::coarse_clock` (`7e79532`), on `libc`.** It is the
+largest single gain of these rounds where the clock is a system call, as on this host
+(275 ns for a precise reading against 14 ns, measured again above), and costs nothing
+where it is not. `rustix` would replace one `unsafe` block by a safe call, at the
+price of adding it and its three dependencies to every build of the protocol crate,
+and of reading the clock through its own vDSO lookup instead of the C library's. The
+gain depends on that reading staying out of the kernel, which `sysc.c` has counted
+for the C library's path only. `libc` is already in every build through Tokio. No
+concrete reason for `rustix` was found.
+
+The block was read again:
+
+- It is one call, `clock_gettime`, in one function, `read`. The clock identifier is
+  passed by value and an unknown one is reported through the status. The only memory
+  it touches is the `timespec` behind the pointer, which the function owns for the
+  call. That value is zeroed first and all zeroes is a `timespec`, so reading it is
+  sound whether or not the call wrote. The SAFETY comment now says each of these.
+- The status is checked before the value is believed, and a negative or oversized
+  field is refused rather than converted.
+- New tests: a clock the kernel refuses gives no reading
+  (`a_clock_the_kernel_refuses_gives_no_reading`, the failure path of the block), and
+  the raw readings are ordered like their clocks. The existing ones cover the public
+  readings, the conversion on both sides of the anchor and the plausibility check.
+- The fallback is three separate things. Other systems compile a module with no
+  `unsafe` that reads the precise clock: that is what the Windows and macOS checks of
+  line 1.3 compile. A kernel without the clock, or a process whose readings are found
+  over 50 ms from the precise clock twice in a row, falls back for good.
+- The documentation claimed a reading is "at most one tick earlier" than the precise
+  clock. For `instant` that bound is not strict: the conversion adds the delay of one
+  pairing of two clocks. It now says so, and names the 50 ms check as the strict bound.
+  "Never later" was and is exact.
+
+MTProto tests pass (129 unit with the two new ones, its three other test targets and
+its doctests); its seven ignored benchmarks pass. Strict all-target, all-feature Clippy passes for the
+MTProto and sender crates, and Rustdoc with warnings denied for the MTProto crate.

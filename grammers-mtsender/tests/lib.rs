@@ -21,6 +21,46 @@ fn enable_tracing() {
     });
 }
 
+/// Telegram's production DC 2, as in this library's built-in DC options.
+pub const TELEGRAM_PRODUCTION_DC_2: &str = "149.154.167.41:443";
+
+/// One key exchange with a production DC and one encrypted `ping`. Neither needs an
+/// `api_id` or an account: no API method is called. Never run it in a loop.
+#[test]
+#[ignore = "one key exchange and Ping with a production DC, without credentials"]
+fn test_production_key_exchange_and_ping() {
+    use grammers_mtproto::transport;
+    use grammers_mtsender::{ServerAddr, connect};
+    use grammers_tl_types::{enums, functions};
+    use std::time::Duration;
+
+    const PING_ID: i64 = 0x4752_414d;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        tokio::time::timeout(Duration::from_secs(45), async {
+            let mut sender = connect(
+                transport::Full::new(),
+                ServerAddr::Tcp {
+                    address: TELEGRAM_PRODUCTION_DC_2.parse().unwrap(),
+                },
+            )
+            .await
+            .expect("production key exchange");
+            let response = sender.invoke(&functions::Ping { ping_id: PING_ID }).await;
+            // Close the connection before judging the reply.
+            let disconnected = sender.disconnect().await;
+            let enums::Pong::Pong(pong) = response.expect("production encrypted Ping");
+            assert_eq!(pong.ping_id, PING_ID);
+            disconnected.expect("production disconnect");
+        })
+        .await
+        .expect("production DC timeout");
+    });
+}
+
 #[test]
 #[ignore = "read-only unauthenticated query to Telegram's public test DC"]
 fn test_no_updates_initialization_on_public_test_dc() {

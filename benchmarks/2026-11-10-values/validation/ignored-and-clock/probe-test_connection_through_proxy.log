@@ -1,0 +1,11 @@
+
+running 1 test
+test test_connection_through_proxy ... [32m INFO[0m [2mgrammers_mtsender::net::tcp[0m[2m:[0m connecting...
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m enqueueing request req_pq_multi to be serialized
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m serialized request [3mreq_id[0m[2m=[0mbe7e8ef1 [3mreq_name[0m[2m=[0m"req_pq_multi" [3mmsg_id[0m[2m=[0mMsgId(0)
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m sent request with [3mpair[0m[2m=[0mMsgIdPair { msg_id: MsgId(0), container_msg_id: MsgId(0) }
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m deserializing valid transport packet...
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m got result [3mres_id[0m[2m=[0m5162463 [3mres_name[0m[2m=[0m"resPQ" [3mrequest[0m[2m=[0mMsgId(0)
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.05s

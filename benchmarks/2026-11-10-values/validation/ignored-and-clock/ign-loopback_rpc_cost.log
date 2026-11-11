@@ -1,0 +1,25 @@
+
+running 1 test
+test loopback_rpc_cost ... Plain round 0: sampled RPC latency p50/p95/p99 163.8/230.8/257.3 us (1562 samples)
+Plain reply (1592 B) round 0: 99367 RPC/s; client thread 4.37 us user + 5.66 us kernel, 0 cycles per RPC
+Plain round 1: sampled RPC latency p50/p95/p99 182.8/265.5/305.8 us (1371 samples)
+Plain reply (1592 B) round 1: 2.00 allocations, 1817 bytes allocated per RPC
+Plain round 2: sampled RPC latency p50/p95/p99 180.3/269.8/323.2 us (1414 samples)
+Plain reply (1592 B) round 2: 89929 RPC/s; client thread 3.78 us user + 7.34 us kernel, 0 cycles per RPC
+Plain round 3: sampled RPC latency p50/p95/p99 167.4/246.8/306.9 us (1511 samples)
+Plain reply (1592 B) round 3: 2.00 allocations, 1808 bytes allocated per RPC
+Plain round 4: sampled RPC latency p50/p95/p99 164.4/242.4/278.3 us (1563 samples)
+Plain reply (1592 B) round 4: 99614 RPC/s; client thread 4.05 us user + 5.98 us kernel, 0 cycles per RPC
+Gzip round 0: sampled RPC latency p50/p95/p99 183.7/244.3/272.3 us (1536 samples)
+Gzip reply (528 B) round 0: 98109 RPC/s; client thread 3.99 us user + 6.20 us kernel, 0 cycles per RPC
+Gzip round 1: sampled RPC latency p50/p95/p99 144.3/242.4/264.3 us (1550 samples)
+Gzip reply (528 B) round 1: 2.00 allocations, 1806 bytes allocated per RPC
+Gzip round 2: sampled RPC latency p50/p95/p99 144.3/247.9/277.3 us (1518 samples)
+Gzip reply (528 B) round 2: 96460 RPC/s; client thread 4.69 us user + 5.68 us kernel, 0 cycles per RPC
+Gzip round 3: sampled RPC latency p50/p95/p99 171.0/290.6/334.1 us (1360 samples)
+Gzip reply (528 B) round 3: 2.00 allocations, 1818 bytes allocated per RPC
+Gzip round 4: sampled RPC latency p50/p95/p99 151.5/266.3/327.0 us (1490 samples)
+Gzip reply (528 B) round 4: 95094 RPC/s; client thread 4.20 us user + 6.31 us kernel, 0 cycles per RPC
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 13.34s

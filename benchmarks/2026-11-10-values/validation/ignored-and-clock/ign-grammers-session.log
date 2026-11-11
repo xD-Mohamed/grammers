@@ -1,0 +1,26 @@
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+   Compiling grammers-session v0.10.0 (/root/grammers/grammers-session)
+    Finished `release` profile [optimized] target(s) in 34.10s
+     Running unittests src/lib.rs (target/release/deps/grammers_session-a6b242eb704c20f8)
+
+running 4 tests
+test message_box::tests::benchmark_missing_hash_retry_pass ... missing_hash_retry channels=1000 initial_pass_ns=166712 retry_pass_ns=150158
+missing_hash_retry channels=10000 initial_pass_ns=1940009 retry_pass_ns=1957952
+ok
+test message_box::tests::benchmark_pending_channel_deadlines ... pending_deadlines channels=1000 iterations=32 hot_total_ns=491 hot_ns_per_call=15 expired_sweep_ns=2444
+pending_deadlines channels=10000 iterations=32 hot_total_ns=501 hot_ns_per_call=15 expired_sweep_ns=21231
+ok
+test storages::erased::tests::benchmark_memory_and_erased_cache_peers ... peers=0 iterations=100000 ns/batch: memory sequential=15.8 bulk=13.9; erased legacy-equivalent sequential=19.2 bulk=28.5
+peers=1 iterations=100000 ns/batch: memory sequential=52.2 bulk=43.9; erased legacy-equivalent sequential=70.9 bulk=60.9
+peers=8 iterations=12500 ns/batch: memory sequential=233.7 bulk=129.9; erased legacy-equivalent sequential=354.7 bulk=132.4
+peers=100 iterations=1000 ns/batch: memory sequential=2678.1 bulk=1268.8; erased legacy-equivalent sequential=4213.0 bulk=1264.1
+peers=1000 iterations=100 ns/batch: memory sequential=27204.7 bulk=12450.5; erased legacy-equivalent sequential=44940.5 bulk=12933.3
+ok
+test storages::sqlite::tests::benchmark_sqlite_cache_peers_transaction ... peers=0 iterations=200 us/batch: SQLite sequential=0.00 transaction=0.02
+peers=1 iterations=200 us/batch: SQLite sequential=4.29 transaction=4.85
+peers=8 iterations=125 us/batch: SQLite sequential=32.60 transaction=13.18
+peers=100 iterations=10 us/batch: SQLite sequential=438.67 transaction=136.09
+peers=1000 iterations=3 us/batch: SQLite sequential=4343.11 transaction=1334.87
+ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 109 filtered out; finished in 0.73s

@@ -1,0 +1,38 @@
+
+running 1 test
+test test_invoke_encrypted_method ... [32m INFO[0m [2mgrammers_mtsender::net::tcp[0m[2m:[0m connecting...
+[32m INFO[0m [2mgrammers_mtsender::sender[0m[2m:[0m generating new authorization key...
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m gen auth key: sending step 1
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m enqueueing request req_pq_multi to be serialized
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m serialized request [3mreq_id[0m[2m=[0mbe7e8ef1 [3mreq_name[0m[2m=[0m"req_pq_multi" [3mmsg_id[0m[2m=[0mMsgId(0)
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m sent request with [3mpair[0m[2m=[0mMsgIdPair { msg_id: MsgId(0), container_msg_id: MsgId(0) }
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m deserializing valid transport packet...
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m got result [3mres_id[0m[2m=[0m5162463 [3mres_name[0m[2m=[0m"resPQ" [3mrequest[0m[2m=[0mMsgId(0)
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m gen auth key: starting step 2
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m gen auth key: sending step 2
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m enqueueing request req_DH_params to be serialized
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m serialized request [3mreq_id[0m[2m=[0md712e4be [3mreq_name[0m[2m=[0m"req_DH_params" [3mmsg_id[0m[2m=[0mMsgId(0)
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m sent request with [3mpair[0m[2m=[0mMsgIdPair { msg_id: MsgId(0), container_msg_id: MsgId(0) }
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m deserializing valid transport packet...
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m got result [3mres_id[0m[2m=[0md0e8075c [3mres_name[0m[2m=[0m"server_DH_params_ok" [3mrequest[0m[2m=[0mMsgId(0)
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m gen auth key: starting step 3
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m gen auth key: sending step 3
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m enqueueing request set_client_DH_params to be serialized
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m serialized request [3mreq_id[0m[2m=[0mf5045f1f [3mreq_name[0m[2m=[0m"set_client_DH_params" [3mmsg_id[0m[2m=[0mMsgId(0)
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m sent request with [3mpair[0m[2m=[0mMsgIdPair { msg_id: MsgId(0), container_msg_id: MsgId(0) }
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m deserializing valid transport packet...
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m got result [3mres_id[0m[2m=[0m3bcbf734 [3mres_name[0m[2m=[0m"dh_gen_ok" [3mrequest[0m[2m=[0mMsgId(0)
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m gen auth key: completing generation
+[32m INFO[0m [2mgrammers_mtsender::sender[0m[2m:[0m authorization key generated successfully
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m enqueueing request invokeWithLayer to be serialized
+[32m INFO[0m [2mgrammers_mtproto::mtp::encrypted[0m[2m:[0m only one future salt remaining; asking for more salts
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m serialized request [3mreq_id[0m[2m=[0mda9b0d0d [3mreq_name[0m[2m=[0m"invokeWithLayer" [3mmsg_id[0m[2m=[0mMsgId(7706699688250840676)
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m sent request with [3mpair[0m[2m=[0mMsgIdPair { msg_id: MsgId(7706699688250840676), container_msg_id: MsgId(7706699688250840676) }
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m deserializing valid transport packet...
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m deserializing valid transport packet...
+[32m INFO[0m [2mgrammers_mtproto::mtp::encrypted[0m[2m:[0m got 64 future salts
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m deserializing valid transport packet...
+[34mDEBUG[0m [2mgrammers_mtsender::sender[0m[2m:[0m got result [3mres_id[0m[2m=[0m8e1a1775 [3mres_name[0m[2m=[0m"nearestDc" [3mrequest[0m[2m=[0mMsgId(7706699688250840676)
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 1.10s

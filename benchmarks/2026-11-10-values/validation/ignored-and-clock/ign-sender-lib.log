@@ -1,0 +1,46 @@
+   Compiling grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+   Compiling grammers-session v0.10.0 (/root/grammers/grammers-session)
+   Compiling grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Finished `release` profile [optimized] target(s) in 37.78s
+     Running unittests src/lib.rs (target/release/deps/grammers_mtsender-0c05a9361c8f0979)
+
+running 8 tests
+test invocation_tracker::benchmarks::benchmark_invocation_tracking_cost ... invocation lifetime cycle: state-only 5.2 ns; with socket timestamp 278.4 ns (local only)
+ok
+test queue::tests::benchmark_queue_handoff ... current-thread handoff round trip: tokio unbounded 1256.9 ns, lazy queue 1228.6 ns (median)
+two workers handoff round trip: tokio unbounded 14486.7 ns, lazy queue 14877.6 ns (median)
+ok
+test sender::optimization_tests::benchmark_initial_receive_allocation ... initial receive buffer: 1056768 bytes, 9776.0 ns/construction
+initial receive buffer: 1024 bytes, 110.6 ns/construction
+ok
+test sender::optimization_tests::benchmark_own_full_update_decoding ... Full own update / SendMessage text 32 bytes / pending 1, target last: eager 173.7 ns, lazy 108.2 ns median (includes update input clone and decode)
+Full own update / SendMessage text 32 bytes / pending 64, target last: eager 194.1 ns, lazy 109.0 ns median (includes update input clone and decode)
+Full own update / SendMessage text 32 bytes / pending 1024, target last: eager 670.6 ns, lazy 108.7 ns median (includes update input clone and decode)
+Full own update / SendMessage text 4096 bytes / pending 1, target last: eager 2071.1 ns, lazy 102.8 ns median (includes update input clone and decode)
+Full own update / SendMessage text 4096 bytes / pending 64, target last: eager 2114.9 ns, lazy 104.0 ns median (includes update input clone and decode)
+Full own update / SendMessage text 4096 bytes / pending 1024, target last: eager 2537.9 ns, lazy 104.5 ns median (includes update input clone and decode)
+ok
+test sender::optimization_tests::benchmark_ping_timer_reuse ... Pending ping timer median: recreate 473.2 ns, reuse 8.5 ns; retained Sleep=104 bytes
+ok
+test sender_pool::optimization_tests::benchmark_cold_waiter_scan ... cold_waiters=1024 round=0 incremental=true elapsed_us=52
+cold_waiters=1024 round=0 incremental=false elapsed_us=3176
+cold_waiters=1024 round=1 incremental=false elapsed_us=2986
+cold_waiters=1024 round=1 incremental=true elapsed_us=78
+cold_waiters=1024 round=2 incremental=true elapsed_us=54
+cold_waiters=1024 round=2 incremental=false elapsed_us=2953
+cold_waiters=20000 round=0 incremental=true elapsed_us=2591
+cold_waiters=20000 round=0 incremental=false elapsed_us=1276296
+cold_waiters=20000 round=1 incremental=false elapsed_us=1300095
+cold_waiters=20000 round=1 incremental=true elapsed_us=4319
+cold_waiters=20000 round=2 incremental=true elapsed_us=4373
+cold_waiters=20000 round=2 incremental=false elapsed_us=1271951
+ok
+test sender_pool::optimization_tests::benchmark_prepared_request_clones ... 152-byte request clone median: Vec 14.4 ns, shared 11.4 ns
+1024-byte request clone median: Vec 17.3 ns, shared 11.3 ns
+8192-byte request clone median: Vec 114.1 ns, shared 11.2 ns
+ok
+test sender_pool::optimization_tests::benchmark_warm_connection_route ... Routing threads=1 median: pool 1371.5 ns, direct 1332.3 ns
+Routing threads=4 median: pool 17842.2 ns, direct 13289.4 ns
+ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 189 filtered out; finished in 63.82s

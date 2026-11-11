@@ -1,0 +1,48 @@
+    Finished `release` profile [optimized] target(s) in 0.06s
+     Running unittests src/lib.rs (target/release/deps/grammers_crypto-beb17f4c5dd099c6)
+
+running 6 tests
+test aes::tests::benchmark_decrypt_hashed ... decrypt and hash 96 B: portable 288.6 ns, one after the other 173.7 ns, together 152.0 ns
+decrypt and hash 448 B: portable 923.3 ns, one after the other 571.5 ns, together 455.4 ns
+decrypt and hash 656 B: portable 1315.1 ns, one after the other 815.9 ns, together 640.5 ns
+decrypt and hash 1600 B: portable 3092.7 ns, one after the other 1971.5 ns, together 1501.0 ns
+decrypt and hash 16384 B: portable 30091.4 ns, one after the other 19564.9 ns, together 14700.3 ns
+decrypt and hash 1048576 B: portable 1900765.0 ns, one after the other 1226153.5 ns, together 909729.1 ns
+ok
+test aes::tests::benchmark_ige_backend_closure ... IGE 64 B: encrypt per-block 140.0 ns, encrypt portable 129.6 ns, encrypt selected 38.9 ns, decrypt per-block 158.3 ns, decrypt portable 129.8 ns, decrypt selected 41.2 ns
+IGE 448 B: encrypt per-block 775.9 ns, encrypt portable 757.8 ns, encrypt selected 324.1 ns, decrypt per-block 915.8 ns, decrypt portable 780.1 ns, decrypt selected 321.8 ns
+IGE 656 B: encrypt per-block 1172.0 ns, encrypt portable 947.7 ns, encrypt selected 480.6 ns, decrypt per-block 1330.6 ns, decrypt portable 931.9 ns, decrypt selected 486.0 ns
+IGE 1600 B: encrypt per-block 2690.7 ns, encrypt portable 2514.5 ns, encrypt selected 1161.1 ns, decrypt per-block 3183.0 ns, decrypt portable 2563.0 ns, decrypt selected 1186.1 ns
+IGE 2096 B: encrypt per-block 3575.3 ns, encrypt portable 3389.5 ns, encrypt selected 1563.5 ns, decrypt per-block 4155.1 ns, decrypt portable 3421.8 ns, decrypt selected 1546.3 ns
+IGE 16384 B: encrypt per-block 28404.0 ns, encrypt portable 23839.8 ns, encrypt selected 12547.2 ns, decrypt per-block 32429.0 ns, decrypt portable 23810.0 ns, decrypt selected 12535.1 ns
+IGE 1048576 B: encrypt per-block 1814388.2 ns, encrypt portable 1481897.8 ns, encrypt selected 805415.6 ns, decrypt per-block 2089960.6 ns, decrypt portable 1467174.5 ns, decrypt selected 803664.8 ns
+ok
+test benchmarks::benchmark_message_crypto_components ... padding randomness: getrandom 32 B 358.2 ns
+AES-256 key schedule: both directions 36.4 ns, encrypt only 40.9 ns, decrypt only 36.1 ns
+encrypt 448 B plaintext: with OS padding 789.8 ns, fixed padding 695.3 ns
+encrypt 1024 B plaintext: with OS padding 1484.5 ns, fixed padding 1388.8 ns
+decrypt 648 B packet (key check fails after full work): decrypt_data_v2 729.7 ns
+decrypt 1624 B packet (key check fails after full work): decrypt_data_v2 1603.1 ns
+decrypt 2104 B packet (key check fails after full work): decrypt_data_v2 2026.8 ns
+ok
+test factorize::tests::benchmark_factorization_budget ... factorization_full_budget round=0 steps=1250000 elapsed_us=12601
+factorization_full_budget round=1 steps=1250000 elapsed_us=12463
+factorization_full_budget round=2 steps=1250000 elapsed_us=12486
+factorization_full_budget round=3 steps=1250000 elapsed_us=12392
+factorization_full_budget round=4 steps=1250000 elapsed_us=12515
+ok
+test obfuscated::tests::benchmark_obfuscated_cipher_setup ... Obfuscated cipher setup median: heap scratch 113.7 ns, current 96.0 ns; baseline has one transient 64-byte Vec allocation per construction
+ok
+test two_factor_auth::tests::benchmark_published_prime_validation ... full_primality_us=126776.3
+published_prime_us=0.255
+full_primality_us=129875.7
+published_prime_us=0.233
+full_primality_us=122363.3
+published_prime_us=0.226
+full_primality_us=125813.9
+published_prime_us=0.233
+full_primality_us=123829.9
+published_prime_us=0.237
+ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 39 filtered out; finished in 14.17s

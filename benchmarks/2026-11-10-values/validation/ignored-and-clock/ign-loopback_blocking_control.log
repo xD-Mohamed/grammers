@@ -1,0 +1,22 @@
+
+running 1 test
+test loopback_blocking_control ... BLOCKING_WORKER_CPU user_us=27891 sys_us=40296 rpcs=5972
+BLOCKING_WORKER_CPU user_us=26539 sys_us=38698 rpcs=5692
+BLOCKING_WORKER_CPU user_us=16851 sys_us=51356 rpcs=5957
+BLOCKING_WORKER_CPU user_us=4896 sys_us=63314 rpcs=5974
+BLOCKING_WORKER_CPU user_us=22499 sys_us=45716 rpcs=5973
+BLOCKING_WORKER_CPU user_us=20351 sys_us=44798 rpcs=5666
+BLOCKING_WORKER_CPU user_us=28453 sys_us=35891 rpcs=5603
+BLOCKING_WORKER_CPU user_us=32972 sys_us=28516 rpcs=5323
+BLOCKING_WORKER_CPU user_us=4881 sys_us=56615 rpcs=5288
+BLOCKING_WORKER_CPU user_us=6977 sys_us=54646 rpcs=5336
+BLOCKING_WORKER_CPU user_us=19145 sys_us=46655 rpcs=5608
+BLOCKING_WORKER_CPU user_us=26941 sys_us=38855 rpcs=5675
+BLOCKING_WORKER_CPU user_us=30568 sys_us=35233 rpcs=5634
+BLOCKING_WORKER_CPU user_us=15090 sys_us=51214 rpcs=5712
+BLOCKING_WORKER_CPU user_us=11894 sys_us=54671 rpcs=5719
+BLOCKING_WORKER_CPU user_us=27174 sys_us=38470 rpcs=5614
+BLOCKING rate=86367 user_us=3.561 sys_us=7.989 p50_us=164.4 p95_us=276.9 p99_us=431.7
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 1.09s

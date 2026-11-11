@@ -1,0 +1,7 @@
+
+running 1 test
+test loopback_open_loop ... OPEN group=0 cold=false large=false scheduled=500 completed=250 errors=0 dropped=0 peak=2 rate=250 p50_us=806.9 p95_us=1282.4 p99_us=1361.0
+OPEN group=1 cold=false large=false scheduled=500 completed=250 errors=0 dropped=0 peak=2 rate=250 p50_us=823.5 p95_us=1280.8 p99_us=1336.7
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 2.77s

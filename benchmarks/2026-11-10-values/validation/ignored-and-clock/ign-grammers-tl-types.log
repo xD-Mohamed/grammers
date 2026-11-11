@@ -1,0 +1,31 @@
+    Finished `release` profile [optimized] target(s) in 0.04s
+     Running unittests src/lib.rs (target/release/deps/grammers_tl_types-a6ac14dd26423cbe)
+
+running 1 test
+test deserialize::vector_tests::benchmark_vector_deserialization ...      i32 count=   0: collect=      5.5 ns reserved=      7.9 ns ratio=1.422 capacity=0/0
+     i64 count=   0: collect=      5.5 ns reserved=      8.0 ns ratio=1.464 capacity=0/0
+  string count=   0: collect=      9.9 ns reserved=     10.1 ns ratio=1.025 capacity=0/0
+    Peer count=   0: collect=      5.6 ns reserved=      7.6 ns ratio=1.354 capacity=0/0
+     i32 count=   1: collect=     11.9 ns reserved=     19.2 ns ratio=1.611 capacity=4/1
+     i64 count=   1: collect=     12.4 ns reserved=     19.8 ns ratio=1.605 capacity=4/1
+  string count=   1: collect=     39.0 ns reserved=     45.5 ns ratio=1.166 capacity=4/1
+    Peer count=   1: collect=     14.8 ns reserved=     19.2 ns ratio=1.303 capacity=4/1
+     i32 count=   8: collect=     36.2 ns reserved=     23.3 ns ratio=0.643 capacity=8/8
+     i64 count=   8: collect=     37.5 ns reserved=     25.6 ns ratio=0.684 capacity=8/8
+  string count=   8: collect=    233.7 ns reserved=    202.3 ns ratio=0.866 capacity=8/8
+    Peer count=   8: collect=     68.9 ns reserved=     33.4 ns ratio=0.485 capacity=8/8
+     i32 count=  32: collect=    112.3 ns reserved=     39.2 ns ratio=0.349 capacity=32/32
+     i64 count=  32: collect=    117.4 ns reserved=     54.2 ns ratio=0.461 capacity=32/32
+  string count=  32: collect=   1178.6 ns reserved=    844.9 ns ratio=0.717 capacity=32/32
+    Peer count=  32: collect=    166.7 ns reserved=     96.1 ns ratio=0.576 capacity=32/32
+     i32 count= 128: collect=    230.4 ns reserved=    112.3 ns ratio=0.488 capacity=128/128
+     i64 count= 128: collect=    204.7 ns reserved=    149.2 ns ratio=0.729 capacity=128/128
+  string count= 128: collect=   3167.8 ns reserved=   4058.0 ns ratio=1.281 capacity=128/128
+    Peer count= 128: collect=    542.1 ns reserved=    465.1 ns ratio=0.858 capacity=128/128
+     i32 count=1024: collect=    916.0 ns reserved=    851.5 ns ratio=0.930 capacity=1024/1024
+     i64 count=1024: collect=    848.1 ns reserved=   1238.9 ns ratio=1.461 capacity=1024/1024
+  string count=1024: collect=  25482.7 ns reserved=  37466.8 ns ratio=1.470 capacity=1024/1024
+    Peer count=1024: collect=   3065.8 ns reserved=   2862.7 ns ratio=0.934 capacity=1024/1024
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 2.15s

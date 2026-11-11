@@ -16,14 +16,16 @@
 //! reading is a system call of a few hundred nanoseconds, and a connection that takes
 //! one for every packet and every batch of updates spends a tenth of its time on them.
 //!
-//! Both readings here are never later than the precise clock and at most one tick
-//! earlier. Other systems, and a kernel that refuses, get the precise clock, and so
-//! does a process in which the two are ever found further apart than a tick explains.
+//! Both readings here are never later than the precise clock, and normally at most one
+//! tick earlier. That second bound is not strict for [`instant`]: its conversion adds
+//! the delay of one pairing of two clocks, made on first use, and a reading found more
+//! than 50 ms behind the precise clock ends the use of the coarse one in that process.
+//! Other systems, and a kernel that refuses, get the precise clock.
 
 use std::time::{Duration, Instant};
 
 /// The monotonic clock as of the kernel's last tick: never later than
-/// [`Instant::now`], and at most one tick earlier.
+/// [`Instant::now`], and normally at most one tick earlier.
 ///
 /// Do not wait for a deadline with this alone. A timer that fires at a deadline can
 /// find this reading still a tick short of it: read [`Instant::now`] after a timer.
@@ -31,14 +33,19 @@ use std::time::{Duration, Instant};
 /// it. Readings of this function alone do not go backwards.
 ///
 /// The tick's time is converted to an [`Instant`] through one pairing of the two
-/// clocks, made on first use, which sets every reading back by the fraction of a
-/// microsecond that pairing took.
+/// clocks, made on first use, which sets every reading back by what that pairing took:
+/// a fraction of a microsecond for the closest of the eight pairs tried, more only if
+/// the thread was made to wait inside every one of them. A tick is therefore the
+/// usual age of a reading and not a strict bound on it. The strict one is the check
+/// made once a second: a reading over 50 ms behind [`Instant::now`] twice in a row
+/// makes every later call return [`Instant::now`].
 pub fn instant() -> Instant {
     imp::instant()
 }
 
 /// The time since the Unix epoch as of the kernel's last tick: never later than
-/// [`std::time::SystemTime::now`], and at most one tick earlier.
+/// [`std::time::SystemTime::now`], and at most one tick earlier. It is the same clock,
+/// so it steps when the system time is corrected, as that one does.
 ///
 /// # Panics
 ///
@@ -79,11 +86,14 @@ mod imp {
 
     /// `clock` since its epoch, or `None` if the kernel does not have that clock.
     #[allow(unsafe_code)]
-    fn read(clock: libc::clockid_t) -> Option<Duration> {
+    pub(super) fn read(clock: libc::clockid_t) -> Option<Duration> {
         let mut time = std::mem::MaybeUninit::<libc::timespec>::zeroed();
-        // SAFETY: `time` is a valid, writable `timespec` that outlives the call, which
-        // writes nothing else. It was zeroed, and every bit pattern of its integer
-        // fields is a value, so it is initialized whatever the call wrote.
+        // SAFETY: `clock_gettime` takes any clock identifier by value and reports one it
+        // does not know through its status. Its only effect on memory is to write one
+        // `timespec` through the pointer when it succeeds. `time` is a live, aligned
+        // `timespec` this function alone borrows, for longer than the call. It was
+        // zeroed, and all zeroes is a `timespec` (its fields are integers, with padding
+        // on some targets), so it is initialized whether or not the call wrote it.
         let (status, time) = unsafe {
             let status = libc::clock_gettime(clock, time.as_mut_ptr());
             (status, time.assume_init())
@@ -276,6 +286,27 @@ mod tests {
         ));
         // And nothing that is derived from an earlier moment can be later.
         assert!(!imp::plausible(precise + Duration::from_nanos(1), precise));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn a_clock_the_kernel_refuses_gives_no_reading() {
+        // The call fails and writes nothing: the zeroed time must not be taken for one.
+        assert_eq!(imp::read(-1), None);
+        assert_eq!(imp::read(libc::clockid_t::MAX), None);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn the_raw_readings_are_ordered_like_their_clocks() {
+        let before = imp::read(libc::CLOCK_MONOTONIC).unwrap();
+        let coarse = imp::read(libc::CLOCK_MONOTONIC_COARSE).unwrap();
+        let after = imp::read(libc::CLOCK_MONOTONIC).unwrap();
+        assert!(before <= after);
+        // The last tick is not in the future, and not far in the past.
+        assert!(coarse <= after, "{coarse:?} is later than {after:?}");
+        assert!(before.saturating_sub(coarse) < SLACK);
+        assert!(imp::read(libc::CLOCK_REALTIME_COARSE).unwrap() > Duration::from_secs(1));
     }
 
     /// What a reading costs here, beside the precise clock.
