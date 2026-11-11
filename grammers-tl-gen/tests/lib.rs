@@ -343,3 +343,47 @@ fn collectible_leaves_are_boxed_and_ordinary_ones_stay_inline() -> io::Result<()
     assert!(enums.contains("Collectible(crate::types::sample::PeerColorCollectible),"));
     Ok(())
 }
+
+#[test]
+fn short_update_fields_are_boxed_only_in_those_updates() -> io::Result<()> {
+    let definitions = get_definitions(
+        "
+        messageMediaEmpty#3ded6320 = MessageMedia;
+        messageFwdHeader#4e4df4bb date:int = MessageFwdHeader;
+        messageReplyHeader#ddb5ab75 flags:# reply_to_msg_id:flags.4?int reply_media:flags.8?MessageMedia = MessageReplyHeader;
+        updateShortMessage#313bc7f8 flags:# id:int fwd_from:flags.2?MessageFwdHeader reply_to:flags.3?MessageReplyHeader = Updates;
+        updateShortChatMessage#4d6deea5 flags:# id:int fwd_from:flags.2?MessageFwdHeader reply_to:flags.3?MessageReplyHeader = Updates;
+        updateShortSentMessage#9015e101 flags:# id:int media:flags.9?MessageMedia = Updates;
+        message#9d2e9f66 flags:# id:int fwd_from:flags.2?MessageFwdHeader reply_to:flags.3?MessageReplyHeader media:flags.9?MessageMedia = Message;
+    ",
+    );
+    let (_, types, _, enums) = gen_rust_code(&definitions)?;
+    let count = |needle: &str| types.matches(needle).count();
+    // The reply header's own boxed media is the second boxed `MessageMedia` decoder.
+    for (field, ty, boxed, decoders) in [
+        ("fwd_from", "MessageFwdHeader", 2, 2),
+        ("reply_to", "MessageReplyHeader", 2, 2),
+        ("media", "MessageMedia", 1, 2),
+    ] {
+        assert_eq!(
+            count(&format!("pub {field}: Option<Box<crate::enums::{ty}>>,")),
+            boxed
+        );
+        assert_eq!(
+            count(&format!(
+                "Some(Box::new(crate::enums::{ty}::deserialize(buf)?))"
+            )),
+            decoders
+        );
+        // A message keeps all three inline: it is where these fields end up.
+        assert_eq!(
+            count(&format!("pub {field}: Option<crate::enums::{ty}>,")),
+            1
+        );
+    }
+    // The updates themselves stay inline variants, matched as before.
+    assert!(enums.contains("UpdateShortMessage(crate::types::UpdateShortMessage),"));
+    assert!(enums.contains("UpdateShortChatMessage(crate::types::UpdateShortChatMessage),"));
+    assert!(enums.contains("UpdateShortSentMessage(crate::types::UpdateShortSentMessage),"));
+    Ok(())
+}

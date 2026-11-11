@@ -1,0 +1,255 @@
+   Compiling grammers-session v0.10.0 (/root/grammers/grammers-session)
+   Compiling grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+   Compiling grammers-client v0.10.0 (/root/grammers/grammers-client)
+    Finished `release` profile [optimized] target(s) in 2m 29s
+     Running unittests src/lib.rs (target/release/deps/grammers_client-fce53b41c6387f8c)
+
+running 132 tests
+test client::auth::safety_tests::malformed_password_fields_are_rejected_before_crypto ... ok
+test client::auth::safety_tests::missing_password_algorithm_returns_error_without_panicking ... ok
+test client::auth::safety_tests::missing_zero_and_overflow_migration_dc_are_rejected ... ok
+test client::auth::safety_tests::out_of_range_srp_b_refreshes_parameters_only_once ... ok
+test client::auth::safety_tests::password_b_encoding_length_matches_srp_reference_boundaries ... ok
+test client::auth::safety_tests::password_token_debug_does_not_expose_password_state ... ok
+test client::auth::safety_tests::payment_required_is_actionable_and_redacted ... ok
+test client::auth::safety_tests::srp_job_preserves_current_thread_progress ... ok
+test client::auth::safety_tests::started_srp_jobs_keep_capacity_after_cancellation_and_proof_waits ... ok
+test client::auth::safety_tests::unexpected_sent_code_success_does_not_create_login_token ... ok
+test client::auth::safety_tests::unknown_password_algorithm_returns_unsupported_without_panicking ... ok
+test client::chats::peer_cache_tests::get_me_caches_explicit_self_metadata_with_automatic_cache_disabled ... ok
+test client::chats::peer_cache_tests::get_me_rejects_missing_or_invalid_identity_without_caching ... ok
+test client::chats::peer_cache_tests::memory_client_can_disable_peer_cache_without_losing_reply_peers ... ok
+test client::device::tests::defaults_match_connection_platform_and_locale_defaults ... ok
+test client::files::safety_tests::cancelling_next_preserves_the_download_request ... ok
+test client::files::safety_tests::cancelling_parallel_download_drops_all_worker_clients ... ok
+test client::files::safety_tests::cdn_redirect_returns_unsupported_without_exposing_key_material ... ok
+test client::files::safety_tests::chunk_results_preserve_offsets_and_exact_final_size ... ok
+test client::files::safety_tests::concurrent_initial_chunks_publish_migration_for_later_chunks ... ok
+test client::files::safety_tests::disk_failure_drops_pending_requests_without_result_channel_panics ... ok
+test client::files::safety_tests::final_flush_failure_is_returned_to_the_caller ... ok
+test client::files::safety_tests::invalid_media_inputs_fail_without_starting_network_work ... ok
+test client::files::safety_tests::late_migration_response_cannot_overwrite_a_newer_shared_route ... ok
+test client::files::safety_tests::migration_cycles_have_a_finite_recovery_budget ... ok
+test client::files::safety_tests::migration_then_authorization_still_retries_the_chunk_successfully ... ok
+test client::files::safety_tests::pending_chunk_requests_are_bounded ... ok
+test client::files::safety_tests::repeated_auth_failure_exports_once_and_preserves_rpc_error ... ok
+test client::files::safety_tests::repeated_same_dc_migration_is_returned_without_retry_loop ... ok
+test client::files::safety_tests::sequential_download_preserves_structured_error_kind ... ok
+test client::files::safety_tests::shared_setup_errors_keep_download_migration_and_authorization_recovery ... ok
+test client::files::safety_tests::short_or_oversized_chunks_cannot_leave_silent_gaps ... ok
+test client::files::safety_tests::worker_failure_drops_other_pending_requests_and_preserves_error ... ok
+test client::files::safety_tests::zero_download_workers_cannot_report_success_for_unwritten_file ... ok
+test client::messages::response_mapping_tests::albums_keep_cardinality_and_reject_failed_or_missing_media ... ok
+test client::messages::response_mapping_tests::one_sent_message_is_chosen_as_among_several ... ok
+test client::messages::response_mapping_tests::self_lookup_failure_prevents_text_and_media_send_requests ... ok
+test client::messages::response_mapping_tests::self_send_resolves_identity_before_text_or_media_delivery ... ok
+test client::messages::response_mapping_tests::unmappable_send_responses_preserve_input_cardinality ... ok
+test client::messages::response_mapping_tests::upload_media_preserves_requests_responses_and_errors ... ok
+test client::net::tests::authorization_copy_cache_does_not_survive_key_replacement ... ok
+test client::net::tests::authorization_copy_without_a_key_establishes_it_before_importing ... ok
+test client::qr_login::tests::failed_import_does_not_change_home_or_finish_login ... ok
+test client::qr_login::tests::invalid_and_cyclic_migrations_never_finish_login ... ok
+test client::qr_login::tests::malformed_display_tokens_are_rejected_without_exposing_bytes ... ok
+test client::qr_login::tests::password_challenge_is_requested_from_migrated_dc_and_errors_propagate ... ok
+test client::qr_login::tests::qr_step_future_can_be_supervised_on_send_executors ... ok
+test client::qr_login::tests::sign_up_and_finish_errors_do_not_become_authorized ... ok
+test client::qr_login::tests::success_is_finished_and_migration_import_precedes_home_change ... ok
+test client::qr_login::tests::token_url_uses_base64url_without_padding_and_debug_is_redacted ... ok
+test client::qr_login::tests::unaccepted_tokens_are_displayed_without_changing_home_or_finishing_login ... ok
+test client::runtime::tests::builder_rejects_invalid_values_without_spawning ... ok
+test client::runtime::tests::concurrent_run_and_timeout_stop_share_the_terminal_reason ... ok
+test client::runtime::tests::concurrent_run_waiters_share_one_startup_request ... ok
+test client::runtime::tests::concurrent_stop_deadlines_share_the_first_terminal_reason ... ok
+test client::runtime::tests::explicit_connect_does_not_report_cached_startup_success ... ok
+test client::runtime::tests::explicit_connect_retries_after_session_route_changes ... ok
+test client::runtime::tests::foreign_sources_export_to_reusable_native_strings ... ok
+test client::runtime::tests::grouped_device_settings_preserve_omitted_defaults_and_flat_overrides ... ok
+test client::runtime::tests::last_client_drop_terminates_owned_runner ... ok
+test client::runtime::tests::managed_defaults_do_not_retry_ambiguous_io ... ok
+test client::runtime::tests::managed_idle_start_stop_is_idempotent_and_terminal ... ok
+test client::runtime::tests::memory_build_is_offline_and_start_reports_missing_runtime ... ok
+test client::runtime::tests::native_builder_preserves_preference_and_legacy_export ... ok
+test client::runtime::tests::ready_shutdown_stops_without_opening_a_connection ... ok
+test client::runtime::tests::request_level_closed_startup_error_cannot_become_success ... ok
+test client::runtime::tests::run_connectivity_failure_stops_without_login_prompt ... ok
+test client::runtime::tests::run_reports_runner_panic_instead_of_secondary_closed_reply ... ok
+test client::runtime::tests::session_export_returns_a_string_and_offers_redacted_storage ... ok
+test client::runtime::tests::shutdown_timeout_aborts_and_joins_owned_task ... ok
+test client::runtime::tests::startup_failure_is_shared_with_other_run_and_stop_waiters ... ok
+test client::runtime::tests::startup_overload_does_not_stop_existing_traffic ... ok
+test client::runtime::tests::stop_before_start_closes_parked_runner ... ok
+test client::runtime::tests::stop_wakes_run_during_a_long_startup_retry_sleep ... ok
+test client::runtime::tests::supervised_runner_redacts_own_panic_and_stops_clones ... ok
+test client::runtime::tests::timeout_does_not_overwrite_an_authoritative_runner_failure ... ok
+test client::updates::tests::a_failed_peer_write_is_attempted_again ... ok
+test client::updates::tests::cancelled_peer_cache_preserves_the_entire_update_batch ... ok
+test client::updates::tests::ensure_next_update_future_impls_send ... ok
+test client::updates::tests::peers_are_kept_as_a_list_up_to_sixteen_and_by_kind ... ok
+test client::updates::tests::peers_of_a_response_are_found_few_or_many ... ok
+test client::updates::tests::responses_without_peers_share_one_empty_map ... ok
+test client::updates::tests::stored_peers_age_by_the_time_the_caller_passes ... ok
+test client::updates::tests::stored_peers_stay_bounded_and_recognize_recent_peers_after_growing ... ok
+test client::updates::tests::unchanged_peers_are_written_again_after_a_while ... ok
+test client::updates::tests::unchanged_peers_are_written_to_storage_only_once ... ok
+test dispatcher::tests::builtin_filters_distinguish_message_direction_edits_and_exact_commands ... ok
+test dispatcher::tests::cancellation_drops_active_handler_and_never_starts_next ... ok
+test dispatcher::tests::composition_short_circuits_and_negation_preserves_predicates ... ok
+test dispatcher::tests::errors_preserve_source_and_skip_later_handlers ... ok
+test dispatcher::tests::handlers_run_in_registration_order_and_break_stops_propagation ... ok
+test dispatcher::tests::panics_at_all_stages_are_typed_and_payload_is_discarded ... ok
+test media::input_media::tests::audio_builder_preserves_attributes_and_thumbnail ... ok
+test media::input_media::tests::fallible_ttl_preserves_legacy_wire_values_and_builder_fields ... ok
+test media::input_media::tests::fallible_ttl_returns_overflow_without_clamping_or_panicking ... ok
+test media::input_media::tests::legacy_video_ttl_still_rejects_overflow - should panic ... ok
+test media::input_media::tests::typed_media_ttl_maps_all_variants ... ok
+test media::input_media::tests::typed_media_ttl_rejects_overflow - should panic ... ok
+test media::input_media::tests::video_builder_preserves_flags_attributes_and_ttl ... ok
+test message::input_message::send_options_tests::send_options_default_explicitly_resets_only_listed_options ... ok
+test message::input_message::send_options_tests::send_options_default_matches_existing_message_defaults ... ok
+test message::input_message::send_options_tests::send_options_preserve_existing_rich_payload ... ok
+test parsers::html::tests::malformed_mentions_remain_text_links ... ok
+test parsers::html::tests::parse_all_entities ... ok
+test parsers::html::tests::parse_emoji ... ok
+test parsers::html::tests::parse_empty_pre_and_lang ... ok
+test parsers::html::tests::parse_leading ... ok
+test parsers::html::tests::parse_link_no_href ... ok
+test parsers::html::tests::parse_nested_entities ... ok
+test parsers::html::tests::parse_pre_with_lang ... ok
+test parsers::html::tests::parse_then_unparse ... ok
+test parsers::html::tests::parse_then_unparse_overlapping ... ok
+test parsers::html::tests::parse_then_unparse_time ... ok
+test parsers::html::tests::parse_then_unparse_time_with_format ... ok
+test parsers::html::tests::parse_time_with_both_valid_and_invalid_date ... ok
+test parsers::html::tests::parse_time_with_invalid_date ... ok
+test parsers::html::tests::parse_time_with_timestamp ... ok
+test parsers::html::tests::parse_time_with_zone ... ok
+test parsers::html::tests::parse_trailing ... ok
+test parsers::markdown::tests::malformed_mentions_remain_text_links ... ok
+test parsers::markdown::tests::parse_all_entities ... ok
+test parsers::markdown::tests::parse_emoji ... ok
+test parsers::markdown::tests::parse_leading ... ok
+test parsers::markdown::tests::parse_nested_entities ... ok
+test parsers::markdown::tests::parse_then_unparse ... ok
+test parsers::markdown::tests::parse_then_unparse_overlapping ... ok
+test parsers::markdown::tests::parse_trailing ... ok
+test update::model::tests::message_updates_hold_one_message_and_rebuild_their_raw_update_on_request ... ok
+test update::model::tests::peerless_channel_edit_is_retained_as_raw ... ok
+test update::model::tests::peerless_guest_chat_messages_preserve_the_entire_raw_update ... ok
+test update::model::tests::peerless_messages_of_every_kind_are_retained_as_their_own_raw_update ... ok
+test update::model::tests::raw_keeps_its_first_reading_and_into_raw_takes_the_message_as_it_is ... ok
+
+test result: ok. 132 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.51s
+
+     Running tests/api_compatibility.rs (target/release/deps/api_compatibility-21e72aa8bfe06249)
+
+running 2 tests
+test downstream_serializers_sinks_and_deque_extensions_remain_compatible ... ok
+test legacy_ttl_call_patterns_and_conversion_remain_available ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/bot_workload.rs (target/release/deps/bot_workload-b86f84016ea1e33f)
+
+running 2 tests
+test bot_mock_server ... ignored, mock server role of bot_workload
+test bot_workload ... ignored, local bot workload measurement; run explicitly with --nocapture
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deps.rs (target/release/deps/deps-cebbf93e55588b74)
+
+running 1 test
+test check_deps_documented ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/live_telegram_bot.rs (target/release/deps/live_telegram_bot-d50541bf8f7fa4ae)
+
+running 1 test
+test read_only_bot_session_against_telegram ... ignored, contacts Telegram with your own test bot; see the header of this file
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/receiver_sqlite_cost.rs (target/release/deps/receiver_sqlite_cost-4575844a9f1ee4e8)
+
+running 1 test
+test benchmark_sqlite_self_lookup_and_live_receiver ... ignored, local SQLite lookup/live-receiver component benchmark; no network
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests grammers_client
+
+running 69 tests
+test grammers-client/src/client/auth.rs - client::auth::Client::bot_sign_in (line 318) ... ok
+test grammers-client/src/client/auth.rs - client::auth::Client::check_password (line 547) ... ok
+test grammers-client/src/client/auth.rs - client::auth::Client::is_authorized (line 242) ... ok
+test grammers-client/src/client/auth.rs - client::auth::Client::request_login_code (line 393) ... ok
+test grammers-client/src/client/auth.rs - client::auth::Client::sign_in (line 467) ... ok
+test grammers-client/src/client/auth.rs - client::auth::Client::sign_out (line 636) ... ok
+test grammers-client/src/client/bots.rs - client::bots::Client::inline_query (line 144) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::action (line 1021) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::action (line 977) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::action (line 990) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::get_me (line 497) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::get_permissions (line 796) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::iter_participants (line 553) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::iter_profile_photos (line 716) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::kick_participant (line 585) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::resolve_peer (line 734) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::resolve_username (line 464) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::set_admin_rights (line 680) ... ok
+test grammers-client/src/client/chats.rs - client::chats::Client::set_banned_rights (line 636) ... ok
+test grammers-client/src/client/device.rs - client::device::DeviceConfig (line 7) ... ok
+test grammers-client/src/client/dialogs.rs - client::dialogs::Client::clear_mentions (line 249) ... ok
+test grammers-client/src/client/dialogs.rs - client::dialogs::Client::delete_dialog (line 176) ... ok
+test grammers-client/src/client/dialogs.rs - client::dialogs::Client::iter_dialogs (line 147) ... ok
+test grammers-client/src/client/dialogs.rs - client::dialogs::Client::mark_as_read (line 220) ... ok
+test grammers-client/src/client/files.rs - client::files::Client::download_media (line 370) ... ok
+test grammers-client/src/client/files.rs - client::files::Client::iter_download (line 307) ... ok
+test grammers-client/src/client/files.rs - client::files::Client::upload_file (line 589) ... ok
+test grammers-client/src/client/files.rs - client::files::Client::upload_stream (line 477) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::delete_messages (line 1045) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::edit_message (line 975) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::forward_messages (line 1092) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::get_messages_by_id (line 1292) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::get_pinned_message (line 1341) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::get_reply_to_message (line 1147) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::iter_messages (line 1224) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::pin_message (line 1383) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::search_all_messages (line 1268) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::search_messages (line 1245) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_album (line 852) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_message (line 719) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_message_with_options (line 818) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_reactions (line 1464) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_reactions (line 1475) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::send_reactions (line 1489) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::unpin_all_messages (line 1439) ... ok
+test grammers-client/src/client/messages.rs - client::messages::Client::unpin_message (line 1403) ... ok
+test grammers-client/src/client/messages.rs - client::messages::SearchIter::max_date (line 559) ... ok
+test grammers-client/src/client/messages.rs - client::messages::SearchIter::min_date (line 540) ... ok
+test grammers-client/src/client/net.rs - client::net::Client::invoke (line 84) ... ok
+test grammers-client/src/client/net.rs - client::net::Client::new (line 30) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputAudio (line 31) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputMedia::attribute (line 330) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputMedia::thumbnail (line 285) ... ok
+test grammers-client/src/media/input_media.rs - media::input_media::InputVideo (line 66) ... ok
+test grammers-client/src/message/input_message.rs - message::input_message::InputMessage::attribute (line 338) ... ok
+test grammers-client/src/message/input_message.rs - message::input_message::InputMessage::thumbnail (line 293) ... ok
+test grammers-client/src/message/input_message.rs - message::input_message::InputMessage::with_options (line 52) ... ok
+test grammers-client/src/message/input_rich_message.rs - message::input_rich_message::InputRichMessage::html (line 42) ... ok
+test grammers-client/src/message/input_rich_message.rs - message::input_rich_message::InputRichMessage::markdown (line 68) ... ok
+test grammers-client/src/message/input_rich_message.rs - message::input_rich_message::InputRichMessage::photo (line 130) ... ok
+test grammers-client/src/message/message.rs - message::model::Message::react (line 507) ... ok
+test grammers-client/src/message/message.rs - message::model::Message::react (line 516) ... ok
+test grammers-client/src/message/message.rs - message::model::Message::react (line 529) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::force_reply (line 224) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::from_buttons (line 54) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::from_keys (line 132) ... ok
+test grammers-client/src/message/reply_markup.rs - message::reply_markup::ReplyMarkup::hide (line 198) ... ok
+test grammers-client/src/message/send_options.rs - message::send_options::SendOptions (line 17) ... ok
+test grammers-client/src/peer/action.rs - peer::action::ActionSender::repeat (line 79) ... ok
+
+test result: ok. 69 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+all doctests ran in 0.88s; merged doctests compilation took 0.73s

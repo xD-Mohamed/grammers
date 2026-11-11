@@ -162,8 +162,10 @@ pub enum UpdatesLike {
     /// Special-case for short-sent messages,
     /// where the request is also needed to construct a complete update.
     ShortSentMessage {
-        /// The request that triggered the short update.
-        request: tl::functions::messages::SendMessage,
+        /// The request that triggered the short update. Boxed: it is several times
+        /// the size of every other variant, and each of these values is moved from
+        /// the connection to the update stream.
+        request: Box<tl::functions::messages::SendMessage>,
         /// The incomplete update caused by the request.
         update: tl::types::UpdateShortSentMessage,
     },

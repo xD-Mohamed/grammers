@@ -1,0 +1,30 @@
+open500 round 1/12 load=0.41
+open500 round 2/12 load=0.41
+open500 round 3/12 load=0.38
+open500 round 4/12 load=0.33
+open500 round 5/12 load=0.36
+open500 round 6/12 load=0.26
+open500 round 7/12 load=0.25
+open500 round 8/12 load=0.18
+open500 round 9/12 load=0.12
+open500 round 10/12 load=0.17
+open500 round 11/12 load=0.12
+open500 round 12/12 load=0.08
+
+open500
+metric                  base       final   vs base
+rate                  500.00      500.00    +0.00% [+0.00,+0.00]
+updates_per_s         625.00      625.00    +0.00% [+0.00,+0.00]
+updates_lost            0.00        0.00  no ratio
+cpu_us                104.23      104.20    -0.35% [-5.27,+3.85]
+user_us                60.80       51.28  no ratio
+sys_us                 50.77       54.86  no ratio
+core_share              0.05        0.05    +0.00% [-5.61,+4.94]
+allocs_per_rpc         18.51       18.51    +0.11% [-0.08,+0.16]
+bytes_per_rpc        7735.00     7739.50    +0.12% [-0.06,+0.12]
+p50_us               1122.30     1409.00   +20.57% [-25.95,+51.03]
+p95_us               1589.20     1876.00   +15.75% [-18.16,+36.64]
+p99_us               1703.95     1974.30   +12.09% [-21.36,+44.82]
+rss_steady_kib       8394.00     8380.00    -0.12% [-1.19,+1.28]
+rss_peak_kib         3232.00     3478.00    +7.28% [+4.18,+9.30]*
+live_heap_b        227104.00   205768.00    -9.27% [-10.15,-8.63]*

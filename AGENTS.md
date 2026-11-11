@@ -18,6 +18,15 @@
   colours, and the rare collectible set the size of all three. Their ordinary
   constructors stay inline. `depth_tests.rs` guards `User` and `Chat` at 480 B: a new
   large constructor in a type every user or channel carries needs the same rule.
+- The short updates hold `fwd_from`, `reply_to` and (short-sent) `media` as optional
+  boxed fields, and `UpdatesLike::ShortSentMessage` holds its request in a `Box`:
+  `Updates` is 248 B instead of 624 and `UpdatesLike` 272 B instead of 832. The
+  session adaptor and `Message::from_raw_short_updates` unbox them into the message,
+  which keeps them inline: a new place that turns a short update into a message does
+  the same. `Updates` is now the size of `updateShort`, one inline `Update`: its guard
+  is 256 B, and it only gets smaller if `Update` does. The boxed request costs one
+  allocation per short-sent message and was kept for 3% of CPU: do not unbox it
+  without measuring, and Clippy's `large_enum_variant` fails if it is inline.
 - A message behind an `Arc` and a send's reply decoded once were built on 2026-11-11
   and are not on `main`: the reply decoded once is a loss of 2.1% even with shared
   messages, and `Arc` alone is nothing. The patches and numbers are under

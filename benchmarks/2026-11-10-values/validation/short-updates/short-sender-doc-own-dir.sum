@@ -1,0 +1,27 @@
+GUARD start short-sender-doc-own-dir: avail=3460MB swap_used=1297MB swap_free=2798MB vlimit=4000000
+GUARD end short-sender-doc-own-dir: rc=0 secs=43 peak_rss_one_proc=1132MB peak_rss_all=1209MB min_avail=2392MB swap_used_max=1297MB (start 1297MB, moved 0MB)
+    Checking rustls-webpki v0.103.16
+    Checking crossbeam-channel v0.5.17
+    Checking futures-channel v0.3.34
+    Checking uuid v1.28.0
+   Compiling async-trait v0.1.92
+    Checking tagptr v0.2.0
+   Compiling httparse v1.10.1
+    Checking equivalent v1.0.3
+    Checking subtle v2.6.1
+    Checking hickory-net v0.26.3
+    Checking moka v0.12.16
+    Checking grammers-crypto v0.10.0 (/root/grammers/grammers-crypto)
+    Checking resolv-conf v0.7.6
+    Checking log v0.4.34
+    Checking os_info v3.15.0
+    Checking hickory-resolver v0.26.3
+    Checking grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+    Checking tokio-socks v0.5.3
+    Checking tokio-rustls v0.26.6
+    Checking grammers-session v0.10.0 (/root/grammers/grammers-session)
+    Checking webpki-roots v1.0.11
+    Checking locate-locale v0.2.0
+ Documenting grammers-mtsender v0.10.0 (/root/grammers/grammers-mtsender)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 43.23s
+   Generated /tmp/claude-0/de27/target-gendoc/doc/grammers_mtsender/index.html

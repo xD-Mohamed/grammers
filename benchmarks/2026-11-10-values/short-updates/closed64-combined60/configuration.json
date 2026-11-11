@@ -1,0 +1,16 @@
+{
+  "scenarios": {
+    "closed64": {
+      "BOT_CONCURRENCY": "64",
+      "BOT_CLIENT_CPUS": "0"
+    }
+  },
+  "server_cpus": "2,3",
+  "binaries": {
+    "base": "e07efcf3f9f754d649b2bd12d34bf720716af7a2bda482c038c9f5b5983609dd",
+    "final": "b6b07fc32c1e367c0e1adc95cfb3a797b95f1e911540e3e5b18bdfa9b7c0db05"
+  },
+  "rounds": 60,
+  "allocator_provenance": "both phases ran from the same task shell without GLIBC_TUNABLES",
+  "method": "Unadjusted paired bootstrap 95% intervals, same seeded median-ratio method as original harness; all phases retained."
+}

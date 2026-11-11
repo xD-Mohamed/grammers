@@ -1,0 +1,3 @@
+   Compiling grammers-client v0.10.0 (/root/grammers/grammers-client)
+    Finished `release` profile [optimized] target(s) in 15.90s
+  Executable tests/bot_workload.rs (target/release/deps/bot_workload-e073fa60169e44d9)

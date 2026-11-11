@@ -74,7 +74,10 @@ const SPARE_READ_BUFFER_SIZE: usize = 4 * 1024;
 /// Bytes read per unit of scheduler budget. Smaller is fairer to other connections on
 /// the thread, larger gives this one more throughput: see benchmarks/2026-10-31-bot.
 const READ_CHARGE_UNIT: usize = 2 * 1024;
-/// Update batches kept for the next read, in elements of up to about 2 KiB each.
+/// Update batches kept for the next read, in elements. An element was about 2 KiB
+/// when this was set and is under 300 B since the short updates and the request of
+/// a short-sent message are boxed; a cap in bytes was measured on 2026-11-11 and
+/// changed nothing.
 const MAX_RECYCLED_UPDATES: usize = 8;
 
 /// How much leading space should be reserved in a buffer to avoid moving memory.
@@ -158,7 +161,10 @@ fn deserialize_own_update<'a>(
         UpdatesLike::Updates(tl::enums::Updates::UpdateShortSentMessage(update)) => {
             // Short sent messages need their original text and peer; full updates do not.
             match request().and_then(deserialize_request::<tl::functions::messages::SendMessage>) {
-                Some(request) => UpdatesLike::ShortSentMessage { request, update },
+                Some(request) => UpdatesLike::ShortSentMessage {
+                    request: Box::new(request),
+                    update,
+                },
                 None => UpdatesLike::Updates(tl::enums::Updates::UpdateShortSentMessage(update)),
             }
         }
@@ -1456,7 +1462,10 @@ pub(crate) mod optimization_tests {
             (
                 Ok(UpdatesLike::Updates(tl::enums::Updates::UpdateShortSentMessage(update))),
                 Some(request),
-            ) => Ok(UpdatesLike::ShortSentMessage { request, update }),
+            ) => Ok(UpdatesLike::ShortSentMessage {
+                request: Box::new(request),
+                update,
+            }),
             (Ok(UpdatesLike::AffectedMessages(affected)), _) => {
                 let channel = request()
                     .and_then(deserialize_request::<tl::functions::channels::DeleteMessages>)

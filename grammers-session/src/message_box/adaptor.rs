@@ -69,9 +69,9 @@ fn update_short_message(short: tl::types::UpdateShortMessage) -> tl::types::Upda
                 }
                 .into(),
                 saved_peer_id: None,
-                fwd_from: short.fwd_from,
+                fwd_from: short.fwd_from.map(|header| *header),
                 via_bot_id: short.via_bot_id,
-                reply_to: short.reply_to,
+                reply_to: short.reply_to.map(|header| *header),
                 date: short.date,
                 message: short.message,
                 media: None,
@@ -142,9 +142,9 @@ fn update_short_chat_message(
                 }
                 .into(),
                 saved_peer_id: None,
-                fwd_from: short.fwd_from,
+                fwd_from: short.fwd_from.map(|header| *header),
                 via_bot_id: short.via_bot_id,
-                reply_to: short.reply_to,
+                reply_to: short.reply_to.map(|header| *header),
                 date: short.date,
                 message: short.message,
                 media: None,
@@ -250,6 +250,7 @@ pub(super) fn adapt(updates: UpdatesLike) -> Result<tl::types::UpdatesCombined, 
     match updates {
         UpdatesLike::Updates(updates) => adapt_updates(updates),
         UpdatesLike::ShortSentMessage { request, update } => {
+            let request = *request;
             Ok(update_short(tl::types::UpdateShort {
                 update: tl::types::UpdateNewMessage {
                     message: tl::types::Message {
@@ -316,7 +317,7 @@ pub(super) fn adapt(updates: UpdatesLike) -> Result<tl::types::UpdatesCombined, 
                         }),
                         date: update.date,
                         message: request.message,
-                        media: update.media,
+                        media: update.media.map(|media| *media),
                         reply_markup: request.reply_markup,
                         entities: update.entities.or(request.entities),
                         views: None,
@@ -839,6 +840,139 @@ impl PtsInfo {
             // No wildcard: an update a new layer adds must be given its sequence here to
             // compile. One with `pts` or `qts` that falls through as `None` is delivered,
             // and the next update of its sequence then looks like a gap.
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grammers_tl_types::{Deserializable, Identifiable, Serializable};
+
+    fn contact() -> tl::enums::MessageMedia {
+        tl::types::MessageMediaContact {
+            phone_number: "123".into(),
+            first_name: "first".into(),
+            last_name: "last".into(),
+            vcard: "card".into(),
+            user_id: 7,
+        }
+        .into()
+    }
+
+    /// A forwarded reply, as the server sends it to a private chat or to a basic group.
+    fn short_message(chat: bool) -> tl::enums::Updates {
+        let mut bytes = Vec::new();
+        if chat {
+            tl::types::UpdateShortChatMessage::CONSTRUCTOR_ID.serialize(&mut bytes);
+        } else {
+            tl::types::UpdateShortMessage::CONSTRUCTOR_ID.serialize(&mut bytes);
+        }
+        ((1u32 << 2) | (1 << 3)).serialize(&mut bytes);
+        5i32.serialize(&mut bytes);
+        6i64.serialize(&mut bytes);
+        if chat {
+            7i64.serialize(&mut bytes);
+        }
+        b"short text".as_slice().serialize(&mut bytes);
+        8i32.serialize(&mut bytes);
+        1i32.serialize(&mut bytes);
+        9i32.serialize(&mut bytes);
+        tl::types::MessageFwdHeader::CONSTRUCTOR_ID.serialize(&mut bytes);
+        (1u32 << 5).serialize(&mut bytes);
+        b"forwarder".as_slice().serialize(&mut bytes);
+        77i32.serialize(&mut bytes);
+        tl::types::MessageReplyHeader::CONSTRUCTOR_ID.serialize(&mut bytes);
+        (1u32 << 4).serialize(&mut bytes);
+        41i32.serialize(&mut bytes);
+        tl::enums::Updates::from_bytes(&bytes).unwrap()
+    }
+
+    fn only_message(combined: tl::types::UpdatesCombined) -> tl::types::Message {
+        let [tl::enums::Update::NewMessage(update)] =
+            <[_; 1]>::try_from(combined.updates).unwrap_or_else(|updates| panic!("{updates:?}"))
+        else {
+            panic!("expected one new message");
+        };
+        match update.message {
+            tl::enums::Message::Message(message) => *message,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// The short updates hold their headers in a `Box`, a message holds them inline: the
+    /// message made from one must end up with the same headers.
+    #[test]
+    fn a_short_message_hands_its_boxed_headers_to_the_message() {
+        for chat in [false, true] {
+            let message = only_message(adapt(UpdatesLike::Updates(short_message(chat))).unwrap());
+            assert_eq!((message.id, message.message.as_str()), (5, "short text"));
+            match message.fwd_from {
+                Some(tl::enums::MessageFwdHeader::Header(header)) => {
+                    assert_eq!(header.from_name.as_deref(), Some("forwarder"));
+                    assert_eq!(header.date, 77);
+                }
+                None => panic!("the forward header was lost"),
+            }
+            match message.reply_to {
+                Some(tl::enums::MessageReplyHeader::Header(header)) => {
+                    assert_eq!(header.reply_to_msg_id, Some(41));
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_short_sent_message_hands_its_boxed_media_to_the_message() {
+        for media in [None, Some(contact())] {
+            let request = tl::functions::messages::SendMessage {
+                no_webpage: false,
+                silent: false,
+                background: false,
+                clear_draft: false,
+                peer: tl::types::InputPeerUser {
+                    user_id: 6,
+                    access_hash: 1,
+                }
+                .into(),
+                reply_to: None,
+                message: "sent text".into(),
+                random_id: 9,
+                reply_markup: None,
+                entities: None,
+                schedule_date: None,
+                schedule_repeat_period: None,
+                send_as: None,
+                noforwards: false,
+                update_stickersets_order: false,
+                invert_media: false,
+                quick_reply_shortcut: None,
+                effect: None,
+                allow_paid_floodskip: false,
+                allow_paid_stars: None,
+                suggested_post: None,
+                rich_message: None,
+            };
+            let update = tl::types::UpdateShortSentMessage {
+                out: true,
+                id: 5,
+                pts: 8,
+                pts_count: 1,
+                date: 9,
+                media: media.clone().map(Box::new),
+                entities: None,
+                ttl_period: None,
+            };
+            let message = only_message(
+                adapt(UpdatesLike::ShortSentMessage {
+                    request: Box::new(request),
+                    update,
+                })
+                .unwrap(),
+            );
+            assert_eq!((message.id, message.message.as_str()), (5, "sent text"));
+            assert_eq!(message.media, media);
         }
     }
 }

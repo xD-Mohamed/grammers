@@ -1,0 +1,52 @@
+   Compiling grammers-tl-gen v0.10.0 (/root/grammers/grammers-tl-gen)
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+   Compiling grammers-mtproto v0.10.0 (/root/grammers/grammers-mtproto)
+   Compiling grammers-session v0.10.0 (/root/grammers/grammers-session)
+error[E0308]: mismatched types
+  --> grammers-session/src/message_box/adaptor.rs:72:27
+   |
+72 |                 fwd_from: short.fwd_from,
+   |                           ^^^^^^^^^^^^^^ expected `Option<MessageFwdHeader>`, found `Option<Box<MessageFwdHeader>>`
+   |
+   = note: expected enum `Option<MessageFwdHeader>`
+              found enum `Option<Box<MessageFwdHeader>>`
+
+error[E0308]: mismatched types
+  --> grammers-session/src/message_box/adaptor.rs:74:27
+   |
+74 |                 reply_to: short.reply_to,
+   |                           ^^^^^^^^^^^^^^ expected `Option<MessageReplyHeader>`, found `Option<Box<MessageReplyHeader>>`
+   |
+   = note: expected enum `Option<MessageReplyHeader>`
+              found enum `Option<Box<MessageReplyHeader>>`
+
+error[E0308]: mismatched types
+   --> grammers-session/src/message_box/adaptor.rs:145:27
+    |
+145 |                 fwd_from: short.fwd_from,
+    |                           ^^^^^^^^^^^^^^ expected `Option<MessageFwdHeader>`, found `Option<Box<MessageFwdHeader>>`
+    |
+    = note: expected enum `Option<MessageFwdHeader>`
+               found enum `Option<Box<MessageFwdHeader>>`
+
+error[E0308]: mismatched types
+   --> grammers-session/src/message_box/adaptor.rs:147:27
+    |
+147 |                 reply_to: short.reply_to,
+    |                           ^^^^^^^^^^^^^^ expected `Option<MessageReplyHeader>`, found `Option<Box<MessageReplyHeader>>`
+    |
+    = note: expected enum `Option<MessageReplyHeader>`
+               found enum `Option<Box<MessageReplyHeader>>`
+
+error[E0308]: mismatched types
+   --> grammers-session/src/message_box/adaptor.rs:319:32
+    |
+319 |                         media: update.media,
+    |                                ^^^^^^^^^^^^ expected `Option<MessageMedia>`, found `Option<Box<MessageMedia>>`
+    |
+    = note: expected enum `Option<MessageMedia>`
+               found enum `Option<Box<MessageMedia>>`
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `grammers-session` (lib) due to 5 previous errors
+warning: build failed, waiting for other jobs to finish...

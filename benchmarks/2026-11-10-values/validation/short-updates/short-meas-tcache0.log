@@ -1,0 +1,26 @@
+closed64 round 1/8 load=0.68
+closed64 round 2/8 load=0.81
+closed64 round 3/8 load=0.99
+closed64 round 4/8 load=0.99
+closed64 round 5/8 load=1.07
+closed64 round 6/8 load=1.21
+closed64 round 7/8 load=1.25
+closed64 round 8/8 load=1.21
+
+closed64
+metric                  base       final   vs base
+rate               191076.00   192744.50    +0.76% [-3.35,+2.88]
+updates_per_s      238845.00   240930.50    +0.76% [-2.43,+2.87]
+updates_lost            0.00        0.00  no ratio
+cpu_us                  5.22        5.18    -0.77% [-2.64,+3.16]
+user_us                 3.99        4.03    -0.34% [-3.13,+2.79]
+sys_us                  1.14        1.19    +1.12% [-13.28,+11.11]
+core_share              1.00        1.00    +0.00% [-0.20,+0.10]
+allocs_per_rpc         17.63       17.63    +0.00% [+0.00,+0.00]
+bytes_per_rpc        7283.50     6710.00    -7.89% [-8.08,-7.40]*
+p50_us                329.75      327.70    +0.00% [-3.71,+2.57]
+p95_us                401.40      395.25    -2.03% [-5.06,+3.13]
+p99_us                444.45      434.20    -2.76% [-6.18,+4.72]
+rss_steady_kib       8418.00     8324.00    -0.40% [-1.57,+2.15]
+rss_peak_kib         6224.00     6240.00    +1.03% [-1.54,+4.06]
+live_heap_b        376736.00   347792.00    -7.69% [-7.71,-7.67]*

@@ -574,8 +574,9 @@ fn update_types_stay_small_enough_to_move_around() {
         "{}",
         size_of::<enums::Update>()
     );
+    // `updateShort` holds one `Update` inline: this follows the guard above.
     assert!(
-        size_of::<enums::Updates>() <= 1024,
+        size_of::<enums::Updates>() <= 256,
         "{}",
         size_of::<enums::Updates>()
     );
@@ -816,4 +817,147 @@ fn boxed_collectible_leaves_keep_their_wire_format() {
     assert!(size_of::<enums::PeerColor>() <= 32);
     assert!(size_of::<enums::User>() <= 480);
     assert!(size_of::<enums::Chat>() <= 480);
+}
+
+fn contact_media(bytes: &mut Vec<u8>) {
+    id::<types::MessageMediaContact>(bytes);
+    b"123".as_slice().serialize(bytes);
+    b"first".as_slice().serialize(bytes);
+    b"last".as_slice().serialize(bytes);
+    b"card".as_slice().serialize(bytes);
+    7i64.serialize(bytes);
+}
+
+fn short_message(chat: bool, forwarded: bool, reply: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    if chat {
+        id::<types::UpdateShortChatMessage>(&mut bytes);
+    } else {
+        id::<types::UpdateShortMessage>(&mut bytes);
+    }
+    let flags = (1u32 << 25) | if forwarded { 1 << 2 } else { 0 } | if reply { 1 << 3 } else { 0 };
+    flags.serialize(&mut bytes);
+    5i32.serialize(&mut bytes);
+    6i64.serialize(&mut bytes);
+    if chat {
+        7i64.serialize(&mut bytes);
+    }
+    b"short text".as_slice().serialize(&mut bytes);
+    8i32.serialize(&mut bytes);
+    1i32.serialize(&mut bytes);
+    9i32.serialize(&mut bytes);
+    if forwarded {
+        id::<types::MessageFwdHeader>(&mut bytes);
+        (1u32 << 5).serialize(&mut bytes);
+        b"forwarder".as_slice().serialize(&mut bytes);
+        77i32.serialize(&mut bytes);
+    }
+    if reply {
+        // With media: a boxed field inside a boxed field.
+        bytes.extend(reply_header(true));
+    }
+    // A field after both, so that a prefix can end once they have decoded.
+    60i32.serialize(&mut bytes);
+    bytes
+}
+
+fn short_sent_message(with_media: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    id::<types::UpdateShortSentMessage>(&mut bytes);
+    ((1u32 << 1) | (1 << 25) | if with_media { 1 << 9 } else { 0 }).serialize(&mut bytes);
+    5i32.serialize(&mut bytes);
+    8i32.serialize(&mut bytes);
+    1i32.serialize(&mut bytes);
+    9i32.serialize(&mut bytes);
+    if with_media {
+        contact_media(&mut bytes);
+    }
+    60i32.serialize(&mut bytes);
+    bytes
+}
+
+#[test]
+fn boxed_short_update_fields_keep_their_wire_format() {
+    for chat in [false, true] {
+        for (forwarded, reply) in [(false, false), (true, false), (false, true), (true, true)] {
+            let bytes = short_message(chat, forwarded, reply);
+            round_trip::<enums::Updates>(&bytes);
+            let (fwd_from, reply_to, text, ttl_period) =
+                match enums::Updates::from_bytes(&bytes).unwrap() {
+                    enums::Updates::UpdateShortMessage(short) if !chat => (
+                        short.fwd_from,
+                        short.reply_to,
+                        short.message,
+                        short.ttl_period,
+                    ),
+                    enums::Updates::UpdateShortChatMessage(short) if chat => (
+                        short.fwd_from,
+                        short.reply_to,
+                        short.message,
+                        short.ttl_period,
+                    ),
+                    other => panic!("{other:?}"),
+                };
+            assert_eq!((text.as_str(), ttl_period), ("short text", Some(60)));
+            match fwd_from.as_deref() {
+                Some(enums::MessageFwdHeader::Header(header)) => {
+                    assert!(forwarded);
+                    assert_eq!(header.from_name.as_deref(), Some("forwarder"));
+                    assert_eq!(header.date, 77);
+                }
+                None => assert!(!forwarded),
+            }
+            match reply_to.as_deref() {
+                Some(enums::MessageReplyHeader::Header(header)) => {
+                    assert!(reply);
+                    assert_eq!(header.reply_to_msg_id, Some(41));
+                    assert!(header.reply_media.is_some());
+                }
+                Some(other) => panic!("{other:?}"),
+                None => assert!(!reply),
+            }
+            // Every prefix, including those that end after an owned header decoded.
+            for end in 0..bytes.len() {
+                assert_error::<enums::Updates>(&bytes[..end], Error::UnexpectedEof);
+            }
+        }
+    }
+
+    for with_media in [false, true] {
+        let bytes = short_sent_message(with_media);
+        round_trip::<enums::Updates>(&bytes);
+        let enums::Updates::UpdateShortSentMessage(sent) =
+            enums::Updates::from_bytes(&bytes).unwrap()
+        else {
+            panic!("expected a short sent message");
+        };
+        assert!(sent.out);
+        assert_eq!((sent.id, sent.pts, sent.ttl_period), (5, 8, Some(60)));
+        if with_media {
+            assert!(matches!(
+                sent.media.as_deref(),
+                Some(enums::MessageMedia::Contact(contact)) if contact.user_id == 7
+            ));
+        } else {
+            assert!(sent.media.is_none());
+        }
+        let rebuilt: enums::Updates = sent.into();
+        assert_eq!(rebuilt.to_bytes(), bytes);
+        for end in 0..bytes.len() {
+            assert_error::<enums::Updates>(&bytes[..end], Error::UnexpectedEof);
+        }
+    }
+
+    eprintln!(
+        "UpdateShortMessage={} UpdateShortChatMessage={} UpdateShortSentMessage={} Updates={}",
+        size_of::<types::UpdateShortMessage>(),
+        size_of::<types::UpdateShortChatMessage>(),
+        size_of::<types::UpdateShortSentMessage>(),
+        size_of::<enums::Updates>()
+    );
+    assert!(size_of::<types::UpdateShortMessage>() <= 128);
+    assert!(size_of::<types::UpdateShortChatMessage>() <= 136);
+    assert!(size_of::<types::UpdateShortSentMessage>() <= 72);
+    // What is left is `updateShort`, which holds one `Update` inline.
+    assert!(size_of::<enums::Updates>() <= 256);
 }

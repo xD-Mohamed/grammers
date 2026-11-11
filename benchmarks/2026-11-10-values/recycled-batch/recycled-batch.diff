@@ -1,0 +1,39 @@
+diff --git a/grammers-mtsender/src/sender.rs b/grammers-mtsender/src/sender.rs
+index ce1d9c6..a5f0362 100644
+--- a/grammers-mtsender/src/sender.rs
++++ b/grammers-mtsender/src/sender.rs
+@@ -74,8 +74,13 @@ const SPARE_READ_BUFFER_SIZE: usize = 4 * 1024;
+ /// Bytes read per unit of scheduler budget. Smaller is fairer to other connections on
+ /// the thread, larger gives this one more throughput: see benchmarks/2026-10-31-bot.
+ const READ_CHARGE_UNIT: usize = 2 * 1024;
+-/// Update batches kept for the next read, in elements of up to about 2 KiB each.
+-const MAX_RECYCLED_UPDATES: usize = 8;
++/// Bytes of update batch kept for the next read: what eight elements took when an
++/// element was about 2 KiB.
++const MAX_RECYCLED_UPDATES_BYTES: usize = 16 * 1024;
++/// Update batches kept for the next read, in elements. An element shrank with the
++/// generated types, and a vector grows by doubling: a count fixed at eight came to
++/// drop every batch of a busy connection, which then grew a new one at each read.
++const MAX_RECYCLED_UPDATES: usize = MAX_RECYCLED_UPDATES_BYTES / size_of::<UpdatesLike>();
+ 
+ /// How much leading space should be reserved in a buffer to avoid moving memory.
+ const LEADING_BUFFER_SPACE: usize = mtp::MAX_TRANSPORT_HEADER_LEN
+@@ -2113,6 +2118,18 @@ pub(crate) mod optimization_tests {
+     async fn only_small_update_batches_keep_their_vector() {
+         let mut sender = pair_with(mtp::Encrypted::build().finish([0; 256])).await.0;
+         let batch = |capacity: usize| Vec::<UpdatesLike>::with_capacity(capacity);
++        // The cap is in bytes. A busy connection's reads deliver up to sixteen updates,
++        // which a vector reaches by doubling: that one must be kept, and the next not.
++        eprintln!(
++            "UpdatesLike={} MAX_RECYCLED_UPDATES={MAX_RECYCLED_UPDATES}",
++            size_of::<UpdatesLike>()
++        );
++        assert!((16..32).contains(&MAX_RECYCLED_UPDATES));
++        sender.recycle_updates(batch(16), 16);
++        assert_eq!(sender.recycled_updates.capacity(), 16);
++        sender.recycled_updates = Vec::new();
++        sender.recycle_updates(batch(32), 32);
++        assert_eq!(sender.recycled_updates.capacity(), 0);
+         // A single update is not worth keeping memory for the life of a connection.
+         sender.recycle_updates(batch(1), 1);
+         assert_eq!(sender.recycled_updates.capacity(), 0);

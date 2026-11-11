@@ -1,0 +1,164 @@
+completed pair 1/14
+completed pair 2/14
+completed pair 3/14
+completed pair 4/14
+completed pair 5/14
+completed pair 6/14
+completed pair 7/14
+completed pair 8/14
+completed pair 9/14
+completed pair 10/14
+completed pair 11/14
+completed pair 12/14
+completed pair 13/14
+completed pair 14/14
+{
+  "Plain": {
+    "rate": {
+      "baseline_median": 85316.5,
+      "candidate_median": 84601.5,
+      "paired_delta_percent": -0.5737683172437003,
+      "bootstrap_95_percent": [
+        -4.513533194278163,
+        2.0154091891384063
+      ]
+    },
+    "user_us": {
+      "baseline_median": 4.715,
+      "candidate_median": 4.68,
+      "paired_delta_percent": -0.0874908168035815,
+      "bootstrap_95_percent": [
+        -4.627187384781189,
+        11.876484560570066
+      ]
+    },
+    "sys_us": {
+      "baseline_median": 6.93,
+      "candidate_median": 7.16,
+      "paired_delta_percent": 0.6024219529346342,
+      "bootstrap_95_percent": [
+        -3.424657534246578,
+        6.056129985228953
+      ]
+    },
+    "cpu_us": {
+      "baseline_median": 11.615,
+      "candidate_median": 11.765,
+      "paired_delta_percent": 0.5180758087734993,
+      "bootstrap_95_percent": [
+        -2.3562622915257405,
+        3.7828947368421018
+      ]
+    },
+    "p50_us": {
+      "baseline_median": 173.35,
+      "candidate_median": 178.0,
+      "paired_delta_percent": 0.4883454693095146,
+      "bootstrap_95_percent": [
+        -2.049085237477338,
+        5.7184184475862825
+      ]
+    },
+    "p95_us": {
+      "baseline_median": 305.35,
+      "candidate_median": 306.04999999999995,
+      "paired_delta_percent": 0.35116909230665794,
+      "bootstrap_95_percent": [
+        -3.7881219903691865,
+        5.1101824975811505
+      ]
+    },
+    "p99_us": {
+      "baseline_median": 366.65,
+      "candidate_median": 371.15,
+      "paired_delta_percent": 2.293456618595291,
+      "bootstrap_95_percent": [
+        -9.975131251726987,
+        10.32651977701089
+      ]
+    },
+    "process_rss_kib": {
+      "baseline_median": 11512.0,
+      "candidate_median": 11508.0,
+      "paired_delta_percent": 0.0,
+      "bootstrap_95_percent": [
+        -0.03474635163307482,
+        0.0
+      ]
+    }
+  },
+  "Gzip": {
+    "rate": {
+      "baseline_median": 82593.0,
+      "candidate_median": 82771.0,
+      "paired_delta_percent": 1.1342561490803704,
+      "bootstrap_95_percent": [
+        -1.9115964173964661,
+        2.1191494488283835
+      ]
+    },
+    "user_us": {
+      "baseline_median": 5.18,
+      "candidate_median": 5.09,
+      "paired_delta_percent": -3.577326459721375,
+      "bootstrap_95_percent": [
+        -8.065269485398641,
+        5.338809034907599
+      ]
+    },
+    "sys_us": {
+      "baseline_median": 6.835,
+      "candidate_median": 6.869999999999999,
+      "paired_delta_percent": 0.5621660056216615,
+      "bootstrap_95_percent": [
+        -2.2922636103151928,
+        5.2710843373493965
+      ]
+    },
+    "cpu_us": {
+      "baseline_median": 12.055,
+      "candidate_median": 12.055,
+      "paired_delta_percent": -1.0368550969034884,
+      "bootstrap_95_percent": [
+        -2.0864101881219344,
+        2.1319619008532964
+      ]
+    },
+    "p50_us": {
+      "baseline_median": 168.95,
+      "candidate_median": 168.65,
+      "paired_delta_percent": -2.025659871899288,
+      "bootstrap_95_percent": [
+        -3.1934992929931405,
+        1.6492801142234281
+      ]
+    },
+    "p95_us": {
+      "baseline_median": 324.6,
+      "candidate_median": 326.65,
+      "paired_delta_percent": 0.6103317460763147,
+      "bootstrap_95_percent": [
+        -1.9573599240265915,
+        3.014450976935812
+      ]
+    },
+    "p99_us": {
+      "baseline_median": 389.3,
+      "candidate_median": 388.25,
+      "paired_delta_percent": 0.08436117050620306,
+      "bootstrap_95_percent": [
+        -4.1941098684311395,
+        5.439662001584367
+      ]
+    },
+    "process_rss_kib": {
+      "baseline_median": 11512.0,
+      "candidate_median": 11508.0,
+      "paired_delta_percent": 0.0,
+      "bootstrap_95_percent": [
+        -0.03474635163307482,
+        0.0
+      ]
+    }
+  }
+}

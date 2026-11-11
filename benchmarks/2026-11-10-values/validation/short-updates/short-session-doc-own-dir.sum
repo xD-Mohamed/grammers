@@ -1,0 +1,27 @@
+GUARD start short-session-doc-own-dir: avail=3481MB swap_used=1297MB swap_free=2798MB vlimit=4000000
+GUARD end short-session-doc-own-dir: rc=0 secs=55 peak_rss_one_proc=1046MB peak_rss_all=1120MB min_avail=2474MB swap_used_max=1297MB (start 1297MB, moved 0MB)
+    Checking tracing v0.1.44
+    Checking digest v0.10.7
+   Compiling darling v0.24.1
+   Compiling grammers-tl-types v0.10.0 (/root/grammers/grammers-tl-types)
+    Checking bytes v1.12.1
+    Checking futures-executor v0.3.34
+   Compiling thiserror-impl v1.0.69
+    Checking cpufeatures v0.2.17
+   Compiling serde_json v1.0.154
+    Checking futures v0.3.34
+    Checking libsql-sys v0.9.30
+   Compiling serde_with_macros v3.24.0
+    Checking parking_lot v0.12.5
+   Compiling async-trait v0.1.92
+    Checking itoa v1.0.18
+    Checking hex v0.4.3
+    Checking serde_with v3.24.0
+    Checking libsql v0.9.30
+    Checking sha2 v0.10.9
+    Checking sha1 v0.10.7
+    Checking tokio v1.54.0
+    Checking base64 v0.22.1
+ Documenting grammers-session v0.10.0 (/root/grammers/grammers-session)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 54.80s
+   Generated /tmp/claude-0/de27/target-gendoc/doc/grammers_session/index.html

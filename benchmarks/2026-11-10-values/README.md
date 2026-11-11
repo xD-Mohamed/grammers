@@ -35,7 +35,9 @@ Part 2, the decisions the owner delegated:
 - [-] 2.3 A send's reply decoded once for its caller and for the update stream: built a
       third time, on shared messages, and measured as a loss of 2.10% [+0.33, +3.08] (step 6)
 - [x] 2.4 A fresh profile at the head (`5165ee5`), and what it shows, largest first
-- [ ] 2.5 The allocator's share
+- [x] 2.5 The allocator's share and the values it serves: the short updates and the request of
+      a short-sent message are boxed (step 8, kept: CPU -3.44% [-4.55, -1.29], heap -14.6%);
+      a cap in bytes for the recycled batch measured as nothing and is not landed
 - [x] 2.6 The peers of a batch: users and channels are a third smaller (step 7, kept:
       CPU -2.21% [-3.21, -1.41]); the cache's early return was not built (nothing to measure)
 - [-] 2.7 The connection's precise clock reading at each write: built and tested, measured
@@ -622,3 +624,116 @@ peak, 288 MiB available at its lowest sample, swap moving 34 MiB: the heaviest c
 of the round, inside the watchdog's limits). The whole-API serde unit passes check and
 Clippy at 3,316 / 3,379 MiB, 381 / 476 MiB available at the lowest, swap moving
 58 / 46 MiB. A fresh reviewer found no defect.
+
+## The allocator's share
+
+The allocator is 15% of the profile and 17.63 allocations per request are left. The
+sites are the decoded data: the boxed message of each update and reply, the vectors of
+updates, users and chats, the list of peers, and one reply buffer and one channel per
+request. Two things were tried here.
+
+**A cap in bytes for the connection's recycled batch of updates: nothing, not landed.**
+The sampled sites showed that batch vector growing, and its cap of eight elements dated
+from when an element was about 2 KiB. [Counting the cap in bytes](recycled-batch/recycled-batch.diff)
+(19 elements at 832 B) changed nothing in the saturated workload over 30 pairs:
+17.63 allocations per request before and after, allocated bytes -0.05% [-0.18, +0.19],
+CPU +0.70% [-0.82, +2.02]. The sampled listing comes from a run slowed by the sampler,
+in which updates outnumber requests: its per-request figures are not the workload's.
+[Logs](recycled-batch).
+
+**The values that pass through the allocator's neighbours, moved by value: step 8.**
+
+## Step 8: short updates and the request of a short-sent message
+
+`tl::enums::Updates` was 624 B because `updateShortMessage` and
+`updateShortChatMessage` hold a forward header (176 B) and a reply header (336 B)
+inline, and `updateShortSentMessage` a media enum (304 B). Every `Updates` value has
+that size whatever its constructor, and it is moved from the decoder into the session's
+`UpdatesLike`, into the connection's batch, through the queue to the update stream and
+into the message box. Two changes, measured apart and together:
+
+1. Those five optional fields use the generator's existing optional-field rule and are
+   held in a `Box`. A plain short message has none of them and allocates nothing more.
+2. `UpdatesLike::ShortSentMessage` holds its request, a 472 B `messages.sendMessage`,
+   in a `Box`. With the first change it was twice the size of every other variant,
+   which strict Clippy rejects (`large_enum_variant`: 536 B against 272 B), and it is
+   what each short-sent message carries to the update stream.
+
+| Type | Before, B | After, B |
+|---|---:|---:|
+| `types::UpdateShortMessage` | 616 | 120 |
+| `types::UpdateShortChatMessage` | 624 | 128 |
+| `types::UpdateShortSentMessage` | 360 | 64 |
+| `enums::Updates` | 624 | 248 |
+| `grammers_session::updates::UpdatesLike` | 832 | 272 |
+
+`Updates` is now the size of `updateShort`, which holds one `Update` (240 B) inline.
+
+Base `fcf4f4f`. Same release profile, features and fixed RSS harness; local mocks; both
+use the coarse clock on this host, where the precise clock is a system call. Paired
+median-ratio bootstrap. Saturated bot, 64 callers:
+
+| Comparison | Pairs | CPU/RPC | RPC/s | Allocations/RPC | Allocated B/RPC | Heap |
+|---|---:|---:|---:|---:|---:|---:|
+| The five fields, against the base | 60 | **-1.81%** [-2.40, -0.57] | **+1.78%** [+0.42, +2.54] | 17.63, unchanged | -7.97% [-8.06, -7.90] | -6.89% [-7.14, -6.34] |
+| The boxed request, against the five fields | 30 | **-3.16%** [-3.92, -2.26] | **+3.14%** [+2.39, +3.96] | 17.63 to 17.88 | -5.89% [-6.00, -5.78] | -6.18% [-6.86, -5.50] |
+| **Both, against the base** | 30 | **-3.44%** [-4.55, -1.29] | **+3.71%** [+1.17, +4.90] | 17.63 to 17.88 | **-13.45%** [-13.59, -13.32] | **-12.53%** [-13.07, -12.20] |
+
+The first row is two phases of 30 pairs: the first ended at -1.92% [-2.67, +0.73], so a
+second was run and both are kept (it alone: -1.01% [-2.40, +0.20]).
+
+Both, against the base, in the other scenarios:
+
+| Scenario | CPU/RPC change, 95% interval | Other result |
+|---|---:|---|
+| 5,000 RPC/s, 8 pairs | -0.54% [-7.21, +5.40] | allocated bytes -3.48%, heap -15.54% [-18.41, -8.83] |
+| 500 RPC/s, 12 pairs | +3.88% [-7.71, +6.83] | allocated bytes **+1.52%** [+1.43, +1.53], heap -17.09% [-17.38, -16.36], steady RSS -1.49% [-3.47, -0.81] |
+| Saturated, tcache disabled, 8 pairs | -3.68% [-7.37, -0.40] | heap **-14.56%** [-15.54, -13.40]: 376,664 to 321,832 B |
+| Raw plain, 14 pairs | +0.34% [-2.10, +1.56] | no resolved change |
+| Raw gzip, 14 pairs | -1.54% [-3.73, +0.45] | no resolved change |
+
+Saturated latency falls with the CPU: p50 -3.90% [-4.94, -1.24], p95 -4.17%
+[-5.19, -1.64], p99 -3.80% [-7.91, -0.93]. Page-table steady RSS is -1.43%
+[-2.41, -0.50] saturated (8,314 to 8,226 KiB) and -0.80% [-3.71, +0.81] at 5,000/s.
+The 400-session raw census is exactly 2,143 / 5,959 / 6,031 / 12,079 B per session.
+The open loops ran in the morning with the host's bots busier than at night, and their
+intervals are wider than in the steps above.
+
+What it costs, stated as it is:
+
+- **One more allocation for each short-sent message**: 0.25 per request in this
+  workload, where a quarter of the requests are sends to a private chat. Allocations
+  per request rise 1.4% in every scenario. Allocated bytes still fall 13% at saturation
+  and 3.5% at 5,000 RPC/s, because the batches and queues those values pass through
+  are a third of their size; at 500 RPC/s, where nothing is batched, they rise 1.5%
+  (118 B per request).
+- **One allocation for a forward header and one for a reply header of a short
+  message**, that is of a forwarded or replied message in a private chat or a basic
+  group, and one for the media of a short-sent message when the server returns any
+  (a link preview). The workload has none of these: it does not measure this cost. Each
+  is an allocation of 176 to 336 B set against 376 B fewer in every `Updates` moved.
+
+**Decision: keep both.** CPU, rate and latency resolve as gains at saturation, the
+live heap of a busy connection falls by 55 KB with the thread cache out of the
+picture, RSS does not rise anywhere, the raw path and the session census are
+unchanged, and the workspace is free of the Clippy error.
+[Measurements](short-updates), [validation](validation/short-updates).
+
+Generator tests (28 unit, 13 integration and the dependency test), TL tests (19, one
+ignored, the dependency test and 24 doctests), session tests (111 unit with two new
+adaptor tests, 33 in its other targets), sender tests (189 unit, the loopback pair and
+5 doctests) and client all-feature tests (132 unit, 69 doctests) pass. The new tests
+cover the generated text, wire round trips of all three updates with and without each
+field, every truncated prefix, the headers and the media arriving in the full message,
+and size guards (`Updates` at 256 B). Strict all-target Clippy passes for all six
+library crates. Rustdoc with warnings denied passes for the generator, session and
+sender (own directory), the client (1,980 MiB peak) and the TL types with all features
+(3,791 MiB peak, 183 MiB available at its lowest sample, swap moving 82 MiB). The
+whole-API serde unit passes check and Clippy at 3,314 / 3,381 MiB, 315 / 395 MiB
+available at the lowest, swap moving 57 / 56 MiB. Two fresh reviewers found no defect.
+
+The TL types' all-feature Rustdoc has grown from about 2.5 GiB to 3.7 GiB over this
+round and is now the command closest to this host's limit: it passed inside the
+watchdog's thresholds each time, with under 300 MiB available for less than four
+seconds. The shared `target/doc` whose search index it merges gained the other crates'
+pages in that time; whether that or the generated code is the growth was not measured.

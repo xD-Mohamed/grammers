@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased: smaller short updates
+
+- `tl::types::UpdateShortMessage` and `UpdateShortChatMessage` hold `fwd_from` and
+  `reply_to` as `Option<Box<_>>`, and `tl::types::UpdateShortSentMessage` holds `media`
+  as `Option<Box<tl::enums::MessageMedia>>`. `tl::enums::Updates` shrinks from 624 to
+  248 B. A short update without those fields allocates nothing more. `tl::types::Message`
+  keeps all three inline. Wire and session formats are unchanged.
+- `grammers_session::updates::UpdatesLike::ShortSentMessage` holds its `request` as
+  `Box<tl::functions::messages::SendMessage>`; the enum shrinks from 832 to 272 B.
+- Struct literals with `None`, field reads and matches by reference keep compiling.
+  Code that builds one of these with a value boxes it; code that moves a value out
+  unboxes it.
+
+  ```rust
+  // before
+  let short = tl::types::UpdateShortSentMessage { media: Some(media), ..rest };
+  let header: Option<tl::enums::MessageReplyHeader> = short_message.reply_to;
+  let like = UpdatesLike::ShortSentMessage { request, update };
+  // after
+  let short = tl::types::UpdateShortSentMessage { media: Some(Box::new(media)), ..rest };
+  let header: Option<tl::enums::MessageReplyHeader> = short_message.reply_to.map(|h| *h);
+  let like = UpdatesLike::ShortSentMessage { request: Box::new(request), update };
+  ```
+
+## What a consumer changes for the smaller TL values (2026-11-10 and 2026-11-11)
+
+Each entry below and above has its own snippet. The same four edits cover all of them:
+
+- **Building an enum variant that is now boxed**: use `.into()` on the payload struct,
+  or `Box::new(payload)`. Variants: the ten rare `Update` variants, `WebPage::Page`,
+  `Game::Game`, the three `InputRichMessage` variants, `EmojiStatus::Collectible`,
+  `PeerColor::Collectible`.
+- **Moving the payload out of such a variant**: `*payload`, or
+  `PayloadStruct::try_from(value)`. Matching by reference and reading fields need no
+  change.
+- **An optional field that is now `Option<Box<T>>`**: `Some(Box::new(value))` to set
+  it, `.as_deref()` to read it, `.map(|v| *v)` to take it. Fields:
+  `MessageReplyHeader::reply_media`, `UpdateShortMessage::{fwd_from, reply_to}`,
+  `UpdateShortChatMessage::{fwd_from, reply_to}`, `UpdateShortSentMessage::media`.
+- **`UpdatesLike::ShortSentMessage`**: `request` is a `Box`.
+
+Nothing changes on the wire or in a stored session, and code that only matches these
+types by reference and reads their fields compiles as it is.
+
 ## Unreleased: smaller users and channels
 
 - `tl::enums::EmojiStatus::Collectible` and `tl::enums::PeerColor::Collectible` now

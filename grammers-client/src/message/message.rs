@@ -108,7 +108,7 @@ impl Message {
                 }),
                 date: updates.date,
                 message: input.text,
-                media: updates.media,
+                media: updates.media.map(|media| *media),
                 reply_markup: input.reply_markup,
                 entities: updates.entities,
                 views: None,

@@ -57,9 +57,17 @@ const BOXED_FOR_SIZE: [&str; 21] = [
 /// through `updateSentWalletTransaction`.
 /// `messageReplyHeader.reply_media` otherwise reserves the full media enum even
 /// for an ordinary text reply, including in short updates and message values.
-const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 2] = [
+/// The short updates held a forward header, a reply header and a media enum inline,
+/// which set the size of every `Updates` value at 624 B. A plain short message has
+/// none of them. The message made from a short update still holds them inline.
+const BOXED_FIELDS_FOR_SIZE: [(&str, &str); 7] = [
     ("wallet.nftItem", "gift"),
     ("messageReplyHeader", "reply_media"),
+    ("updateShortMessage", "fwd_from"),
+    ("updateShortMessage", "reply_to"),
+    ("updateShortChatMessage", "fwd_from"),
+    ("updateShortChatMessage", "reply_to"),
+    ("updateShortSentMessage", "media"),
 ];
 
 /// Additional metadata required by several parts of the generation.
