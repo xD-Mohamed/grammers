@@ -56,6 +56,9 @@ impl fmt::Display for Error {
 pub struct Cursor<'a> {
     buf: &'a [u8],
     pos: usize,
+    // Only generated enums enter a depth scope, and without a schema there are none:
+    // the depth items below are then unused, which is not a defect of that build.
+    #[cfg_attr(not(any(feature = "tl-api", feature = "tl-mtproto")), allow(dead_code))]
     depth: u8,
 }
 
@@ -64,14 +67,17 @@ pub struct Cursor<'a> {
 // decoder measured 4.1 KiB of stack per level in release and 18.6 KiB unoptimized,
 // plus the fixed Updates/Message prefix: well under a default 2 MiB thread stack.
 // Schema-valid content without repeated self-nesting reaches at most 23 levels.
+#[cfg_attr(not(any(feature = "tl-api", feature = "tl-mtproto")), allow(dead_code))]
 const MAX_DEPTH: u8 = 64;
 
 // Internal scope used by generated deserializers to restore depth on all exits.
+#[cfg_attr(not(any(feature = "tl-api", feature = "tl-mtproto")), allow(dead_code))]
 pub(crate) struct DepthGuard<'a, 'b> {
     cursor: &'a mut Cursor<'b>,
 }
 
 impl<'b> DepthGuard<'_, 'b> {
+    #[cfg_attr(not(any(feature = "tl-api", feature = "tl-mtproto")), allow(dead_code))]
     pub(crate) fn cursor(&mut self) -> &mut Cursor<'b> {
         self.cursor
     }
@@ -96,6 +102,7 @@ impl<'a> Cursor<'a> {
     // Enters a generated boxed value. Siblings reuse the budget; the guard restores
     // depth on success, errors and unwinding.
     #[inline]
+    #[cfg_attr(not(any(feature = "tl-api", feature = "tl-mtproto")), allow(dead_code))]
     pub(crate) fn enter(&mut self) -> Result<DepthGuard<'_, 'a>> {
         if self.depth == MAX_DEPTH {
             return Err(Error::DepthLimitExceeded);

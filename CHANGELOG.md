@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased: the TL types without a schema build without a warning
+
+- `grammers-tl-types` built with neither `tl-api` nor `tl-mtproto` warned of five
+  unused items: the depth budget only generated enums use. They are allowed to be
+  unused in that build. Nothing changes when a schema is compiled.
+
 ## Unreleased: `markdown` without `html` builds without a warning
 
 - `grammers-client` built with `markdown` and without `html` warned that
